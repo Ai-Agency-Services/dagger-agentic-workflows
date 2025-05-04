@@ -2,7 +2,6 @@ import traceback
 from typing import Annotated, Optional
 
 import dagger
-from coverage_agent.utils import get_llm_credentials
 from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
 from coverage_agent.core.coverai_agent import (Dependencies,
@@ -10,13 +9,13 @@ from coverage_agent.core.coverai_agent import (Dependencies,
 from coverage_agent.models.code_module import CodeModule
 from coverage_agent.models.config import YAMLConfig
 from coverage_agent.models.coverage_report import CoverageReport
-from coverage_agent.utils import (dagger_json_file_to_pydantic,
+from coverage_agent.utils import (create_llm_model,
+                                  dagger_json_file_to_pydantic,
+                                  get_llm_credentials,
                                   rank_reports_by_coverage)
 from dagger import Doc, dag, function, object_type
 from dagger.client.gen import Reporter
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
 from simple_chalk import green, red, yellow
 
 
@@ -53,25 +52,24 @@ class CoverageAgent:
         """Generate unit tests for a given repository using the CoverAI agent."""
 
         self.config = YAMLConfig(**self.config)
-        llm_base_url: Optional[str] = None
-        llm_api_key_plain: Optional[str] = None
-
         print(f"Configuring LLM provider: {provider}")  # Add logging
-        llm_base_url, llm_api_key_plain = get_llm_credentials(
-            provider=provider,
-            open_router_key=open_router_api_key,
-            openai_key=openai_api_key,
-        )
-
         try:
-            llm_provider = OpenAIProvider(
-                api_key=llm_api_key_plain, base_url=llm_base_url)
-            pydantic_ai_model = OpenAIModel(
-                model_name=model_name, provider=llm_provider)
-            print(
-                f"Pydantic AI Model created for '{model_name}' using base URL: {llm_provider.base_url}")
+            llm_credentials = await get_llm_credentials(
+                provider=provider,
+                open_router_key=open_router_api_key,
+                openai_key=openai_api_key,
+            )
+        except ValueError as e:
+            print(red(f"LLM Configuration Error: {e}"))
+            raise
+        try:
+            pydantic_ai_model = create_llm_model(
+                api_key=llm_credentials.api_key,
+                base_url=llm_credentials.base_url,
+                model_name=model_name
+            )
         except Exception as e:
-            print(red(f"Failed to initialize Pydantic AI Provider/Model: {e}"))
+            # The helper function already prints the error, just re-raise
             raise
 
         unit_test_agent = create_coverai_agent(
@@ -100,18 +98,17 @@ class CoverageAgent:
             reporter: Reporter
         ) -> dagger.Container:
             """Iterate through ranked coverage reports and execute tests."""
-            current_container = start_container  # Keep track of the container state
+            current_container = start_container
             try:
                 coverage_reports_file: dagger.File = await reporter.get_coverage_reports(
                     current_container, config.reporter.report_directory
                 )
-                print(green(f"****** Got coverage reports file ******** "))
                 coverage_data_list = await dagger_json_file_to_pydantic(
                     coverage_reports_file, CoverageReport
                 )
                 if not coverage_data_list:
                     print(yellow("No coverage reports found or parsed from file."))
-                    return current_container  # Return current container if no reports
+                    return current_container
 
                 # Rank reports
                 ranked_reports = rank_reports_by_coverage(coverage_data_list)
