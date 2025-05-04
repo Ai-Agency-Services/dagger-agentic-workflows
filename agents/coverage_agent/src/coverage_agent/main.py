@@ -2,6 +2,7 @@ import traceback
 from typing import Annotated, Optional
 
 import dagger
+from coverage_agent.utils import get_llm_credentials
 from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
 from coverage_agent.core.coverai_agent import (Dependencies,
@@ -23,7 +24,7 @@ from simple_chalk import green, red, yellow
 class CoverageAgent:
     """Coverage agent to generate unit tests for a given repository."""
     config: dict
-    reporter: Reporter  # Use specific type
+    reporter: Reporter
 
     @classmethod
     async def create(
@@ -47,40 +48,20 @@ class CoverageAgent:
             "OpenRouter API key (required if provider is 'openrouter')")] = None,
         openai_api_key: Annotated[Optional[dagger.Secret], Doc(
             "OpenAI API key (required if provider is 'openai')")] = None,
-        docker_file_path: Annotated[Optional[str], Doc(  # Make optional
-            "Optional: Path to the Dockerfile for the container environment"
-        )] = None,
 
     ) -> Optional[dagger.Container]:
         """Generate unit tests for a given repository using the CoverAI agent."""
 
-        self.config = YAMLConfig(**self.config)  # Instantiate YAMLConfig
-        llm_base_url: Optional[str] = None  # Use specific variable name
-        llm_api_key_plain: Optional[str] = None  # Store plaintext key
+        self.config = YAMLConfig(**self.config)
+        llm_base_url: Optional[str] = None
+        llm_api_key_plain: Optional[str] = None
 
         print(f"Configuring LLM provider: {provider}")  # Add logging
-
-        if provider == "openrouter":
-            if not open_router_api_key:
-                raise ValueError(
-                    "open_router_api_key is required for provider 'openrouter'")
-            llm_base_url = "https://openrouter.ai/api/v1"
-            llm_api_key_plain = await open_router_api_key.plaintext()
-            print("Using OpenRouter provider.")
-        elif provider == "openai":
-            if not openai_api_key:
-                raise ValueError(
-                    "openai_api_key is required for provider 'openai'")
-            llm_base_url = None  # OpenAIProvider uses default if None
-            llm_api_key_plain = await openai_api_key.plaintext()
-            print("Using OpenAI provider.")
-        else:
-            raise ValueError(f"Unsupported LLM provider: {provider}")
-
-        if not llm_api_key_plain:
-            # This check might be redundant given the checks above, but good practice
-            raise ValueError(
-                f"API key for provider '{provider}' could not be determined.")
+        llm_base_url, llm_api_key_plain = get_llm_credentials(
+            provider=provider,
+            open_router_key=open_router_api_key,
+            openai_key=openai_api_key,
+        )
 
         try:
             llm_provider = OpenAIProvider(
@@ -105,7 +86,7 @@ class CoverageAgent:
         )
         container = builder.build_test_environment(
             source=source,
-            dockerfile_path=docker_file_path,
+            dockerfile_path=self.config.container.docker_file_path,
             config=self.config
         )
         print(green("Test environment container built successfully."))
