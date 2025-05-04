@@ -1,0 +1,33 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Reporter Configuration",
+    "type": "object",
+    "properties": {
+        "reporter": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "command": {
+                    "type": "string"
+                },
+                "report_directory": {
+                    "type": "string"
+                },
+                "output_path": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "name",
+                "command",
+                "report_directory",
+                "output_path"
+            ]
+        }
+    },
+    "required": [
+        "reporter"
+    ]
+}
