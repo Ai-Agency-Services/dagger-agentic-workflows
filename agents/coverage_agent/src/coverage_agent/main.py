@@ -3,7 +3,6 @@ from typing import Annotated, Optional
 
 import dagger
 import logfire
-from pydantic_ai.agent import InstrumentationSettings
 from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
 from coverage_agent.core.coverai_agent import (Dependencies,
