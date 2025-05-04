@@ -136,14 +136,15 @@ async def run_tests_tool(ctx: RunContext[Dependencies]) -> str:
     try:
         test_command = ctx.deps.config.reporter.command
         result_container = await ctx.deps.container.with_exec(["bash", "-c", f"{test_command}; echo -n $? > /exit_code"])
-        stdout = await result_container.stdout()
-        stderr = await result_container.stderr()
-        return f"Test Run STDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+        test_results = await result_container.file(
+            f"{ctx.deps.config.reporter.output_path}"
+        ).contents()
+
+        error = await ctx.deps.reporter.parse_test_results(test_results)
+        if error:
+            return f"Test Run Failed: {error}"
     except Exception as e:
         return f"Error running tests: {e}"
-
-# --- Factory Function ---
-
 
 def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     """
