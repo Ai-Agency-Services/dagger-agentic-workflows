@@ -6,7 +6,7 @@ dependencies = [
     "dagger-io",
     "jsonschema>=4.23.0",
     "openai>=1.76.2",
-    "pydantic-ai>=0.1.8",
+    "pydantic-ai[logfire]>=0.1.8",
     "pydantic[email]>=2.11.4",
     "simple-chalk>=0.1.0",
 ]

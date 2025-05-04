@@ -2,6 +2,8 @@ import traceback
 from typing import Annotated, Optional
 
 import dagger
+import logfire
+from pydantic_ai.agent import InstrumentationSettings
 from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
 from coverage_agent.core.coverai_agent import (Dependencies,
@@ -37,6 +39,7 @@ class CoverageAgent:
     async def generate_unit_tests(
         self,
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
+        logfire_access_token: Annotated[Optional[dagger.Secret], Doc("Logfire access token")],
         repository_url: Annotated[str, Doc("Repository URL to generate tests for")],
         branch: Annotated[str, Doc("Branch to generate tests for")],
         model_name: Annotated[str, Doc(
@@ -50,7 +53,11 @@ class CoverageAgent:
 
     ) -> Optional[dagger.Container]:
         """Generate unit tests for a given repository using the CoverAI agent."""
-
+        if logfire_access_token:
+            logfire.configure(token=await logfire_access_token.plaintext(),
+                              send_to_logfire=True,
+                              service_name="coverage-agent",
+                              )
         self.config = YAMLConfig(**self.config)
         print(f"Configuring LLM provider: {provider}")  # Add logging
         try:
@@ -73,7 +80,9 @@ class CoverageAgent:
             raise
 
         unit_test_agent = create_coverai_agent(
-            pydantic_ai_model=pydantic_ai_model)
+            pydantic_ai_model=pydantic_ai_model
+        )
+        unit_test_agent.instrument_all()
 
         builder = ContainerBuilder(config=self.config)
         source = (
@@ -161,7 +170,6 @@ class CoverageAgent:
 
             return current_container  # Return the final state of the container
 
-        # Process coverage reports using the configured limit
         # Pass necessary instances to the inner function
         final_container = await process_coverage_reports_inner(
             start_container=container,  # Start with the initially built container

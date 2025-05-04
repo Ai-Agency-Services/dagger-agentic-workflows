@@ -10,7 +10,8 @@ from coverage_agent.models.coverage_report import CoverageReport
 from coverage_agent.template import get_system_template
 from coverage_agent.utils import get_code_under_test_directory
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openai import OpenAIModel  # Use the specific model type
+from pydantic_ai.models.openai import \
+    OpenAIModel  # Use the specific model type
 
 # Conditional import for Reporter type hint if it's complex
 if TYPE_CHECKING:
@@ -164,7 +165,9 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
         model=pydantic_ai_model,
         output_type=CodeModule,
         system_prompt=base_system_prompt,
-        deps_type=Dependencies
+        deps_type=Dependencies,
+        instrument=True,
+        end_strategy="exhaustive"
     )
 
     agent.system_prompt(get_code_under_test_prompt)
