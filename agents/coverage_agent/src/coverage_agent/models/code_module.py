@@ -17,8 +17,8 @@ class CodeModule(BaseModel):
         description="The import statements for the code block.")
     code: str = Field(
         description="The code block excluding import statements.")
-    test_path: str = Field(
-        description="Existing test paths for the file under test.")
+    path: str = Field(
+        description="The path where the code block should be saved.")
     error: str = Field(
         description="The error message if the code block execution fails.", default=None
     )

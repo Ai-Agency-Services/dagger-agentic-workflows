@@ -71,6 +71,10 @@ class Reporter:
     def validate_config(self, config: str) -> None:
         """Validate the configuration file"""
         config_dict = yaml.safe_load(config)
+        config_dict = config_dict.get("reporter", {})
+        if not config_dict:
+            raise ValueError(
+                "No reporter configuration found in the config file")
         current_dir = os.path.dirname(os.path.abspath(__file__))
 
         with open(current_dir + "/config.schema.json") as file:
