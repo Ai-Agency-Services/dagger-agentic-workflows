@@ -53,7 +53,7 @@ class TestFileHandler:
         name = base_file_name(
             report.file, test_suffix=self.config.test_generation.test_suffix
         )
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d")
         self.file_name = f"generated_{timestamp}_{name}"
 
         # Determine the save path based on the configuration

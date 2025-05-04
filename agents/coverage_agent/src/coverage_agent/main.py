@@ -1,21 +1,21 @@
-import os
-import traceback  # Import traceback for better error details
-from typing import Annotated, List, Optional
+import traceback
+from typing import Annotated, Optional
 
 import dagger
 from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
+from coverage_agent.core.coverai_agent import (Dependencies,
+                                               create_coverai_agent)
 from coverage_agent.models.code_module import CodeModule
-from coverage_agent.core.coverai_agent import Dependencies, create_coverai_agent
 from coverage_agent.models.config import YAMLConfig
 from coverage_agent.models.coverage_report import CoverageReport
 from coverage_agent.utils import (dagger_json_file_to_pydantic,
                                   rank_reports_by_coverage)
 from dagger import Doc, dag, function, object_type
 from dagger.client.gen import Reporter
+from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai import Agent
 from simple_chalk import green, red, yellow
 
 
@@ -30,9 +30,7 @@ class CoverageAgent:
         cls, config_file: Annotated[dagger.File, "Path to the configuration file"]
     ):
         """Creates an instance of the CoverageAgent class."""
-        # ConfigurationLoader.load now returns dict, reporter
         config_dict, reporter_instance = await ConfigurationLoader.load(config=config_file)
-        # Pass both to constructor
         return cls(config=config_dict, reporter=reporter_instance)
 
     @function
@@ -41,7 +39,8 @@ class CoverageAgent:
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
         repository_url: Annotated[str, Doc("Repository URL to generate tests for")],
         branch: Annotated[str, Doc("Branch to generate tests for")],
-        model_name: Annotated[str, Doc("LLM model name (e.g., 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet')")],
+        model_name: Annotated[str, Doc(
+            "LLM model name (e.g., 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet')")] = "openai/gpt-4.1-nano",
         provider: Annotated[str, Doc(
             "LLM provider ('openrouter' or 'openai')")] = "openrouter",
         open_router_api_key: Annotated[Optional[dagger.Secret], Doc(
@@ -56,7 +55,6 @@ class CoverageAgent:
         """Generate unit tests for a given repository using the CoverAI agent."""
 
         self.config = YAMLConfig(**self.config)  # Instantiate YAMLConfig
-        # --- Determine LLM Provider Config ---
         llm_base_url: Optional[str] = None  # Use specific variable name
         llm_api_key_plain: Optional[str] = None  # Store plaintext key
 
@@ -84,8 +82,6 @@ class CoverageAgent:
             raise ValueError(
                 f"API key for provider '{provider}' could not be determined.")
 
-        # --- Create pydantic-ai Model ---
-        # Pass credentials directly to the provider instance
         try:
             llm_provider = OpenAIProvider(
                 api_key=llm_api_key_plain, base_url=llm_base_url)
@@ -97,11 +93,9 @@ class CoverageAgent:
             print(red(f"Failed to initialize Pydantic AI Provider/Model: {e}"))
             raise
 
-        # --- Create the Agent using the factory ---
         unit_test_agent = create_coverai_agent(
             pydantic_ai_model=pydantic_ai_model)
 
-        # --- Setup Container ---
         builder = ContainerBuilder(config=self.config)
         source = (
             await dag.git(url=repository_url, keep_git_dir=True)
@@ -109,8 +103,6 @@ class CoverageAgent:
             .branch(branch)
             .tree()
         )
-        # Build the environment using the builder
-        # Pass self.config to build_test_environment if it needs it
         container = builder.build_test_environment(
             source=source,
             dockerfile_path=docker_file_path,
@@ -119,8 +111,6 @@ class CoverageAgent:
         print(green("Test environment container built successfully."))
 
         # --- Process Coverage Reports ---
-        # Define the inner function or call a method
-        # Make this a standalone async function within generate_unit_tests scope
         async def process_coverage_reports_inner(
             start_container: dagger.Container,
             limit: Optional[int],
@@ -173,7 +163,7 @@ class CoverageAgent:
                         # Update the container state for the next iteration
                         current_container = deps.container  # Agent tools modify deps.container
                         print(green(
-                            f"Agent finished iteration {i+1}. Result: {code_module_result.file_path if code_module_result else 'No CodeModule'}"))
+                            f"Agent finished iteration {i+1}. Result: {code_module_result if code_module_result else 'No CodeModule'}"))
                     except Exception as agent_err:
                         print(
                             red(f"Error during agent run for report {i+1} ({report.file}): {agent_err}"))
