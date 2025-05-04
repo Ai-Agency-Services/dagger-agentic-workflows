@@ -6,8 +6,8 @@
   },
   "dependencies": [
     {
-      "name": "workspace",
-      "source": "../workspace"
+      "name": "Reporter",
+      "source": "plugins/reporter"
     }
   ]
 }

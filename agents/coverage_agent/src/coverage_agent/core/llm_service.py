@@ -1,9 +1,9 @@
 import os
 import traceback
+import json
 from abc import ABC, abstractmethod
-from typing import List, Optional  # Added List
+from typing import List, Optional
 
-from coverage_agent.core.open_router_service import OpenRouterService
 from coverage_agent.models.code_module import CodeModule
 from openai import OpenAI
 from simple_chalk import red
@@ -54,9 +54,10 @@ class BaseLLMService(ABC):
                         elif isinstance(msg, dict) and "role" in msg and "content" in msg:
                             messages.append(msg)
 
+            # Use a type checking approach that doesn't require importing OpenRouterService
             extra_body = None
-            # Only add fallback models if the provider is OpenRouter and fallbacks are provided
-            if isinstance(self, OpenRouterService) and fallback_models:
+            # Check the base URL instead of using isinstance
+            if self._get_base_url() == "https://api.openrouter.ai/v1" and fallback_models:
                 extra_body = {"models": fallback_models}
 
             chat_completion = self.openai_client.chat.completions.create(
@@ -64,12 +65,11 @@ class BaseLLMService(ABC):
                 messages=messages,
                 response_format={"type": "json_object"} if CodeModule.model_json_schema()[
                     'type'] == 'json_object' else None,
-                extra_body=extra_body  # <-- Pass extra_body here
+                extra_body=extra_body
             )
 
             result_content = chat_completion.choices[0].message.content
             try:
-                import json
                 module_data = json.loads(result_content)
                 return CodeModule(**module_data)
             except Exception as parse_error:
@@ -82,3 +82,24 @@ class BaseLLMService(ABC):
             print(red(f"Error generating code module: {e}"))
             print(traceback.format_exc())
             raise e
+
+
+# Provider implementations
+class OpenRouterService(BaseLLMService):
+    """OpenRouter implementation of BaseLLMService."""
+
+    def _get_base_url(self) -> str:
+        return "https://api.openrouter.ai/v1"
+
+    def _get_api_key_env_var(self) -> str:
+        return "OPEN_ROUTER_API_KEY"
+
+
+class OpenAIService(BaseLLMService):
+    """OpenAI implementation of BaseLLMService."""
+
+    def _get_base_url(self) -> str:
+        return "https://api.openai.com/v1"
+
+    def _get_api_key_env_var(self) -> str:
+        return "OPENAI_API_KEY"
