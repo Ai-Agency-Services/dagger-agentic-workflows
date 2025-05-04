@@ -23,10 +23,8 @@ class Dependencies:
     config: YAMLConfig
     container: dagger.Container
     report: CoverageReport
-    reporter: 'Reporter'  # Use forward reference or imported type
+    reporter: 'Reporter'
 
-
-# --- Define Agent Configuration Functions (Standalone) ---
 
 async def get_code_under_test_prompt(ctx: RunContext[Dependencies]) -> str:
     """ System Prompt: Get the code under test from the coverage report """
@@ -98,8 +96,6 @@ async def add_directories_prompt(ctx: RunContext[Dependencies]) -> str:
         return "\n ------- \n <directories>Error retrieving directory information.</directories> \n ------- \n"
 
 # --- Define Agent Tools (Standalone) ---
-
-
 async def read_file_tool(ctx: RunContext[Dependencies], path: str) -> str:
     """Tool: Read the contents of a file in the workspace.
     Args:
