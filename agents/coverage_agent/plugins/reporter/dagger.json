@@ -1,0 +1,17 @@
+{
+  "name": "Reporter",
+  "engineVersion": "v0.18.5",
+  "sdk": {
+    "source": "python"
+  },
+  "dependencies": [
+    {
+      "name": "JestReporterPlugin",
+      "source": "jest"
+    },
+    {
+      "name": "PytestReporterPlugin",
+      "source": "pytest"
+    }
+  ]
+}

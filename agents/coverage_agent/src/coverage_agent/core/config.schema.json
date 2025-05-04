@@ -1,0 +1,108 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Coverage Agent Configuration",
+    "type": "object",
+    "properties": {
+        "reporter": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "command": {
+                    "type": "string"
+                },
+                "report_directory": {
+                    "type": "string"
+                },
+                "output_path": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "name",
+                "command",
+                "report_directory",
+                "output_path"
+            ]
+        },
+        "core_api": {
+            "type": "object",
+            "properties": {
+                "model": {
+                    "type": "string"
+                },
+                "fallback_models": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            },
+            "required": [
+                "model"
+            ]
+        },
+        "test_generation": {
+            "type": "object",
+            "properties": {
+                "iterations": {
+                    "type": "integer"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "save_next_to_code_under_test": {
+                    "type": "boolean"
+                },
+                "test_directory": {
+                    "type": "string"
+                },
+                "test_suffix": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "iterations",
+                "test_directory",
+                "test_suffix"
+            ]
+        },
+        "git": {
+            "type": "object",
+            "properties": {
+                "user_name": {
+                    "type": "string"
+                },
+                "user_email": {
+                    "type": "string",
+                    "format": "email"
+                }
+            },
+            "required": [
+                "user_name",
+                "user_email"
+            ]
+        },
+        "container": {
+            "type": "object",
+            "properties": {
+                "work_dir": {
+                    "type": "string"
+                },
+                "docker_file_path": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "work_dir", "docker_file_path"
+            ]
+        }
+    },
+    "required": [
+        "reporter",
+        "core_api",
+        "test_generation",
+        "git"
+    ]
+}

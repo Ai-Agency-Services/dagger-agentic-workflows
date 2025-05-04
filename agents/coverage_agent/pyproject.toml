@@ -1,0 +1,19 @@
+[project]
+name = "coverage-agent"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "dagger-io",
+    "jsonschema>=4.23.0",
+    "openai>=1.76.2",
+    "pydantic-ai[logfire]>=0.1.8",
+    "pydantic[email]>=2.11.4",
+    "simple-chalk>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling==1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+dagger-io = { path = "sdk", editable = true }
