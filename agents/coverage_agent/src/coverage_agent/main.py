@@ -112,8 +112,6 @@ class CoverageAgent:
 
                 # Rank reports
                 ranked_reports = rank_reports_by_coverage(coverage_data_list)
-                print(
-                    green(f"***** Ranked {len(ranked_reports)} coverage reports **********"))
 
                 # Determine the actual limit
                 process_limit = limit if limit is not None else len(
@@ -135,7 +133,9 @@ class CoverageAgent:
                     print(f"Running agent for report {i+1}...")
                     try:
                         code_module_result: CodeModule = await agent.run(
-                            'Generate unit tests to increase the code coverage based on the provided context.',
+                            '''Generate unit tests to increase the code coverage based on the provided context. 
+                               Always run the tests in the container. If the tests fail, 
+                               please provide the error message and the code that caused the failure.''',
                             deps=deps
                         )
                         # Update the container state for the next iteration
