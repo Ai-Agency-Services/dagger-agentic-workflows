@@ -13,6 +13,7 @@ def get_system_template():
       4. Use the coverage_report to understand the coverage gaps for the code_under_test. \n
       5. Fully implement each test case. \n
       6. Use the directories to determine imports when writing tests. \n
+      7. You must run the tests after writing them without exception. \n
       7. Fix any resulting_errors in the code execution from a previous run. \n
   """
     return prompt

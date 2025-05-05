@@ -23,7 +23,7 @@ class ContainerBuilder:
                 # Avoid prompts
                 .with_env_variable("DEBIAN_FRONTEND", "noninteractive")
                 .with_exec(["apt-get", "update", "-y"])
-                .with_exec(["apt-get", "install", "-y", "--no-install-recommends", "git", "bash", "gh"])
+                .with_exec(["apt-get", "install", "-y", "--no-install-recommends", "git", "bash", "gh", "ripgrep", "tree"])
                 .with_exec(["apt-get", "clean"])  # Clean up cache
             )
             print(green("Agent dependencies installed using apt."))
@@ -31,12 +31,12 @@ class ContainerBuilder:
         except Exception as e_apk:
             print(yellow(f"apk failed ({e_apk}), trying apt..."))
             try:
-                # Try apk first
+                # Try apk alpine as a fallback
                 print("Attempting to install agent dependencies using apk...")
                 container = (
                     container
                     .with_exec(["apk", "update"])
-                    .with_exec(["apk", "add", "--no-cache", "git", "bash", "github-cli"])
+                    .with_exec(["apk", "add", "--no-cache", "git", "bash", "github-cli", "ripgrep", "tree"])
                 )
                 print(green("Agent dependencies installed using apk."))
                 return container

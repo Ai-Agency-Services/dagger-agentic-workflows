@@ -1,6 +1,8 @@
+import json
 import os
-from dataclasses import dataclass
-from typing import TYPE_CHECKING  # Use for type hinting Reporter if needed
+import traceback
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Optional
 
 import dagger
 from coverage_agent.core.test_file_handler import TestFileHandler
@@ -12,6 +14,7 @@ from coverage_agent.utils import get_code_under_test_directory
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import \
     OpenAIModel  # Use the specific model type
+from simple_chalk import red, yellow, blue
 
 # Conditional import for Reporter type hint if it's complex
 if TYPE_CHECKING:
@@ -25,6 +28,7 @@ class Dependencies:
     container: dagger.Container
     report: CoverageReport
     reporter: 'Reporter'
+    current_code_module: Optional[CodeModule] = field(default=None)
 
 
 async def get_code_under_test_prompt(ctx: RunContext[Dependencies]) -> str:
@@ -65,40 +69,277 @@ async def add_coverage_report_prompt(ctx: RunContext[Dependencies]) -> str:
 
 
 async def add_directories_prompt(ctx: RunContext[Dependencies]) -> str:
-    """ System Prompt: Get the directory structure associated with the code under test."""
+    """
+    System Prompt: Get the directory structure context, target test directory,
+    and approximate path for the code under test.
+    """
+    dir_context = "<directories>\n"
     try:
         code_file_path = ctx.deps.report.file
-        directories_output = await ctx.deps.container.with_exec(
-            ["find", ".", "-path", f"*/{os.path.basename(code_file_path)}"]
-        ).stdout()
-        found_path = directories_output.strip().split(
-            '\n')[0] if directories_output.strip() else "Not Found"
-
-        code_under_test_directory = await get_code_under_test_directory(
+        code_under_test_dir = await get_code_under_test_directory(
             ctx.deps.container, report=ctx.deps.report
         )
 
-        current_directory = (
-            code_under_test_directory
+        # Construct the approximate full path
+        found_path = os.path.join(code_under_test_dir, os.path.basename(
+            code_file_path)) if code_under_test_dir != "." else f"./{os.path.basename(code_file_path)} (approx)"
+
+        # Determine target directory for writing tests
+        target_test_directory = (
+            code_under_test_dir  # Use the found directory if saving next to code
             if ctx.deps.config.test_generation.save_next_to_code_under_test
             else ctx.deps.config.test_generation.test_directory
         )
 
+        dir_context += f"  Target directory for writing tests: {target_test_directory}\n"
+        dir_context += f"  Code under test file path (approximate): {found_path}\n"
+
+        # Add directory tree structure around the code under test
+        try:
+            # Limit depth to avoid excessive output (e.g., depth 3)
+            # Use tree if available, otherwise fallback to find
+            tree_cmd = ["tree", "-L", "3", code_under_test_dir]
+            find_cmd = ["find", code_under_test_dir,
+                        "-maxdepth", "3", "-print"]
+
+            # Try tree first
+            tree_exec = ctx.deps.container.with_exec(
+                tree_cmd)
+            tree_stdout = await tree_exec.stdout()
+            dir_context += f"\n  Directory structure near code under test ({code_under_test_dir}):\n"
+            dir_context += f"```\n{tree_stdout.strip()}\n```\n"
+        except dagger.ExecError:
+            # Fallback to find if tree fails (e.g., not installed)
+            print(yellow(
+                "`tree` command failed or not found, falling back to `find` for directory structure."))
+            try:
+                find_exec = ctx.deps.container.with_exec(
+                    find_cmd)
+                find_stdout = await find_exec.stdout()
+                dir_context += f"\n  Directory structure near code under test ({code_under_test_dir}):\n"
+                dir_context += f"```\n{find_stdout.strip()}\n```\n"
+            except Exception as find_err:
+                print(red(f"Fallback `find` command also failed: {find_err}"))
+                dir_context += "\n  (Could not retrieve directory structure)\n"
+        except Exception as tree_err:
+            print(
+                red(f"Error getting directory structure with tree: {tree_err}"))
+            dir_context += "\n  (Could not retrieve directory structure)\n"
+
+        dir_context += "</directories>"
+        return f"\n ------- \n{dir_context}\n ------- \n"
+
+    except Exception as e:
+        print(red(f"Error in add_directories_prompt: {e}"))
+        traceback.print_exc()  # Add traceback for debugging
+        dir_context += "\n  Error retrieving directory information.\n</directories>"
+        return f"\n ------- \n{dir_context}\n ------- \n"
+
+
+async def add_dependency_files_prompt(ctx: RunContext[Dependencies]) -> str:
+    """
+    System Prompt: Provide content of common dependency management files.
+    """
+    dep_context = "<project_dependencies>\n"
+    found_files = []
+    common_dep_files = [
+        "requirements.txt",
+        "pyproject.toml",  # Common in Python
+        "package.json",   # Node.js
+        "go.mod",         # Go
+        "pom.xml",        # Maven (Java)
+        "build.gradle",   # Gradle (Java/Kotlin)
+        "Gemfile",        # Ruby
+        "composer.json",  # PHP
+        # Add others if relevant (*.csproj for .NET, etc.)
+    ]
+
+    work_dir = ctx.deps.config.container.work_dir
+
+    for filename in common_dep_files:
+        file_path = os.path.join(work_dir, filename)
+        try:
+            # *** FIX: Attempt ls, catch ExecError if file not found ***
+            # Define the check command
+            check_cmd = ["ls", "-d", file_path]
+            # Add the exec step
+            check_exec = ctx.deps.container.with_exec(
+                check_cmd)
+            # Await stdout. If ls fails (non-zero exit), this will raise ExecError
+            await check_exec.stdout()
+
+            # If stdout() succeeded (exit code 0), the file exists. Proceed to read.
+            try:
+                print(
+                    blue(f"Found dependency file: {filename}. Reading content..."))
+                content = await ctx.deps.container.file(file_path).contents()
+                dep_context += f"\n--- {filename} ---\n"
+                # Limit content length for prompt context
+                # Limit to 1000 chars
+                dep_context += f"```\n{content.strip()[:1000]}\n```\n"
+                found_files.append(filename)
+            except Exception as read_err:
+                # Handle potential errors during the actual read, even if ls succeeded
+                print(red(
+                    f"Error reading dependency file '{filename}' after existence check: {read_err}"))
+                dep_context += f"\n--- {filename} ---\nError reading file after check.\n"
+
+        except dagger.ExecError as ls_err:
+            # ls failed, likely because the file doesn't exist (exit code 2 for ls)
+            # Check if the error message indicates "No such file or directory"
+            if "No such file or directory" in str(ls_err) or ls_err.exit_code == 2:
+                # This is expected if the file isn't present, so just pass
+                # print(f"Dependency file not found: {filename}") # Optional logging
+                pass
+            else:
+                # ls failed for a different reason, log it
+                print(
+                    red(f"Unexpected error checking for dependency file '{filename}': {ls_err}"))
+                dep_context += f"\n--- {filename} ---\nError checking file existence.\n"
+        except Exception as e:
+            # Catch any other unexpected errors during the check phase
+            print(
+                red(f"Unexpected error processing dependency file '{filename}': {e}"))
+            dep_context += f"\n--- {filename} ---\nUnexpected error.\n"
+
+    if not found_files:
+        dep_context += "No common dependency files found.\n"
+
+    dep_context += "</project_dependencies>"
+    return f"\n ------- \n{dep_context}\n ------- \n"
+
+
+async def add_current_code_module_prompt(ctx: RunContext[Dependencies]) -> str:
+    """ System Prompt: Get the current code module and any previous errors, if they exist. """
+    try:
+        if ctx.deps.current_code_module:
+            # Start with the code module part
+            prompt_string = f"""
+                        \n ------- \n
+                        <current_code_module> \n
+                        {ctx.deps.current_code_module.code}
+                        </current_code_module> \n
+                        \n ------- \n
+                    """
+            # Conditionally add the error block if an error exists
+            if ctx.deps.current_code_module.error:
+                prompt_string += f"""
+                        \n ------- \n
+                        <resulting_errors>
+                        \n --- --- --- \n You previously tried to increase code coverage using the current_code_module.
+                        \n --- --- --- \n Here is the resulting error from your solution: {ctx.deps.current_code_module.error}
+                        \n --- --- --- \n Your task is to correct the errors with a new solution for the code_under_test to increase code coverage.
+                        </resulting_errors>
+                        \n -------- \n
+                    """
+            return prompt_string
+        else:
+            # No previous code module, return a simple message
+            return "\n ------- \n <current_code_module>No current code module available. Generate the first set of tests.</current_code_module> \n ------- \n"
+    except Exception as e:
+        print(f"Error in add_current_code_module_prompt: {e}")
+        return "\n ------- \n <current_code_module>Error retrieving current code module.</current_code_module> \n ------- \n"
+
+
+# Keep this as a system prompt function
+async def find_symbol_references_prompt(ctx: RunContext[Dependencies]) -> str:
+    """
+    System Prompt: Provide context about potential references to the file under test.
+    Uses ripgrep (rg) for searching. Ensure 'ripgrep' is installed in the container.
+
+    Returns:
+        A string containing a summary of potential references found, formatted for the system prompt,
+        or an error message.
+    """
+    try:
+        # Get the filename from the report
+        code_file_path = ctx.deps.report.file
+        # Use the filename (without path) as the search term.
+        # This is a simple text search, not a true symbol search.
+        search_term = os.path.basename(code_file_path)
+        # Define the search directory (e.g., the configured workdir)
+        search_dir = ctx.deps.config.container.work_dir
+
+        # Use --json for structured output, -- for safety with terms starting with '-'
+        # Add --case-sensitive if needed
+        rg_command = ["rg", "--json", "--", search_term, search_dir]
+
+        # Ensure all items in rg_command are strings before joining for the print statement
+        rg_command_str_list = [str(item) for item in rg_command]
+        print(yellow(
+            f"Running reference search for prompt context: {' '.join(rg_command_str_list)}"))
+
+        # Execute the command
+        result_container = await ctx.deps.container.with_exec(rg_command)
+
+        # Get stdout (JSON lines) and stderr
+        stdout = await result_container.stdout()
+        stderr = await result_container.stderr()
+
+        if stderr:
+            # rg often prints 'no matches found' to stderr, which isn't a true error
+            if "No files were searched" not in stderr and "No matches found" not in stderr:
+                print(
+                    red(f"ripgrep stderr (for prompt context): {stderr.strip()}"))
+                # Decide if stderr indicates a real error or just no matches/files searched
+
+        # Process the JSON Lines output
+        matches = []
+        if stdout:
+            for line in stdout.strip().split('\n'):
+                try:
+                    match_data = json.loads(line)
+                    if match_data.get("type") == "match":
+                        file_path = match_data.get(
+                            "data", {}).get("path", {}).get("text")
+                        line_num = match_data.get(
+                            "data", {}).get("line_number")
+                        line_text = match_data.get("data", {}).get(
+                            "lines", {}).get("text", "").strip()
+                        if file_path and line_num:
+                            # Format for readability in the prompt
+                            matches.append(
+                                f"  - {file_path} (Line {line_num}): {line_text}")
+                except json.JSONDecodeError:
+                    print(
+                        red(f"Failed to parse rg JSON line (for prompt context): {line}"))
+
+        # Format the results for the system prompt
+        if not matches:
+            references_context = f"No potential references found for the filename '{search_term}' in '{search_dir}' (excluding the file itself)."
+        else:
+            references_context = f"Potential references to the filename '{search_term}' found in other files:\n" + "\n".join(
+                matches)
+            # Limit output length if necessary for the prompt context
+            # Limit response size
+            references_context = references_context[:2000]
+
+        # Wrap in tags for clarity in the overall system prompt
         return f"""
                     \n ------- \n
-                    <directories> \n
-                    Your current target directory for writing tests is: {current_directory} \n
-                    The code_under_test file path is approximately: {found_path}
-                    </directories> \n
+                    <symbol_references_context> \n
+                    {references_context}
+                    </symbol_references_context> \n
                     \n ------- \n
                 """
+
     except Exception as e:
-        print(f"Error in add_directories_prompt: {e}")
-        return "\n ------- \n <directories>Error retrieving directory information.</directories> \n ------- \n"
+        traceback.print_exc()
+        error_message = f"Error running ripgrep to find references for prompt context ('{search_term}'): {e}"
+        print(red(error_message))
+        # Return an error message within the tags for the prompt
+        return f"""
+                    \n ------- \n
+                    <symbol_references_context> \n
+                    {error_message}
+                    </symbol_references_context> \n
+                    \n ------- \n
+                """
+
 
 # --- Define Agent Tools (Standalone) ---
 async def read_file_tool(ctx: RunContext[Dependencies], path: str) -> str:
-    """Tool: Read the contents of a file in the workspace.
+    """Tool: Read the contents of a file in the workspace. Useful for reading reference files or test files.
     Args:
         path: The path to the file to read.
     """
@@ -115,6 +356,9 @@ async def write_test_file_tool(ctx: RunContext[Dependencies], contents: str) -> 
     """
     try:
         test_file_handler = TestFileHandler(ctx.deps.config)
+        ctx.deps.current_code_module = CodeModule(
+            code=contents
+        )
         updated_container = await test_file_handler.handle_test_file(
             container=ctx.deps.container,
             code=contents,
@@ -127,7 +371,6 @@ async def write_test_file_tool(ctx: RunContext[Dependencies], contents: str) -> 
         )
         return f"Successfully wrote content to {save_dir}/{file_written}."
     except Exception as e:
-        import traceback
         traceback.print_exc()
         return f"Error writing test file: {e}"
 
@@ -143,9 +386,16 @@ async def run_tests_tool(ctx: RunContext[Dependencies]) -> str:
 
         error = await ctx.deps.reporter.parse_test_results(test_results)
         if error:
+            ctx.deps.current_code_module.error = error
             return f"Test Run Failed: {error}"
     except Exception as e:
-        return f"Error running tests: {e}"
+        # Update error state if possible
+        error_msg = f"Error running tests: {e}"
+        if ctx.deps.current_code_module:
+            ctx.deps.current_code_module.error = error_msg
+        traceback.print_exc()
+        return error_msg
+
 
 def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     """
@@ -173,6 +423,9 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     agent.system_prompt(get_code_under_test_prompt)
     agent.system_prompt(add_coverage_report_prompt)
     agent.system_prompt(add_directories_prompt)
+    agent.system_prompt(add_current_code_module_prompt)
+    agent.system_prompt(find_symbol_references_prompt)
+    agent.system_prompt(add_dependency_files_prompt)
 
     agent.tool(read_file_tool)
     agent.tool(write_test_file_tool)
