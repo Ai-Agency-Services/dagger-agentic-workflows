@@ -1,15 +1,14 @@
-import json
 import os
 import traceback
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import dagger
 from coverage_agent.core.test_file_handler import TestFileHandler
 from coverage_agent.models.code_module import CodeModule
 from coverage_agent.models.config import YAMLConfig
 from coverage_agent.models.coverage_report import CoverageReport
-from coverage_agent.template import get_system_template
+from coverage_agent.template import get_review_agent_template
 from coverage_agent.utils import get_code_under_test_directory
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import \
@@ -28,7 +27,7 @@ class Dependencies:
     container: dagger.Container
     report: CoverageReport
     reporter: 'Reporter'
-    current_code_module: Optional[CodeModule] = field(default=None)
+    code_module: CodeModule
 
 
 async def get_code_under_test_prompt(ctx: RunContext[Dependencies]) -> str:
@@ -203,135 +202,6 @@ async def add_dependency_files_prompt(ctx: RunContext[Dependencies]) -> str:
     return f"\n ------- \n{dep_context}\n ------- \n"
 
 
-async def add_current_code_module_prompt(ctx: RunContext[Dependencies]) -> str:
-    """ System Prompt: Get the current code module and any previous errors, if they exist. """
-    try:
-        if ctx.deps.current_code_module:
-            # Start with the code module part
-            prompt_string = f"""
-                        \n ------- \n
-                        <current_code_module> \n
-                        {ctx.deps.current_code_module.code}
-                        </current_code_module> \n
-                        \n ------- \n
-                    """
-            # Conditionally add the error block if an error exists
-            if ctx.deps.current_code_module.error:
-                prompt_string += f"""
-                        \n ------- \n
-                        <resulting_errors>
-                        \n --- --- --- \n You previously tried to increase code coverage using the current_code_module.
-                        \n --- --- --- \n Here is the resulting error from your solution: {ctx.deps.current_code_module.error}
-                        \n --- --- --- \n Your task is to correct the errors with a new solution for the code_under_test to increase code coverage.
-                        </resulting_errors>
-                        \n -------- \n
-                    """
-            return prompt_string
-        else:
-            # No previous code module, return a simple message
-            return "\n ------- \n <current_code_module>No current code module available. Generate the first set of tests.</current_code_module> \n ------- \n"
-    except Exception as e:
-        print(f"Error in add_current_code_module_prompt: {e}")
-        return "\n ------- \n <current_code_module>Error retrieving current code module.</current_code_module> \n ------- \n"
-
-
-# Keep this as a system prompt function
-async def find_symbol_references_prompt(ctx: RunContext[Dependencies]) -> str:
-    """
-    System Prompt: Provide context about potential references to the file under test.
-    Uses ripgrep (rg) for searching. Ensure 'ripgrep' is installed in the container.
-
-    Returns:
-        A string containing a summary of potential references found, formatted for the system prompt,
-        or an error message.
-    """
-    try:
-        # Get the filename from the report
-        code_file_path = ctx.deps.report.file
-        # Use the filename (without path) as the search term.
-        # This is a simple text search, not a true symbol search.
-        search_term = os.path.basename(code_file_path)
-        # Define the search directory (e.g., the configured workdir)
-        search_dir = ctx.deps.config.container.work_dir
-
-        # Use --json for structured output, -- for safety with terms starting with '-'
-        # Add --case-sensitive if needed
-        rg_command = ["rg", "--json", "--", search_term, search_dir]
-
-        # Ensure all items in rg_command are strings before joining for the print statement
-        rg_command_str_list = [str(item) for item in rg_command]
-        print(yellow(
-            f"Running reference search for prompt context: {' '.join(rg_command_str_list)}"))
-
-        # Execute the command
-        result_container = await ctx.deps.container.with_exec(rg_command)
-
-        # Get stdout (JSON lines) and stderr
-        stdout = await result_container.stdout()
-        stderr = await result_container.stderr()
-
-        if stderr:
-            # rg often prints 'no matches found' to stderr, which isn't a true error
-            if "No files were searched" not in stderr and "No matches found" not in stderr:
-                print(
-                    red(f"ripgrep stderr (for prompt context): {stderr.strip()}"))
-                # Decide if stderr indicates a real error or just no matches/files searched
-
-        # Process the JSON Lines output
-        matches = []
-        if stdout:
-            for line in stdout.strip().split('\n'):
-                try:
-                    match_data = json.loads(line)
-                    if match_data.get("type") == "match":
-                        file_path = match_data.get(
-                            "data", {}).get("path", {}).get("text")
-                        line_num = match_data.get(
-                            "data", {}).get("line_number")
-                        line_text = match_data.get("data", {}).get(
-                            "lines", {}).get("text", "").strip()
-                        if file_path and line_num:
-                            # Format for readability in the prompt
-                            matches.append(
-                                f"  - {file_path} (Line {line_num}): {line_text}")
-                except json.JSONDecodeError:
-                    print(
-                        red(f"Failed to parse rg JSON line (for prompt context): {line}"))
-
-        # Format the results for the system prompt
-        if not matches:
-            references_context = f"No potential references found for the filename '{search_term}' in '{search_dir}' (excluding the file itself)."
-        else:
-            references_context = f"Potential references to the filename '{search_term}' found in other files:\n" + "\n".join(
-                matches)
-            # Limit output length if necessary for the prompt context
-            # Limit response size
-            references_context = references_context[:2000]
-
-        # Wrap in tags for clarity in the overall system prompt
-        return f"""
-                    \n ------- \n
-                    <symbol_references_context> \n
-                    {references_context}
-                    </symbol_references_context> \n
-                    \n ------- \n
-                """
-
-    except Exception as e:
-        traceback.print_exc()
-        error_message = f"Error running ripgrep to find references for prompt context ('{search_term}'): {e}"
-        print(red(error_message))
-        # Return an error message within the tags for the prompt
-        return f"""
-                    \n ------- \n
-                    <symbol_references_context> \n
-                    {error_message}
-                    </symbol_references_context> \n
-                    \n ------- \n
-                """
-
-
-# --- Define Agent Tools (Standalone) ---
 async def read_file_tool(ctx: RunContext[Dependencies], path: str) -> str:
     """Tool: Read the contents of a file in the workspace. Useful for reading reference files or test files.
     Args:
@@ -374,8 +244,8 @@ async def run_tests_tool(ctx: RunContext[Dependencies]) -> str:
 
     This tool is part of the agent's self-correction loop.
     It executes the tests generated in the previous step.
-    If errors occur, they are captured and stored in `ctx.deps.current_code_module.error`.
-    The `add_current_code_module_prompt` will then feed this error back to the LLM
+    If errors occur, they are captured and stored in `ctx.deps.code_module.error`.
+    The `pydantic agent framework` will then feed this error back to the LLM
     in the next iteration, asking it to correct the generated code.
     """
     try:
@@ -413,9 +283,9 @@ async def run_tests_tool(ctx: RunContext[Dependencies]) -> str:
         return error_msg
 
 
-def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
+def create_code_review_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     """
-    Creates and configures the CoverAI agent instance.
+    Create and configure a pydantic_ai.Agent instance for code review and test generation.
 
     Args:
         pydantic_ai_model: An instance of pydantic_ai.models.OpenAIModel
@@ -425,7 +295,7 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
         A configured pydantic_ai.Agent instance.
     """
 
-    base_system_prompt = get_system_template()
+    base_system_prompt = get_review_agent_template()
 
     agent = Agent(
         model=pydantic_ai_model,
@@ -433,22 +303,22 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
         system_prompt=base_system_prompt,
         deps_type=Dependencies,
         instrument=True,
-        end_strategy="exhaustive"
+        end_strategy="early"
     )
 
     agent.system_prompt(get_code_under_test_prompt)
     agent.system_prompt(add_coverage_report_prompt)
     agent.system_prompt(add_directories_prompt)
-    agent.system_prompt(add_current_code_module_prompt)
     agent.system_prompt(add_dependency_files_prompt)
 
     agent.tool(read_file_tool)
     agent.tool(write_test_file_tool)
     agent.tool(run_tests_tool)
 
-    print(f"CoverAI Agent created with model: {pydantic_ai_model.model_name}")
+    print(
+        f"CoverAI Review Agent created with model: {pydantic_ai_model.model_name}")
     return agent
 
 
 # Export necessary components
-__all__ = ["create_coverai_agent", "Dependencies"]
+__all__ = ["create_code_review_agent", "Dependencies"]

@@ -70,7 +70,6 @@ async def get_code_under_test_directory(
     str: The directory where the code under test is located. Returns '.' if not found
          or if multiple locations are found outside excluded paths.
     """
-    print(f"Getting code under test directory for {report.file}")
 
     # Comprehensive list of paths/patterns to exclude
     exclude_paths = [
@@ -191,7 +190,6 @@ async def get_code_under_test_directory(
         else:
             code_under_test_dir = potential_dirs[0]
 
-        print(f"Code under test directory: {code_under_test_dir}")
         return code_under_test_dir
 
     except Exception as e:
