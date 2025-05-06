@@ -1,5 +1,3 @@
-import os
-
 import dagger
 from coverage_agent.models.config import YAMLConfig
 from dagger import dag

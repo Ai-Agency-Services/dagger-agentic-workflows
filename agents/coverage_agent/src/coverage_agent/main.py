@@ -16,7 +16,7 @@ from coverage_agent.utils import (create_llm_model,
                                   rank_reports_by_coverage)
 from dagger import Doc, dag, function, object_type
 from dagger.client.gen import Reporter
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from simple_chalk import green, red, yellow
 
 
@@ -82,6 +82,38 @@ class CoverageAgent:
             pydantic_ai_model=pydantic_ai_model
         )
         unit_test_agent.instrument_all()
+
+        @unit_test_agent.system_prompt(dynamic=True)
+        async def add_current_code_module_prompt(ctx: RunContext[Dependencies]) -> str:
+            """ System Prompt: Get the current code module and any previous errors, if they exist. """
+            try:
+                if ctx.deps.current_code_module:
+                    # Start with the code module part
+                    prompt_string = f"""
+                                \n ------- \n
+                                <current_code_module> \n
+                                {ctx.deps.current_code_module.code}
+                                </current_code_module> \n
+                                \n ------- \n
+                            """
+                    # Conditionally add the error block if an error exists
+                    if ctx.deps.current_code_module.error:
+                        prompt_string += f"""
+                                \n ------- \n
+                                <resulting_errors>
+                                \n --- --- --- \n You previously tried to increase code coverage using the current_code_module.
+                                \n --- --- --- \n Here is the resulting error from your solution: {ctx.deps.current_code_module.error}
+                                \n --- --- --- \n Your task is to correct the errors with a new solution for the code_under_test to increase code coverage.
+                                </resulting_errors>
+                                \n -------- \n
+                            """
+                    return prompt_string
+                else:
+                    # No previous code module, return a simple message
+                    return "\n ------- \n <current_code_module>No current code module available. Generate the first set of tests.</current_code_module> \n ------- \n"
+            except Exception as e:
+                print(f"Error in add_current_code_module_prompt: {e}")
+                return "\n ------- \n <current_code_module>Error retrieving current code module.</current_code_module> \n ------- \n"
 
         builder = ContainerBuilder(config=self.config)
         source = (
