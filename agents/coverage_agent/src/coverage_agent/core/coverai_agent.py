@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class Dependencies:
+class CoverAgentDependencies:
     config: YAMLConfig
     container: dagger.Container
     report: CoverageReport
@@ -31,7 +31,7 @@ class Dependencies:
     current_code_module: Optional[CodeModule] = field(default=None)
 
 
-async def get_code_under_test_prompt(ctx: RunContext[Dependencies]) -> str:
+async def get_code_under_test_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
     """ System Prompt: Get the code under test from the coverage report """
     try:
         coverage_report_html = await ctx.deps.reporter.get_coverage_html(
@@ -50,7 +50,7 @@ async def get_code_under_test_prompt(ctx: RunContext[Dependencies]) -> str:
         return "\n ------- \n <code_under_test>Error retrieving code under test.</code_under_test> \n ------- \n"
 
 
-async def add_coverage_report_prompt(ctx: RunContext[Dependencies]) -> str:
+async def add_coverage_report_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
     """ System Prompt: Get the coverage report content. """
     try:
         coverage_report_html = await ctx.deps.reporter.get_coverage_html(
@@ -68,7 +68,7 @@ async def add_coverage_report_prompt(ctx: RunContext[Dependencies]) -> str:
         return "\n ------- \n <coverage_report_html>Error retrieving coverage report.</coverage_report_html> \n ------- \n"
 
 
-async def add_directories_prompt(ctx: RunContext[Dependencies]) -> str:
+async def add_directories_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
     """
     System Prompt: Get the directory structure context, target test directory,
     and approximate path for the code under test.
@@ -136,7 +136,7 @@ async def add_directories_prompt(ctx: RunContext[Dependencies]) -> str:
         return f"\n ------- \n{dir_context}\n ------- \n"
 
 
-async def add_dependency_files_prompt(ctx: RunContext[Dependencies]) -> str:
+async def add_dependency_files_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
     """
     System Prompt: Provide content of the first common dependency management file found.
     """
@@ -203,7 +203,7 @@ async def add_dependency_files_prompt(ctx: RunContext[Dependencies]) -> str:
     return f"\n ------- \n{dep_context}\n ------- \n"
 
 
-async def add_current_code_module_prompt(ctx: RunContext[Dependencies]) -> str:
+async def add_current_code_module_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
     """ System Prompt: Get the current code module and any previous errors, if they exist. """
     try:
         if ctx.deps.current_code_module:
@@ -236,7 +236,7 @@ async def add_current_code_module_prompt(ctx: RunContext[Dependencies]) -> str:
 
 
 # Keep this as a system prompt function
-async def find_symbol_references_prompt(ctx: RunContext[Dependencies]) -> str:
+async def find_symbol_references_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
     """
     System Prompt: Provide context about potential references to the file under test.
     Uses ripgrep (rg) for searching. Ensure 'ripgrep' is installed in the container.
@@ -332,7 +332,7 @@ async def find_symbol_references_prompt(ctx: RunContext[Dependencies]) -> str:
 
 
 # --- Define Agent Tools (Standalone) ---
-async def read_file_tool(ctx: RunContext[Dependencies], path: str) -> str:
+async def read_file_tool(ctx: RunContext[CoverAgentDependencies], path: str) -> str:
     """Tool: Read the contents of a file in the workspace. Useful for reading reference files or test files.
     Args:
         path: The path to the file to read.
@@ -343,7 +343,7 @@ async def read_file_tool(ctx: RunContext[Dependencies], path: str) -> str:
         return f"Error reading file '{path}': {e}"
 
 
-async def write_test_file_tool(ctx: RunContext[Dependencies], contents: str) -> str:
+async def write_test_file_tool(ctx: RunContext[CoverAgentDependencies], contents: str) -> str:
     """Tool: Write a new test file to the container using TestFileHandler.
     Args:
         contents: The code content to write to the file.
@@ -369,7 +369,7 @@ async def write_test_file_tool(ctx: RunContext[Dependencies], contents: str) -> 
         return f"Error writing test file: {e}"
 
 
-async def run_tests_tool(ctx: RunContext[Dependencies]) -> str:
+async def run_tests_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
     """Tool: Attempt to run all of the unit tests in the container using the configured command.
 
     This tool is part of the agent's self-correction loop.
@@ -431,7 +431,7 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
         model=pydantic_ai_model,
         output_type=CodeModule,
         system_prompt=base_system_prompt,
-        deps_type=Dependencies,
+        deps_type=CoverAgentDependencies,
         instrument=True,
         end_strategy="exhaustive"
     )
@@ -451,4 +451,4 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
 
 
 # Export necessary components
-__all__ = ["create_coverai_agent", "Dependencies"]
+__all__ = ["create_coverai_agent", "CoverAgentDependencies"]
