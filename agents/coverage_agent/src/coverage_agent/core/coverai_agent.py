@@ -433,7 +433,9 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
         system_prompt=base_system_prompt,
         deps_type=CoverAgentDependencies,
         instrument=True,
-        end_strategy="exhaustive"
+        end_strategy="exhaustive",
+        retries=5,
+        result_retries=3
     )
 
     agent.system_prompt(get_code_under_test_prompt)

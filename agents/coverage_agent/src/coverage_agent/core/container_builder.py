@@ -21,7 +21,7 @@ class ContainerBuilder:
                 # Avoid prompts
                 .with_env_variable("DEBIAN_FRONTEND", "noninteractive")
                 .with_exec(["apt-get", "update", "-y"])
-                .with_exec(["apt-get", "install", "-y", "--no-install-recommends", "git", "bash", "gh", "ripgrep", "tree"])
+                .with_exec(["apt-get", "install", "-y", "--no-install-recommends", "git", "bash", "gh", "tree"])
                 .with_exec(["apt-get", "clean"])  # Clean up cache
             )
             print(green("Agent dependencies installed using apt."))
@@ -34,7 +34,7 @@ class ContainerBuilder:
                 container = (
                     container
                     .with_exec(["apk", "update"])
-                    .with_exec(["apk", "add", "--no-cache", "git", "bash", "github-cli", "ripgrep", "tree"])
+                    .with_exec(["apk", "add", "--no-cache", "git", "bash", "github-cli",  "tree"])
                 )
                 print(green("Agent dependencies installed using apk."))
                 return container

@@ -9,6 +9,9 @@ from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
 from coverage_agent.core.coverai_agent import (CoverAgentDependencies,
                                                create_coverai_agent)
+from coverage_agent.core.pull_reqest_agent import (
+    PullRequestAgentDependencies,
+    create_pull_request_agent)
 from coverage_agent.models.code_module import CodeModule
 from coverage_agent.models.config import YAMLConfig
 from coverage_agent.models.coverage_report import CoverageReport
@@ -81,18 +84,27 @@ class CoverageAgent:
                 base_url=llm_credentials.base_url,
                 model_name='deepseek/deepseek-r1'
             )
+            pull_request_ai_model = create_llm_model(
+                api_key=llm_credentials.api_key,
+                base_url=llm_credentials.base_url,
+                model_name='openrouter/gpt-4o'
+            )
         except Exception as e:
             # The helper function already prints the error, just re-raise
             raise
 
-        unit_test_agent = create_coverai_agent(
+        unit_test_agent: Agent = create_coverai_agent(
             pydantic_ai_model=cover_ai_model
         )
         unit_test_agent.instrument_all()
-        review_agent = create_code_review_agent(
+        review_agent: Agent = create_code_review_agent(
             pydantic_ai_model=review_ai_model
         )
         review_agent.instrument_all()
+        pull_request_agent: Agent = create_pull_request_agent(
+            pydantic_ai_model=pull_request_ai_model
+        )
+        pull_request_agent.instrument_all()
 
         builder = ContainerBuilder(config=self.config)
         source = (
@@ -114,6 +126,7 @@ class CoverageAgent:
             limit: Optional[int],
             cover_agent: Agent,
             review_agent: Agent,
+            pull_request_agent: Agent,
             config: YAMLConfig,
             reporter: Reporter
         ) -> dagger.Container:
@@ -162,6 +175,18 @@ class CoverageAgent:
                         print(green(
                             f"Agent finished iteration {i+1}. Result: {code_module_result if code_module_result else 'No CodeModule'}"))
 
+                        # Check if the code_module_result is None
+                        if code_module_result is None:
+                            print(
+                                red(f"Agent returned None for report {i+1} ({report.file})."))
+                            # Skip to the next report
+                            continue
+                        elif hasattr(code_module_result, 'error') and code_module_result.error:
+                            print(red(
+                                f"Agent encountered an error for report {i+1} ({report.file}): {code_module_result.error}"))
+                            # Skip to the next report
+                            continue
+
                         review_deps = ReviewAgentDependencies(
                             config=config,
                             container=current_container,
@@ -187,6 +212,20 @@ class CoverageAgent:
                                 f"Review agent encountered an error for report {i+1} ({report.file}): {review_agent_result.error}"))
                             # Skip to the next report
                             continue
+                        current_container = review_deps.container  # Update container state
+                        pull_deps = PullRequestAgentDependencies(
+                            config=config,
+                            container=current_container,
+                        )
+                        pull_request_result = await pull_request_agent.run(
+                            '''Create a pull request with the code changes. 
+                               If the code is correct, please provide a message indicating that the code is correct.
+                               If the code is incorrect, please provide a message indicating that the code is incorrect and provide the correct code.''',
+                            deps=pull_deps)
+                        print(green(
+                            f"Pull request agent finished iteration {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
+                        # Check if the pull request result is None
+
                     except UnexpectedModelBehavior as agent_err:
                         print(
                             red(f"Error during agent run for report {i+1} ({report.file}): {agent_err}"))
@@ -212,6 +251,7 @@ class CoverageAgent:
             limit=self.config.test_generation.limit,  # Use limit from config
             cover_agent=unit_test_agent,
             review_agent=review_agent,
+            pull_request_agent=pull_request_agent,
             config=self.config,
             reporter=self.reporter
         )
