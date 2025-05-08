@@ -3,18 +3,18 @@ from typing import Annotated, Optional
 
 import dagger
 import logfire
-from coverage_agent.core.code_review_agent import (ReviewAgentDependencies,
-                                                   create_code_review_agent)
+from coverage_agent.core.coverage_review_agent import (ReviewAgentDependencies,
+                                                       create_coverage_review_agent)
 from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
 from coverage_agent.core.coverai_agent import (CoverAgentDependencies,
                                                create_coverai_agent)
-from coverage_agent.core.pull_reqest_agent import (
-    PullRequestAgentDependencies,
-    create_pull_request_agent)
+from coverage_agent.core.pull_request_agent import (
+    PullRequestAgentDependencies, create_pull_request_agent)
 from coverage_agent.models.code_module import CodeModule
 from coverage_agent.models.config import YAMLConfig
 from coverage_agent.models.coverage_report import CoverageReport
+from coverage_agent.models.coverage_review import CoverageReview
 from coverage_agent.utils import (create_llm_model,
                                   dagger_json_file_to_pydantic,
                                   get_llm_credentials,
@@ -82,12 +82,12 @@ class CoverageAgent:
             review_ai_model = create_llm_model(
                 api_key=llm_credentials.api_key,
                 base_url=llm_credentials.base_url,
-                model_name='deepseek/deepseek-r1'
+                model_name='openai/gpt-4o-mini'
             )
             pull_request_ai_model = create_llm_model(
                 api_key=llm_credentials.api_key,
                 base_url=llm_credentials.base_url,
-                model_name='openrouter/gpt-4o'
+                model_name='openai/gpt-4o-mini'
             )
         except Exception as e:
             # The helper function already prints the error, just re-raise
@@ -97,7 +97,7 @@ class CoverageAgent:
             pydantic_ai_model=cover_ai_model
         )
         unit_test_agent.instrument_all()
-        review_agent: Agent = create_code_review_agent(
+        review_agent: Agent = create_coverage_review_agent(
             pydantic_ai_model=review_ai_model
         )
         review_agent.instrument_all()
@@ -186,18 +186,31 @@ class CoverageAgent:
                                 f"Agent encountered an error for report {i+1} ({report.file}): {code_module_result.error}"))
                             # Skip to the next report
                             continue
+                        else:
+                            # Create a pull request if the code is correct
+                            pull_deps = PullRequestAgentDependencies(
+                                config=config,
+                                container=current_container,
+                                reporter=reporter,
+                                report=report,
+                            )
+                            pull_request_result = await pull_request_agent.run(
+                                '''Create a pull request with the code changes. 
+                                If the code is correct, please provide a message indicating that the code is correct.
+                                If the code is incorrect, please provide a message indicating that the code is incorrect and provide the correct code.''',
+                                deps=pull_deps)
+                            print(green(
+                                f"Pull request agent finished iteration {i+1}. Result: {pull_request_result.output if pull_request_result else 'No PullRequestAgentResult'}"))
 
                         review_deps = ReviewAgentDependencies(
-                            config=config,
+                            initial_container=start_container,
                             container=current_container,
                             report=report,
                             reporter=reporter,
                             code_module=code_module_result,
                         )
-                        review_agent_result = await review_agent.run(
-                            '''Review the code and try to resolve any issues. if the code is correct,
-                               please provide a message indicating that the code is correct.
-                               If the code is incorrect, please provide a message indicating that the code is incorrect and provide the correct code.''',
+                        review_agent_result: CoverageReview = await review_agent.run(
+                            '''Review the coverage report and determine if the coverage was increased.''',
                             deps=review_deps)
                         print(green(
                             f"Review agent finished iteration {i+1}. Result: {review_agent_result if review_agent_result else 'No ReviewAgentResult'}"))
@@ -207,23 +220,24 @@ class CoverageAgent:
                                 red(f"Review agent returned None for report {i+1} ({report.file})."))
                             # Skip to the next report
                             continue
-                        elif review_agent_result.error:
+                        elif hasattr(review_agent_result, 'coverage_increased') and review_agent_result.coverage_increased:
+                            # Check if the review agent result has an error attribute
                             print(red(
-                                f"Review agent encountered an error for report {i+1} ({report.file}): {review_agent_result.error}"))
+                                f"Coverage was increased for report {i+1} ({report.file})."))
+                            current_container = review_deps.container  # Update container state
+                            pull_deps = PullRequestAgentDependencies(
+                                config=config,
+                                container=current_container,
+                            )
+                            pull_request_result = await pull_request_agent.run(
+                                '''Create a pull request with the code changes. 
+                                If the code is correct, please provide a message indicating that the code is correct.
+                                If the code is incorrect, please provide a message indicating that the code is incorrect and provide the correct code.''',
+                                deps=pull_deps)
+                            print(green(
+                                f"Pull request agent finished iteration {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
                             # Skip to the next report
                             continue
-                        current_container = review_deps.container  # Update container state
-                        pull_deps = PullRequestAgentDependencies(
-                            config=config,
-                            container=current_container,
-                        )
-                        pull_request_result = await pull_request_agent.run(
-                            '''Create a pull request with the code changes. 
-                               If the code is correct, please provide a message indicating that the code is correct.
-                               If the code is incorrect, please provide a message indicating that the code is incorrect and provide the correct code.''',
-                            deps=pull_deps)
-                        print(green(
-                            f"Pull request agent finished iteration {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
                         # Check if the pull request result is None
 
                     except UnexpectedModelBehavior as agent_err:
