@@ -303,7 +303,8 @@ def create_code_review_agent(pydantic_ai_model: OpenAIModel) -> Agent:
         system_prompt=base_system_prompt,
         deps_type=ReviewAgentDependencies,
         instrument=True,
-        end_strategy="early"
+        end_strategy="exhaustive",
+        retries=5
     )
 
     agent.system_prompt(get_code_under_test_prompt)

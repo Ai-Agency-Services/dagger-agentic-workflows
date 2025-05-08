@@ -35,3 +35,21 @@ def get_review_agent_template():
       8. Fix any resulting errors in the code execution from a previous run. \n
   """
     return prompt
+
+
+def get_pull_request_agent_template():
+    prompt = f"""
+    You are a continuous integration agent that is responsible for managing pull requests.
+    Your task is to create a pull request or add a commit to an existing pull request based on the context below. \n
+    You are authenticated with the Github CLI and have access to the repository. \n
+    Use the `gh pr` command to see list of available commands. \n
+    You also have git cli to create a commit. \n
+    
+
+    You must obey the following rules: \n
+      1. If the code is not ready to be merged, you must add a commit to the pull request with the code. \n
+      2. You must add a comment to the pull request with any issues you find in the code. \n
+      3. Do not close any pull requests. \n
+      4. Do not merge any pull requests. \n
+  """
+    return prompt
