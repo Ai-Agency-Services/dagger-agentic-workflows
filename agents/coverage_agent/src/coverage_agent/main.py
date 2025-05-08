@@ -3,9 +3,11 @@ from typing import Annotated, Optional
 
 import dagger
 import logfire
+from coverage_agent.core.code_review_agent import (ReviewAgentDependencies,
+                                                   create_code_review_agent)
 from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
-from coverage_agent.core.coverai_agent import (Dependencies,
+from coverage_agent.core.coverai_agent import (CoverAgentDependencies,
                                                create_coverai_agent)
 from coverage_agent.models.code_module import CodeModule
 from coverage_agent.models.config import YAMLConfig
@@ -16,7 +18,7 @@ from coverage_agent.utils import (create_llm_model,
                                   rank_reports_by_coverage)
 from dagger import Doc, dag, function, object_type
 from dagger.client.gen import Reporter
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, UnexpectedModelBehavior
 from simple_chalk import green, red, yellow
 
 
@@ -69,51 +71,28 @@ class CoverageAgent:
             print(red(f"LLM Configuration Error: {e}"))
             raise
         try:
-            pydantic_ai_model = create_llm_model(
+            cover_ai_model = create_llm_model(
                 api_key=llm_credentials.api_key,
                 base_url=llm_credentials.base_url,
                 model_name=model_name
+            )
+            review_ai_model = create_llm_model(
+                api_key=llm_credentials.api_key,
+                base_url=llm_credentials.base_url,
+                model_name='deepseek/deepseek-r1'
             )
         except Exception as e:
             # The helper function already prints the error, just re-raise
             raise
 
         unit_test_agent = create_coverai_agent(
-            pydantic_ai_model=pydantic_ai_model
+            pydantic_ai_model=cover_ai_model
         )
         unit_test_agent.instrument_all()
-
-        @unit_test_agent.system_prompt(dynamic=True)
-        async def add_current_code_module_prompt(ctx: RunContext[Dependencies]) -> str:
-            """ System Prompt: Get the current code module and any previous errors, if they exist. """
-            try:
-                if ctx.deps.current_code_module:
-                    # Start with the code module part
-                    prompt_string = f"""
-                                \n ------- \n
-                                <current_code_module> \n
-                                {ctx.deps.current_code_module.code}
-                                </current_code_module> \n
-                                \n ------- \n
-                            """
-                    # Conditionally add the error block if an error exists
-                    if ctx.deps.current_code_module.error:
-                        prompt_string += f"""
-                                \n ------- \n
-                                <resulting_errors>
-                                \n --- --- --- \n You previously tried to increase code coverage using the current_code_module.
-                                \n --- --- --- \n Here is the resulting error from your solution: {ctx.deps.current_code_module.error}
-                                \n --- --- --- \n Your task is to correct the errors with a new solution for the code_under_test to increase code coverage.
-                                </resulting_errors>
-                                \n -------- \n
-                            """
-                    return prompt_string
-                else:
-                    # No previous code module, return a simple message
-                    return "\n ------- \n <current_code_module>No current code module available. Generate the first set of tests.</current_code_module> \n ------- \n"
-            except Exception as e:
-                print(f"Error in add_current_code_module_prompt: {e}")
-                return "\n ------- \n <current_code_module>Error retrieving current code module.</current_code_module> \n ------- \n"
+        review_agent = create_code_review_agent(
+            pydantic_ai_model=review_ai_model
+        )
+        review_agent.instrument_all()
 
         builder = ContainerBuilder(config=self.config)
         source = (
@@ -133,7 +112,8 @@ class CoverageAgent:
         async def process_coverage_reports_inner(
             start_container: dagger.Container,
             limit: Optional[int],
-            agent: Agent,
+            cover_agent: Agent,
+            review_agent: Agent,
             config: YAMLConfig,
             reporter: Reporter
         ) -> dagger.Container:
@@ -163,7 +143,7 @@ class CoverageAgent:
                         f"--- Processing report {i+1}/{process_limit}: {report.file} ({report.coverage_percentage}%) ---"))
                     # Create Dependencies for this iteration
                     # IMPORTANT: Pass the *current* state of the container
-                    deps = Dependencies(
+                    deps = CoverAgentDependencies(
                         config=config,  # Use passed config
                         container=current_container,  # Use the latest container state
                         report=report,
@@ -172,17 +152,42 @@ class CoverageAgent:
                     # Run the agent
                     print(f"Running agent for report {i+1}...")
                     try:
-                        code_module_result: CodeModule = await agent.run(
+                        code_module_result: CodeModule = await cover_agent.run(
                             '''Generate unit tests to increase the code coverage based on the provided context. 
                                Always run the tests in the container. If the tests fail, 
                                please provide the error message and the code that caused the failure.''',
                             deps=deps
                         )
-                        # Update the container state for the next iteration
                         current_container = deps.container  # Agent tools modify deps.container
                         print(green(
                             f"Agent finished iteration {i+1}. Result: {code_module_result if code_module_result else 'No CodeModule'}"))
-                    except Exception as agent_err:
+
+                        review_deps = ReviewAgentDependencies(
+                            config=config,
+                            container=current_container,
+                            report=report,
+                            reporter=reporter,
+                            code_module=code_module_result,
+                        )
+                        review_agent_result = await review_agent.run(
+                            '''Review the code and try to resolve any issues. if the code is correct,
+                               please provide a message indicating that the code is correct.
+                               If the code is incorrect, please provide a message indicating that the code is incorrect and provide the correct code.''',
+                            deps=review_deps)
+                        print(green(
+                            f"Review agent finished iteration {i+1}. Result: {review_agent_result if review_agent_result else 'No ReviewAgentResult'}"))
+                        # Check if the review agent result is None
+                        if review_agent_result is None:
+                            print(
+                                red(f"Review agent returned None for report {i+1} ({report.file})."))
+                            # Skip to the next report
+                            continue
+                        elif review_agent_result.error:
+                            print(red(
+                                f"Review agent encountered an error for report {i+1} ({report.file}): {review_agent_result.error}"))
+                            # Skip to the next report
+                            continue
+                    except UnexpectedModelBehavior as agent_err:
                         print(
                             red(f"Error during agent run for report {i+1} ({report.file}): {agent_err}"))
                         # Optionally print more details
@@ -205,7 +210,8 @@ class CoverageAgent:
         final_container = await process_coverage_reports_inner(
             start_container=container,  # Start with the initially built container
             limit=self.config.test_generation.limit,  # Use limit from config
-            agent=unit_test_agent,
+            cover_agent=unit_test_agent,
+            review_agent=review_agent,
             config=self.config,
             reporter=self.reporter
         )
