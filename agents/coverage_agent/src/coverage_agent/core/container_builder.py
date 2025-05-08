@@ -51,6 +51,7 @@ class ContainerBuilder:
             container
             .with_exec(["git", "config", "--global", "user.email", self.config.git.user_email])
             .with_exec(["git", "config", "--global", "user.name", self.config.git.user_name])
+            .with_exec(["git", "config", "--global", "safe.directory", self.config.container.work_dir])
         )
 
     def build_test_environment(
