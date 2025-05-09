@@ -69,6 +69,20 @@ async def run_command(ctx: RunContext[PullRequestAgentDependencies], command: li
         The output of the command.
     """
     try:
+        # Make sure we're getting a properly formatted command
+        if len(command) < 3 or command[0] != "bash" or command[1] != "-c":
+            # If not formatted correctly, log and fix it
+            print(
+                yellow(f"Warning: Command not properly formatted: {command}"))
+            # Try to convert it to the correct format
+            if len(command) == 1:
+                # Single string command
+                command = ["bash", "-c", command[0]]
+            else:
+                # Join multiple arguments into a single command
+                command = ["bash", "-c", " ".join(command)]
+            print(yellow(f"Reformatted command: {command}"))
+
         # Execute the command and get the container
         container_with_exec = ctx.deps.container.with_exec(command)
         # Extract stdout as a string
@@ -101,7 +115,9 @@ def create_pull_request_agent(pydantic_ai_model: OpenAIModel) -> Agent:
         deps_type=PullRequestAgentDependencies,
         instrument=True,
         end_strategy="exhaustive",
-        retries=5
+        retries=5,
+        output_type=str,
+        result_retries=100
     )
 
     agent.system_prompt(get_code_under_test_prompt)

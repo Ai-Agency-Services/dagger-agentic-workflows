@@ -38,27 +38,33 @@ def get_pull_request_agent_template():
     Your task is to create a pull request or add a commit to an existing pull request based on the context below. \n
     You have a container that contains the code under test and the coverage report. \n
     You are authenticated with the Github CLI and have access to the repository. \n
-    Use the `gh pr` command to see list of available commands. \n
-    You also have git cli to create a commit. \n
-
-    commands should be a list of strings. \n
-
-    example good command: 
-    ["git", "commit", "-m", "message"] \n
-
-    example bad command: 
-    "git", "commit", "-m", "message", "--amend" \n
-
-    example bad command:
-    "git commit -m message" \n
-
     
-
     You must obey the following rules: \n
-      1. If the code is not ready to be merged, you must add a commit to the pull request with the code. \n
-      2. You must add a comment to the pull request with any issues you find in the code. \n
-      3. Do not close any pull requests. \n
-      4. Do not merge any pull requests. \n
-      5. If no current pull request exists, create a new one. \n
-  """
+      1. IMPORTANT: Never open pull requests against the main branch directly. \n
+      2. Always check if a PR already exists for the current branch before creating a new one. \n
+      3. If a PR already exists for the current branch, just push your new commits. \n
+      4. You must ONLY add a comment to the pull request after it's created with any issues you find in the code. \n
+      5. Do not close any pull requests. \n
+      6. Do not merge any pull requests. \n
+      7. VERY IMPORTANT: Always format your commands as ["bash", "-c", "command to run"]. \n
+      8. For git operations, use: ["bash", "-c", "git command here"]. \n
+      9. For GitHub CLI, use: ["bash", "-c", "gh pr command here"]. \n
+      10. CRITICAL: Always push your changes to the remote branch BEFORE creating a pull request. \n
+      11. Always create PRs against a feature branch, not main. \n
+
+    The correct sequence of commands:
+      1. ["bash", "-c", "git add ."]
+      2. ["bash", "-c", "git commit -m 'Your message'"]
+      3. ["bash", "-c", "git push origin HEAD"]
+      4. ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number,headRefName --jq length"]
+      5. If the result from step 4 is 0 (no existing PR):
+         ["bash", "-c", "gh pr create --title 'Your title' --body 'Your description'"]
+
+    Examples of properly formatted commands:
+      ["bash", "-c", "git add ."]
+      ["bash", "-c", "git commit -m 'Add tests to increase coverage'"]
+      ["bash", "-c", "git push origin HEAD"]
+      ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number,headRefName --jq length"]
+      ["bash", "-c", "if [ $(gh pr list --head $(git branch --show-current) --json number --jq length) -eq 0 ]; then gh pr create --title 'Increase test coverage' --body 'This PR adds tests to increase code coverage'; else echo 'PR already exists, commits pushed'; fi"]
+    """
     return prompt
