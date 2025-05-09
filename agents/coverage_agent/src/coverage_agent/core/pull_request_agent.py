@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import dagger
 from coverage_agent.models.config import YAMLConfig
@@ -20,6 +20,8 @@ class PullRequestAgentDependencies:
     container: dagger.Container
     reporter: 'Reporter'  # Assuming Reporter is defined elsewhere
     report: CoverageReport
+    error_context: Optional[str] = None  # For failed test generation
+    insight_context: Optional[str] = None  # For no coverage increase
 
 
 async def get_code_under_test_prompt(ctx: RunContext[PullRequestAgentDependencies]) -> str:
