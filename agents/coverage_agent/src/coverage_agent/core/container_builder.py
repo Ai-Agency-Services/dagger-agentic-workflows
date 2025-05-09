@@ -136,6 +136,7 @@ class ContainerBuilder:
             .with_secret_variable("GITHUB_TOKEN", token)
             .with_exec(["gh", "auth", "setup-git"])
             .with_exec(["gh", "auth", "status"])
+            .with_exec(["git", "add", "."])
         )
         print(green("Pull request container setup complete."))
         return container

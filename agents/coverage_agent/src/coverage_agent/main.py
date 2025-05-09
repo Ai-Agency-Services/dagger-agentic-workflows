@@ -171,23 +171,25 @@ class CoverageAgent:
                                please provide the error message and the code that caused the failure.''',
                             deps=deps
                         )
-                        current_container = deps.container  # Agent tools modify deps.container
+                        # Agent tools modify deps.container
+                        current_container = await deps.container.sync()
+
                         print(green(
                             f"Agent finished iteration {i+1}. Result: {code_module_result if code_module_result else 'No CodeModule'}"))
 
-                        # Check if the code_module_result is None
-                        if code_module_result is None:
+                        # Check if the code_module_result is None or has an error
+                        if code_module_result is None or (hasattr(code_module_result, 'error') and code_module_result.error):
+                            error_message = ""
+                            if code_module_result is None:
+                                error_message = f"Agent returned None for report {i+1} ({report.file})."
+                            else:
+                                error_message = f"Agent encountered an error: {code_module_result.error}"
+
+                            print(red(error_message))
+
+                            # Create a PR with comments about the issues
                             print(
-                                red(f"Agent returned None for report {i+1} ({report.file})."))
-                            # Skip to the next report
-                            continue
-                        elif hasattr(code_module_result, 'error') and code_module_result.error:
-                            print(red(
-                                f"Agent encountered an error for report {i+1} ({report.file}): {code_module_result.error}"))
-                            # Skip to the next report
-                            continue
-                        else:
-                            # Create a pull request if the code is correct
+                                yellow(f"Creating PR with comments for report {i+1} ({report.file})..."))
                             pull_request_container = builder.setup_pull_request_container(
                                 base_container=current_container,
                                 token=github_access_token
@@ -197,21 +199,20 @@ class CoverageAgent:
                                 container=pull_request_container,
                                 reporter=reporter,
                                 report=report,
+                                error_context=error_message  # Add the error context
                             )
                             pull_request_result = await pull_request_agent.run(
-                                '''Create a pull request with the code changes. 
-                                If the code is correct, please provide a message indicating that the code is correct.
-                                If the code is incorrect, please provide a message indicating that the code is incorrect and provide the correct code.''',
-                                deps=pull_deps)
-                            print(green(
-                                f"Pull request agent finished iteration {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
-                            # Check if the pull request result is None
-                            if pull_request_result is None:
-                                print(
-                                    red(f"Pull request agent returned None for report {i+1} ({report.file}). type: {type(pull_request_result)}"))
-                                # Skip to the next report
-                                continue
+                                '''Create a pull request with comments about the issues encountered during test generation.
+                                Include details about why the tests couldn't be generated or what problems were found.''',
+                                deps=pull_deps
+                            )
+                            print(yellow(
+                                f"Pull request with comments created for report {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
 
+                            # Skip to the next report
+                            continue
+
+                        # First review the coverage to check if it improved
                         review_deps = ReviewAgentDependencies(
                             initial_container=start_container,
                             container=current_container,
@@ -221,34 +222,72 @@ class CoverageAgent:
                         )
                         review_agent_result: CoverageReview = await review_agent.run(
                             '''Review the coverage report and determine if the coverage was increased.''',
-                            deps=review_deps)
+                            deps=review_deps
+                        )
                         print(green(
                             f"Review agent finished iteration {i+1}. Result: {review_agent_result if review_agent_result else 'No ReviewAgentResult'}"))
-                        # Check if the review agent result is None
-                        if review_agent_result is None:
+
+                        # Check if review was successful and coverage increased
+                        if review_agent_result is None or not hasattr(review_agent_result, 'coverage_increased') or not review_agent_result.coverage_increased:
+                            # Coverage was not increased, but create a PR with insights
+                            insight_message = ""
+                            if review_agent_result is None:
+                                insight_message = f"Review agent returned None for report {i+1} ({report.file})."
+                            else:
+                                insight_message = f"Coverage was NOT increased for report {i+1} ({report.file})."
+                                if hasattr(review_agent_result, 'uncovered_segments') and review_agent_result.uncovered_segments:
+                                    insight_message += f" Uncovered segments: {review_agent_result.uncovered_segments}"
+
+                            print(yellow(insight_message))
+
+                            # Create a PR with insights about code coverage
                             print(
-                                red(f"Review agent returned None for report {i+1} ({report.file})."))
-                            # Skip to the next report
-                            continue
-                        elif hasattr(review_agent_result, 'coverage_increased') and review_agent_result.coverage_increased:
-                            # Check if the review agent result has an error attribute
-                            print(red(
-                                f"Coverage was increased for report {i+1} ({report.file})."))
-                            current_container = review_deps.container  # Update container state
+                                yellow(f"Creating PR with insights for report {i+1} ({report.file})..."))
+                            pull_request_container = builder.setup_pull_request_container(
+                                base_container=current_container,
+                                token=github_access_token
+                            )
                             pull_deps = PullRequestAgentDependencies(
                                 config=config,
-                                container=current_container,
+                                container=pull_request_container,
+                                reporter=reporter,
+                                report=report,
+                                insight_context=insight_message  # Add the insight context
                             )
                             pull_request_result = await pull_request_agent.run(
-                                '''Create a pull request with the code changes. 
-                                If the code is correct, please provide a message indicating that the code is correct.
-                                If the code is incorrect, please provide a message indicating that the code is incorrect and provide the correct code.''',
-                                deps=pull_deps)
-                            print(green(
-                                f"Pull request agent finished iteration {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
+                                '''Create a pull request with insights about the code coverage.
+                                Include details about why the coverage wasn't increased and what areas need attention.''',
+                                deps=pull_deps
+                            )
+                            print(yellow(
+                                f"Pull request with insights created for report {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
+
                             # Skip to the next report
                             continue
-                        # Check if the pull request result is None
+
+                        # Coverage was increased, proceed with regular pull request
+                        print(green(
+                            f"Coverage was increased for report {i+1} ({report.file}). Creating pull request..."))
+                        current_container = await review_deps.container.sync()  # Update container state
+
+                        # Create a regular pull request with the improved code
+                        pull_request_container = builder.setup_pull_request_container(
+                            base_container=current_container,
+                            token=github_access_token
+                        )
+                        pull_deps = PullRequestAgentDependencies(
+                            config=config,
+                            container=pull_request_container,
+                            reporter=reporter,
+                            report=report,
+                        )
+                        pull_request_result = await pull_request_agent.run(
+                            '''Create a pull request with the code changes that improved test coverage.
+                            Include details about what was improved and which tests were added.''',
+                            deps=pull_deps
+                        )
+                        print(green(
+                            f"Pull request agent finished iteration {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
 
                     except UnexpectedModelBehavior as agent_err:
                         print(
