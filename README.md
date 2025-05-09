@@ -111,6 +111,7 @@ validate-config        Validate the configuration file
 ```
 
 <h2>Jest implementation</h2> 
+
 ```
 dagger.json
 
