@@ -188,9 +188,13 @@ class CoverageAgent:
                             continue
                         else:
                             # Create a pull request if the code is correct
+                            pull_request_container = builder.setup_pull_request_container(
+                                base_container=current_container,
+                                token=github_access_token
+                            )
                             pull_deps = PullRequestAgentDependencies(
                                 config=config,
-                                container=current_container,
+                                container=pull_request_container,
                                 reporter=reporter,
                                 report=report,
                             )
@@ -200,7 +204,13 @@ class CoverageAgent:
                                 If the code is incorrect, please provide a message indicating that the code is incorrect and provide the correct code.''',
                                 deps=pull_deps)
                             print(green(
-                                f"Pull request agent finished iteration {i+1}. Result: {pull_request_result.output if pull_request_result else 'No PullRequestAgentResult'}"))
+                                f"Pull request agent finished iteration {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
+                            # Check if the pull request result is None
+                            if pull_request_result is None:
+                                print(
+                                    red(f"Pull request agent returned None for report {i+1} ({report.file}). type: {type(pull_request_result)}"))
+                                # Skip to the next report
+                                continue
 
                         review_deps = ReviewAgentDependencies(
                             initial_container=start_container,
