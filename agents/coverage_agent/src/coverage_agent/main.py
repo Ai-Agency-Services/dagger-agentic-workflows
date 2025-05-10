@@ -1,12 +1,13 @@
+import os
 import traceback
 from typing import Annotated, Optional
 
 import dagger
 import logfire
-from coverage_agent.core.coverage_review_agent import (ReviewAgentDependencies,
-                                                       create_coverage_review_agent)
 from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
+from coverage_agent.core.coverage_review_agent import (
+    ReviewAgentDependencies, create_coverage_review_agent)
 from coverage_agent.core.coverai_agent import (CoverAgentDependencies,
                                                create_coverai_agent)
 from coverage_agent.core.pull_request_agent import (
@@ -21,6 +22,8 @@ from coverage_agent.utils import (create_llm_model,
                                   rank_reports_by_coverage)
 from dagger import Doc, dag, function, object_type
 from dagger.client.gen import Reporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import \
+    OTLPSpanExporter
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from simple_chalk import green, red, yellow
 
@@ -54,9 +57,19 @@ class CoverageAgent:
             "OpenRouter API key (required if provider is 'openrouter')")] = None,
         openai_api_key: Annotated[Optional[dagger.Secret], Doc(
             "OpenAI API key (required if provider is 'openai')")] = None,
+        otel_endpoint: Annotated[Optional[str], Doc(
+            "OpenTelemetry endpoint (optional, for tracing)")] = None,
 
     ) -> Optional[dagger.Container]:
         """Generate unit tests for a given repository using the CoverAI agent."""
+        # os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = otel_endpoint if otel_endpoint else ""
+        # os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = otel_headers if otel_headers else ""
+        exporter = OTLPSpanExporter(
+            endpoint=otel_endpoint if otel_endpoint else "",
+            headers={'Authorization': logfire_access_token.plaintext()
+                     if logfire_access_token else ""},
+        )
+
         if logfire_access_token:
             logfire.configure(token=await logfire_access_token.plaintext(),
                               send_to_logfire=True,
@@ -112,7 +125,7 @@ class CoverageAgent:
             .with_auth_token(github_access_token)
             .branch(branch)
             .tree()
-        )
+        ).terminal()
         container = builder.build_test_environment(
             source=source,
             dockerfile_path=self.config.container.docker_file_path,
