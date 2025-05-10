@@ -106,7 +106,6 @@ get-code-under-test    Extract code under test from the coverage HTML report
 get-coverage-html      Get the coverage HTML file from the report file
 get-coverage-reports   Extract coverage data from the HTML input and create a JSON file with the data
 parse-test-results     Parse the test results JSON file and return a str with the failed tests
-validate-config        Validate the configuration file
 ```
 Reporter Plugin Interface - see [here](../coverage_agent/plugins/reporter/src/reporter/main.py)
 
