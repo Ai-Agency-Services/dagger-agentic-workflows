@@ -1,33 +1,13 @@
 # GitHub Dagger Agents
 
-<!--
-<style>
-    body { font-family: Arial, sans-serif; background-color: #0d1117; color: white; padding: 20px; }
-    h1, h3 { border-bottom: 1px solid #30363d; padding-bottom: 0.3em; }
-    code { background-color: #161b22; padding: 0.2em 0.4em; border-radius: 4px; }
-    pre { background-color: #161b22; padding: 1em; border-radius: 6px; overflow: auto; }
-    a { color: #58a6ff; text-decoration: underline; }
-    ul { list-style-type: disc; margin-left: 20px; }
-    strong { font-weight: bold; }
-</style>
--->
+Coverage.Ai Agent
 
-Cover.ai Agent
+Prerequisites for Local Dev Setup
 
-<br>
+1. Install Dagger.io (IMPORTANT: For now, our agent works on Dagger version 0.18.5, instructions on how to install a specfic version of Dagger can be found [here](https://docs.dagger.io/install/))
 
-<div>
-<h1>Prerequisites for Local Dev Setup</h1>
-
-1. Install Dagger.io (Instructions can be found <a target="_blank" href="https://docs.dagger.io/install"/> here</a>)
-
-</div>
-
-<br>
-
-<div>
     
-<h1>Configuration</h1>
+## Configuration
 
 1. All repositories should be configured to run tests and generate coverage reports.
 
@@ -37,19 +17,13 @@ Cover.ai Agent
 
 4. Create a `config.yaml` file anywhere on desk with the following content:
 
-This is a sample configuration file for our [Github-Dagger-Agent Repo]:
+This is a sample configuration file for our [Github-Dagger-Agent Repo](../../agents/coverage_agent/demo/agencyservices.yaml):
 ```
 $schema: http://json-schema.org/draft-07/schema#
 
 container:
     work_dir: "/app"
     docker_file_path: "./dockerfile"
-
-core_api:
-    model: "openai/gpt-4o"
-    fallback_models:
-        - "openai/gpt-4o"
-        - "openai/gpt-3.5-turbo"
 
 git:
     user_email: "AiTestGen@users.noreply.github.com"
@@ -58,18 +32,36 @@ git:
 reporter:
     name: "jest"
     command: "npm run test:coverage"
-    output_path: "/app/coverage_reports/testResults.json"
-    report_directory: "/app/coverage_reports"
+    output_path: "/app/coverage/testResults.json"
+    report_directory: "/app/coverage"
 
 test_generation:
     iterations: 1
-    save_next_to_code_under_test: false
-    test_directory: "tests"
+    limit: 1
+    save_next_to_code_under_test: true
+    test_directory: "n/a"
     test_suffix: "test"
 ```
-</div>
 
-<h1>Usage</h1>
+### Briefly covering all of the parameters within the config:
+
+work_dir refers to the working directory, which you define within the dockerfile itself \
+docker_file_path is where you created your dockerfile in the repository that you want to generate tests for.
+
+user_email refers to the email that the agent will adopt when making changes to your repo \
+user_name refers to the username that the agent will adopt whenever changes are made to the repo.
+
+name refers to the name of the plugin, in this case it is Jest (Pytest is also supported!)\
+output_file_path points to the file that your reporter reads for the test results \
+report_directory is unique to your repo and should be replaced with the directory you want your reports to be stored in.
+
+Note that save_next_to_code_under_test and test_directory toggle each other. \
+If you set save_next_to_code_under_test to be true, set test_directory to n/a. If you set save_next_to_code_under_test to be false, then you must set test_directory to a directory.
+
+
+
+
+## Usage
 
 In order to see all functions available with these agents, type in the following command using Dagger: ``` dagger functions ```
 
@@ -87,21 +79,28 @@ ARGUMENTS
 ```
 Here, we provide the config file, a GitHub classic token, the target branch, an optional Logfire token, the desired model, an API key (OpenRouter or OpenAI), and specify the provider (Openrouter or Openai).
 
-<p> In order to generate a Github token, please visit <a href="https://github.com/settings/tokens">here</a> (Remember that your token is supposed to be a classic token). </p>
-<p> For OpenAI API keys, you must create an OpenAI account and generate a key <a href="https://platform.openai.com/api-keys">here</a>. </p>
-<p> For OpenRouter API keys, you must create an OpenRouter account and generate a key <a href="https://openrouter.ai/settings/keys">here</a>. </p>
-
-<br>
+In order to generate a Github token, please visit [here](https://github.com/settings/tokens) (Remember that your token is supposed to be a classic token).\
+For OpenAI API keys, you must create an OpenAI account and generate a key [here](https://platform.openai.com/api-keys).\
+For OpenRouter API keys, you must create an OpenRouter account and generate a key [here](https://openrouter.ai/settings/keys).
 
 An example of what a call to dagger using the REQUIRED arguments is:
 
 ``` bash
-dagger call --config-file ./demo/agencyservices.yaml generate-unit-tests --github-access-token=env:GITHUB_TOKEN --repository-url https://github.com/Siafu/agencyservices-ai.git --open-router-api-key=env:OPEN_ROUTER_API_KEY --provider openrouter --branch feat/loveable-pairing --model-name x-ai/grok-3-mini-beta
+dagger call --config-file ./demo/agencyservices.yaml
+generate-unit-tests
+--github-access-token=env:GITHUB_TOKEN
+--repository-url https://github.com/Siafu/agencyservices-ai.git
+--open-router-api-key=env:OPEN_ROUTER_API_KEY
+--provider openrouter
+--branch feat/loveable-pairing
+--model-name x-ai/grok-3-mini-beta
 ```
 
-<h1>Extensibility</h1>
+# Extensibility
 
-<span>Reporter Plugin Interface - see <a href="../coverage_agent/plugins/reporter/src/reporter/main.py">here</a></span>
+### Currently supported plugins: Jest and Pytest
+
+### To add your own reporter plugin, you must implement the following interface: 
 ```
 get-code-under-test    Extract code under test from the coverage HTML report
 get-coverage-html      Get the coverage HTML file from the report file
@@ -109,14 +108,15 @@ get-coverage-reports   Extract coverage data from the HTML input and create a JS
 parse-test-results     Parse the test results JSON file and return a str with the failed tests
 validate-config        Validate the configuration file
 ```
+Reporter Plugin Interface - see [here](../coverage_agent/plugins/reporter/src/reporter/main.py)
 
-<h2><a href="../coverage_agent/plugins/reporter/jest/src/jest_reporter_plugin/main.py">Click here for Jest implementation </a></h2> 
+## [Click here for Jest implementation](../coverage_agent/plugins/reporter/jest/src/jest_reporter_plugin/main.py)
 
-<br>
+## [Click here for Pytest implementation](../coverage_agent/plugins/reporter/pytest/src/pytest_reporter_plugin/main.py)
 
-<h1>Workflow</h1>
+# Agentic Workflow
 
-```mermaid
+``` mermaid
 flowchart TD
     start[Start Test Generation] --> build[Build Test Environment Container]
     build --> getCoverage[Get Coverage Reports]
@@ -173,3 +173,6 @@ flowchart TD
     end
 
 ```
+
+
+[def]: https://docs.dagger.io/install/
