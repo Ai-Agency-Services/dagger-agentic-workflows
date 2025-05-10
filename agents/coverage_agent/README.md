@@ -101,7 +101,7 @@ dagger call --config-file ./demo/agencyservices.yaml generate-unit-tests --githu
 
 <h1>Extensibility</h1>
 
-<span>Reporter Plugin Interface - see <a href="../../plugins/reporter/src/reporter/main.py">here</a></span>
+<span>Reporter Plugin Interface - see <a href="../coverage_agent/plugins/reporter/src/reporter/main.py">here</a></span>
 ```
 get-code-under-test    Extract code under test from the coverage HTML report
 get-coverage-html      Get the coverage HTML file from the report file
@@ -110,7 +110,7 @@ parse-test-results     Parse the test results JSON file and return a str with th
 validate-config        Validate the configuration file
 ```
 
-<h2><a href="../../../coverage_agent/plugins/reporter/jest/src/jest_reporter_plugin/main.py">Click here for Jest implementation </a></h2> 
+<h2><a href="../coverage_agent/plugins/reporter/jest/src/jest_reporter_plugin/main.py">Click here for Jest implementation </a></h2> 
 
 <br>
 
