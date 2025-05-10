@@ -17,9 +17,7 @@ Cover.ai Agent
 <br>
 
 <div>
-<h1>Prerequisites</h1>
-
-<!-- THIS IS ONLY GOOD FOR LOCAL DEV SETUPS *** -->
+<h1>Prerequisites for Local Dev Setup</h1>
 
 1. Install Dagger.io (Instructions can be found <a target="_blank" href="https://docs.dagger.io/install"/> here</a>)
 

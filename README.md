@@ -19,5 +19,5 @@
 <h1>Arachnid</h1>
 
 <h3>Agents</h3>
-<a href="agents/coverage_agent/README.md"> <img src="docs/images/robot_ant_3.png" alt="Install Icon" width="500"></a>
+<a href="agents/coverage_agent/README.md"> <img src="docs/images/robot_ant_3.png" alt="Picture of the agent's avatar" width="500"></a>
 <p>If you want to know learn more about the coverage agent, please visit <a href="agents/coverage_agent/src/coverage_agent/README.md">here</a></p>
