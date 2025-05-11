@@ -197,25 +197,35 @@ async def get_code_under_test_directory(
         return "."  # Default to current directory on error
 
 
-def rank_reports_by_coverage(coverage_reports: List[CoverageReport]) -> List[str]:
+def rank_reports_by_coverage(coverage_reports: List[CoverageReport]) -> List[CoverageReport]:
     """
     Rank the modules based on the lack of coverage calculated by analyzing the statement, branches, and function percentages.
-
-    Args:
-        coverage_summary (list): The summary of the coverage report contained in a list.
-
-    Returns:
-        List[str]: The ranked files based on the lack of coverage.
     """
+    # Debug before filtering
+    print(f"Total reports before filtering: {len(coverage_reports)}")
+
+    # Files with coverage >= this threshold will be considered "fully covered"
+    COVERAGE_THRESHOLD = 99.9
+
+    # Filter out modules with coverage at or above threshold
+    filtered_modules = [
+        module for module in coverage_reports if module.coverage_percentage < COVERAGE_THRESHOLD
+    ]
+
+    # Debug after filtering
+    print(
+        f"Reports after filtering files with ≥{COVERAGE_THRESHOLD}% coverage: {len(filtered_modules)}")
 
     # Sort the files based on coverage_percentage in ascending order (lowest coverage first)
-    filtered_modules = [
-        module for module in coverage_reports if module.coverage_percentage < 100.0
-    ]
     sorted_modules = sorted(
         filtered_modules, key=lambda x: x.coverage_percentage)
-    for module in sorted_modules:
-        print(green(f"{module.file} - Coverage {module.coverage_percentage} %"))
+
+    # Print top 5 files to be processed
+    if sorted_modules:
+        print("Top 5 files to process:")
+        for i, module in enumerate(sorted_modules[:5]):
+            print(f"  {i+1}. {module.file}: {module.coverage_percentage}%")
+
     return sorted_modules
 
 

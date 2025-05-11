@@ -24,6 +24,8 @@ def extract_coverage_data_from_table(
                 if folder
                 else f"{report_directory}/{path}"
             )
+
+            # Extract all the percentages
             statements_percentage = float(
                 columns[2].text.strip().replace("%", ""))
             branches_percentage = float(
@@ -31,20 +33,20 @@ def extract_coverage_data_from_table(
             functions_percentage = float(
                 columns[6].text.strip().replace("%", ""))
             lines_percentage = float(columns[8].text.strip().replace("%", ""))
-            coverage_percentage = round(
-                (
-                    statements_percentage
-                    + branches_percentage
-                    + functions_percentage
-                    + lines_percentage
-                )
-                / 4,
-                2,
-            )
+
+            # Use statement coverage as the main metric (matching Jest UI)
+            coverage_percentage = statements_percentage
+
+            # Optional: Store all metrics if needed
             data = {
                 "file": file,
                 "coverage_report_path": coverage_report_path,
                 "coverage_percentage": coverage_percentage,
+                # Optional: include individual metrics
+                "statements_percentage": statements_percentage,
+                "branches_percentage": branches_percentage,
+                "functions_percentage": functions_percentage,
+                "lines_percentage": lines_percentage
             }
             coverage_data.append(data)
     return coverage_data
@@ -55,33 +57,30 @@ def extract_coverage_data_from_row(
     report_directory: str,
 ) -> List[CoverageReport]:
     """Extract coverage data from HTML coverage report."""
-    # soup = BeautifulSoup(row, "html.parser")
     coverage_data = []
-
-    # Iterate through each row in the coverage summary table
     columns = row.find_all("td")
     if columns:
         file = columns[0].text.strip()
         path = columns[0].select("a")[0]["href"]
         coverage_report_path = f"{report_directory}/{path}"
+
         statements_percentage = float(columns[2].text.strip().replace("%", ""))
         branches_percentage = float(columns[4].text.strip().replace("%", ""))
         functions_percentage = float(columns[6].text.strip().replace("%", ""))
         lines_percentage = float(columns[8].text.strip().replace("%", ""))
-        coverage_percentage = round(
-            (
-                statements_percentage
-                + branches_percentage
-                + functions_percentage
-                + lines_percentage
-            )
-            / 4,
-            2,
-        )
+
+        # Use statement coverage as the main metric
+        coverage_percentage = statements_percentage
+
         data = {
             "file": file,
             "coverage_report_path": coverage_report_path,
             "coverage_percentage": coverage_percentage,
+            # Optional: include individual metrics
+            "statements_percentage": statements_percentage,
+            "branches_percentage": branches_percentage,
+            "functions_percentage": functions_percentage,
+            "lines_percentage": lines_percentage
         }
         coverage_data.append(data)
     return coverage_data
