@@ -1,4 +1,5 @@
 import dagger
+import logfire
 from coverage_agent.models.config import YAMLConfig
 from dagger import dag
 from simple_chalk import green, red, yellow
@@ -54,11 +55,12 @@ class ContainerBuilder:
             .with_exec(["git", "config", "--global", "safe.directory", self.config.container.work_dir])
         )
 
-    def build_test_environment(
+    async def build_test_environment(
         self,
         source: dagger.Directory,
         config: YAMLConfig,
         dockerfile_path: str = None,
+        logfire_access_token: dagger.Secret = None,
     ) -> dagger.Container:
         """
         Builds the primary container environment for testing.
@@ -82,10 +84,22 @@ class ContainerBuilder:
             try:
                 print(
                     f"Attempting to build container from Dockerfile: {dockerfile_path}")
-                base_container = dag.container().with_workdir(config.container.work_dir).build(
-                    context=source,
-                    dockerfile=dockerfile_path  # Path relative to context
-                )
+                if logfire_access_token:
+                    logfire.configure(token=await logfire_access_token.plaintext(),
+                                      send_to_logfire=True,
+                                      service_name="coverage-agent",
+                                      )
+                base_container = (
+                    dag.container()
+                    .with_workdir(config.container.work_dir)
+                    .with_env_variable("OTEL_EXPORTER_OTLP_ENDPOINT", "https://logfire-api.pydantic.dev")
+                    .with_env_variable("OTEL_EXPORTER_OTLP_HEADERS", f"Authorization={await logfire_access_token.plaintext()}")
+                    .with_env_variable("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "https://logfire-api.pydantic.dev/v1/metrics")
+                    .with_env_variable("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "https://logfire-api.pydantic.dev/v1/logs")
+                    .build(
+                        context=source,
+                        dockerfile=dockerfile_path  # Path relative to context
+                    ))
                 print(
                     green(f"Successfully built base container from Dockerfile: {dockerfile_path}"))
             except Exception as e:

@@ -3,7 +3,6 @@ import traceback
 from typing import Annotated, Optional
 
 import dagger
-import logfire
 from coverage_agent.core.configuration_loader import ConfigurationLoader
 from coverage_agent.core.container_builder import ContainerBuilder
 from coverage_agent.core.coverage_review_agent import (
@@ -22,10 +21,12 @@ from coverage_agent.utils import (create_llm_model,
                                   rank_reports_by_coverage)
 from dagger import Doc, dag, function, object_type
 from dagger.client.gen import Reporter
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import \
-    OTLPSpanExporter
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from simple_chalk import green, red, yellow
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
 
 @object_type
@@ -56,30 +57,30 @@ class CoverageAgent:
         open_router_api_key: Annotated[Optional[dagger.Secret], Doc(
             "OpenRouter API key (required if provider is 'openrouter')")] = None,
         openai_api_key: Annotated[Optional[dagger.Secret], Doc(
-            "OpenAI API key (required if provider is 'openai')")] = None,
-        otel_endpoint: Annotated[Optional[str], Doc(
-            "OpenTelemetry endpoint (optional, for tracing)")] = None,
+            "OpenAI API key (required if provider is 'openai')")] = None
 
     ) -> Optional[dagger.Container]:
         """Generate unit tests for a given repository using the CoverAI agent."""
-        # os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = otel_endpoint if otel_endpoint else ""
-        # os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = otel_headers if otel_headers else ""
-        exporter = OTLPSpanExporter(
-            endpoint=otel_endpoint if otel_endpoint else "",
-            headers={'Authorization': logfire_access_token.plaintext()
-                     if logfire_access_token else ""},
-        )
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://logfire-api.pydantic.dev"
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization={await logfire_access_token.plaintext() if logfire_access_token else ""}"
+        os.environ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] = 'https://logfire-api.pydantic.dev/v1/metrics'
+        os.environ["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] = 'https://logfire-api.pydantic.dev/v1/logs'
 
         if logfire_access_token:
-            logfire.configure(token=await logfire_access_token.plaintext(),
-                              send_to_logfire=True,
-                              service_name="coverage-agent",
-                              )
+            tracer_provider = TracerProvider()  # Renamed from provider to tracer_provider
+            processor = BatchSpanProcessor(OTLPSpanExporter(
+                endpoint="https://logfire-api.pydantic.dev/v1/traces",
+                headers={"Authorization": await logfire_access_token.plaintext()},
+            ))
+            tracer_provider.add_span_processor(processor)
+            trace.set_tracer_provider(tracer_provider)
+
         self.config = YAMLConfig(**self.config)
-        print(f"Configuring LLM provider: {provider}")  # Add logging
+        # This now correctly prints the provider string
+        print(f"Configuring LLM provider: {provider}")
         try:
             llm_credentials = await get_llm_credentials(
-                provider=provider,
+                provider=provider,  # This is now correctly the string parameter
                 open_router_key=open_router_api_key,
                 openai_key=openai_api_key,
             )
@@ -100,7 +101,7 @@ class CoverageAgent:
             pull_request_ai_model = create_llm_model(
                 api_key=llm_credentials.api_key,
                 base_url=llm_credentials.base_url,
-                model_name='openai/gpt-4o-mini'
+                model_name='x-ai/grok-3-mini-beta'
             )
         except Exception as e:
             # The helper function already prints the error, just re-raise
@@ -120,16 +121,19 @@ class CoverageAgent:
         pull_request_agent.instrument_all()
 
         builder = ContainerBuilder(config=self.config)
+
         source = (
             await dag.git(url=repository_url, keep_git_dir=True)
             .with_auth_token(github_access_token)
             .branch(branch)
             .tree()
-        ).terminal()
-        container = builder.build_test_environment(
+        )
+
+        container = await builder.build_test_environment(
             source=source,
             dockerfile_path=self.config.container.docker_file_path,
-            config=self.config
+            config=self.config,
+            logfire_access_token=logfire_access_token
         )
         print(green("Test environment container built successfully."))
 
@@ -219,15 +223,22 @@ class CoverageAgent:
                                 Include details about why the tests couldn't be generated or what problems were found.''',
                                 deps=pull_deps
                             )
-                            print(yellow(
-                                f"Pull request with comments created for report {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
+                            if pull_request_result:
+                                print(
+                                    green(f"PR created successfully for report {i+1}"))
+                            else:
+                                print(
+                                    yellow(f"PR creation may have failed for report {i+1}"))
+
+                            # Add after PR operations:
+                            current_container = await pull_deps.container.sync()
 
                             # Skip to the next report
                             continue
 
                         # First review the coverage to check if it improved
                         review_deps = ReviewAgentDependencies(
-                            initial_container=start_container,
+                            config=config,
                             container=current_container,
                             report=report,
                             reporter=reporter,
@@ -241,6 +252,14 @@ class CoverageAgent:
                             f"Review agent finished iteration {i+1}. Result: {review_agent_result if review_agent_result else 'No ReviewAgentResult'}"))
 
                         # Check if review was successful and coverage increased
+                        print(
+                            yellow(f"Debug: review_agent_result = {review_agent_result}"))
+                        if hasattr(review_agent_result, 'coverage_increased'):
+                            print(
+                                yellow(f"Debug: coverage_increased = {review_agent_result.coverage_increased}"))
+                            print(
+                                yellow(f"Debug: type = {type(review_agent_result.coverage_increased)}"))
+
                         if review_agent_result is None or not hasattr(review_agent_result, 'coverage_increased') or not review_agent_result.coverage_increased:
                             # Coverage was not increased, but create a PR with insights
                             insight_message = ""
@@ -272,8 +291,15 @@ class CoverageAgent:
                                 Include details about why the coverage wasn't increased and what areas need attention.''',
                                 deps=pull_deps
                             )
-                            print(yellow(
-                                f"Pull request with insights created for report {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
+                            if pull_request_result:
+                                print(
+                                    green(f"PR created successfully for report {i+1}"))
+                            else:
+                                print(
+                                    yellow(f"PR creation may have failed for report {i+1}"))
+
+                            # Add after PR operations:
+                            current_container = await pull_deps.container.sync()
 
                             # Skip to the next report
                             continue
@@ -299,8 +325,15 @@ class CoverageAgent:
                             Include details about what was improved and which tests were added.''',
                             deps=pull_deps
                         )
-                        print(green(
-                            f"Pull request agent finished iteration {i+1}. Result: {pull_request_result if pull_request_result else 'No PullRequestAgentResult'}"))
+                        if pull_request_result:
+                            print(
+                                green(f"PR created successfully for report {i+1}"))
+                        else:
+                            print(
+                                yellow(f"PR creation may have failed for report {i+1}"))
+
+                        # Add after PR operations:
+                        current_container = await pull_deps.container.sync()
 
                     except UnexpectedModelBehavior as agent_err:
                         print(

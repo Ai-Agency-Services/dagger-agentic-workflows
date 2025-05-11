@@ -21,13 +21,29 @@ def get_system_template():
 
 def get_review_agent_template():
     prompt = f"""
-    Your are a senior software engineer manager who is reviewing an initial coverage report against a current one.
-    Your task is to do a complete review and determine if coverage was increased. \n
-
+    You are a senior software engineer manager who is reviewing test results.
+    Your task is to determine if the tests are passing successfully. \n
+    
     You must obey the following rules: \n
-      1. If the coverage was increased, you must return True. \n
-      2. If the coverage was not increased, you must return False. \n
-      3. If the code under test isn't 100% covered, you must return a list of uncovered code segments in the coverage report. \n
+      1. Set coverage_increased=True ONLY IF:
+         - All tests pass (exit_code="0")
+         - No errors are present in the test output
+      
+      2. Set coverage_increased=False if ANY of these conditions apply:
+         - Any tests are failing (exit_code is not "0")
+         - Test execution resulted in errors
+         - Test output contains failure messages
+      
+      3. When reviewing test results, check both the exit_code and actual test output
+      
+      4. Ignore actual coverage metrics - the only thing that matters is if the tests are passing
+      
+      5. Be strict in your assessment - only set coverage_increased=True when tests are 
+         definitely passing with no errors or warnings
+         
+      6. In the uncovered_segments field, list any test failures or errors that are occurring
+      
+      7. In the notes field, explain why you determined the tests are passing or failing
   """
     return prompt
 
@@ -54,38 +70,31 @@ def get_pull_request_agent_template():
       12. Always create PRs against a feature branch, not main. \n
       13. If you encounter an error that a PR already exists, do not try to create a new one. \n
       14. After pushing changes, always add a comment to the existing PR with what changed. \n
+      15. ALWAYS prefix all commit messages with "[CoverAI]" to distinguish them from human commits. \n
+      16. ALWAYS prefix all PR titles with "[CoverAI]" to distinguish them from human-created PRs. \n
+      17. Always add "automated-pr" and "test-coverage" labels to PRs you create. \n
 
     The correct sequence of commands when no PR exists:
       1. ["bash", "-c", "git status"]
       2. ["bash", "-c", "git add ."]
-      3. ["bash", "-c", "git commit -m 'Your message'"]
+      3. ["bash", "-c", "git commit -m '[CoverAI] Your message'"]
       4. ["bash", "-c", "git push origin HEAD"]
       5. ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number,headRefName --jq length"]
       6. If the result from step 5 is 0 (no existing PR):
-         ["bash", "-c", "gh pr create --title 'Your title' --body 'Your description'"]
+         ["bash", "-c", "gh pr create --title '[CoverAI] Your title' --body 'This PR was automatically created by CoverAI Bot.' --label 'automated-pr,test-coverage'"]
       
     The correct sequence of commands when a PR already exists:
       1. ["bash", "-c", "git status"]
       2. ["bash", "-c", "git add ."]
-      3. ["bash", "-c", "git commit -m 'Update: Your message'"]
+      3. ["bash", "-c", "git commit -m '[CoverAI] Update: Your message'"]
       4. ["bash", "-c", "git push origin HEAD"]
       5. ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number --jq '.[0].number'"]
-      6. ["bash", "-c", "gh pr comment $(gh pr list --head $(git branch --show-current) --json number --jq '.[0].number') --body 'Added additional changes: Description of what was changed'"]
-
-    Examples of handling existing PR errors:
-      If you run a command and see output containing "a pull request for branch X into branch Y already exists", do:
-      1. ["bash", "-c", "git add ."]
-      2. ["bash", "-c", "git commit -m 'Update existing PR with additional changes'"]
-      3. ["bash", "-c", "git push origin HEAD"]
-      4. ["bash", "-c", "gh pr comment $(gh pr list --head $(git branch --show-current) --json number --jq '.[0].number') --body 'Added additional changes to improve coverage'"]
+      6. ["bash", "-c", "gh pr comment $(gh pr list --head $(git branch --show-current) --json number --jq '.[0].number') --body '[CoverAI Bot] Added additional changes: Description of what was changed'"]
 
     Examples of properly formatted commands:
-      ["bash", "-c", "git status"]
       ["bash", "-c", "git add ."]
-      ["bash", "-c", "git commit -m 'Add tests to increase coverage'"]
+      ["bash", "-c", "git commit -m '[CoverAI] Add tests to increase coverage'"]
       ["bash", "-c", "git push origin HEAD"]
-      ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number,headRefName --jq length"]
-      ["bash", "-c", "if [ $(gh pr list --head $(git branch --show-current) --json number --jq length) -eq 0 ]; then gh pr create --title 'Increase test coverage' --body 'This PR adds tests to increase code coverage'; else echo 'PR already exists, commits pushed'; fi"]
-      ["bash", "-c", "gh pr comment $(gh pr list --head $(git branch --show-current) --json number --jq '.[0].number') --body 'Added additional test coverage for the component'"]
+      ["bash", "-c", "gh pr create --title '[CoverAI] Increase test coverage' --body 'This PR was automatically created by CoverAI Bot to improve code coverage.' --label 'automated-pr,test-coverage'"]
     """
     return prompt

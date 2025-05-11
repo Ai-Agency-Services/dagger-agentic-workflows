@@ -117,7 +117,7 @@ def create_pull_request_agent(pydantic_ai_model: OpenAIModel) -> Agent:
         deps_type=PullRequestAgentDependencies,
         instrument=True,
         end_strategy="exhaustive",
-        retries=5,
+        retries=15,
         output_type=str,
         result_retries=100
     )

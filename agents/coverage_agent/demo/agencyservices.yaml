@@ -22,7 +22,6 @@ reporter:
 
 test_generation:
     iterations: 1
-    limit: 1
     save_next_to_code_under_test: true
     test_directory: "n/a"
     test_suffix: "test"
