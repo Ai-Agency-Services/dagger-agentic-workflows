@@ -43,7 +43,7 @@ test_generation:
     test_suffix: "test"
 ```
 
-### Briefly covering all of the parameters within the config:
+### Briefly covering all of the properties within the config:
 
 work_dir refers to the working directory, which you define within the dockerfile itself \
 docker_file_path is where you created your dockerfile in the repository that you want to generate tests for.
