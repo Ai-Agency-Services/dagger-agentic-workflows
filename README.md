@@ -7,5 +7,7 @@ This Github repo is a mono repository that contains an accumulation of agentic G
 ## Arachnid
 
 ## Agents
-[![Coverage.Ai Agent avatar](docs/images/truly_fixed_robot_ant_4.png)](agents/coverage_agent/README.md)
-### If you want to know learn more about the coverage agent, please visit [here](agents/coverage_agent/README.md)
+
+### Cover.Ai Agent
+[![Coverage.Ai Agent avatar](docs/images/fixed_robot_ant_4.png)](agents/coverage_agent/README.md)
+### [Click here to learn more](agents/coverage_agent/README.md)
