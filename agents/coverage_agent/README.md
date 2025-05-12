@@ -4,7 +4,7 @@ Coverage.Ai Agent
 
 Prerequisites for Local Dev Setup
 
-1. Install Dagger.io (IMPORTANT: For now, our agent works on Dagger version 0.18.5, instructions on how to install a specfic version of Dagger can be found [here](https://docs.dagger.io/install/))
+1. Install Dagger.io (IMPORTANT: For now, our agent works on Dagger version `0.18.5`, instructions on how to install a specfic version of Dagger can be found [here](https://docs.dagger.io/install/))
 
 ## Configuration
 
