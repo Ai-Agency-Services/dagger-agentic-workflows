@@ -14,7 +14,7 @@ from coverage_agent.core.pull_request_agent import (
 from coverage_agent.models.code_module import CodeModule
 from coverage_agent.models.config import YAMLConfig
 from coverage_agent.models.coverage_report import CoverageReport
-from coverage_agent.models.coverage_review import CoverageReview
+from coverage_agent.models.test_review import TestReview
 from coverage_agent.utils import (create_llm_model,
                                   dagger_json_file_to_pydantic,
                                   get_llm_credentials,
@@ -196,6 +196,7 @@ class CoverageAgent:
 
                         # Check if the code_module_result is None or has an error
                         if code_module_result is None or (hasattr(code_module_result, 'error') and code_module_result.error):
+                            # Test generation failed, create PR with insights
                             error_message = ""
                             if code_module_result is None:
                                 error_message = f"Agent returned None for report {i+1} ({report.file})."
@@ -204,9 +205,9 @@ class CoverageAgent:
 
                             print(red(error_message))
 
-                            # Create a PR with comments about the issues
+                            # Create a PR with insights about the issues
                             print(
-                                yellow(f"Creating PR with comments for report {i+1} ({report.file})..."))
+                                yellow(f"Creating PR with insights for report {i+1} ({report.file})..."))
                             pull_request_container = builder.setup_pull_request_container(
                                 base_container=current_container,
                                 token=github_access_token
@@ -216,10 +217,10 @@ class CoverageAgent:
                                 container=pull_request_container,
                                 reporter=reporter,
                                 report=report,
-                                error_context=error_message  # Add the error context
+                                insight_context=error_message  # Add the error context
                             )
                             pull_request_result = await pull_request_agent.run(
-                                '''Create a pull request with comments about the issues encountered during test generation.
+                                '''Create a pull request with insights about the issues encountered.
                                 Include details about why the tests couldn't be generated or what problems were found.''',
                                 deps=pull_deps
                             )
@@ -236,80 +237,11 @@ class CoverageAgent:
                             # Skip to the next report
                             continue
 
-                        # First review the coverage to check if it improved
-                        review_deps = ReviewAgentDependencies(
-                            config=config,
-                            container=current_container,
-                            report=report,
-                            reporter=reporter,
-                            code_module=code_module_result,
-                        )
-                        review_agent_result: CoverageReview = await review_agent.run(
-                            '''Review the coverage report and determine if the coverage was increased.''',
-                            deps=review_deps
-                        )
+                        # Tests were generated successfully, create PR with new code
                         print(green(
-                            f"Review agent finished iteration {i+1}. Result: {review_agent_result if review_agent_result else 'No ReviewAgentResult'}"))
+                            f"Successfully generated tests for report {i+1} ({report.file}). Creating pull request..."))
 
-                        # Check if review was successful and coverage increased
-                        print(
-                            yellow(f"Debug: review_agent_result = {review_agent_result}"))
-                        if hasattr(review_agent_result, 'coverage_increased'):
-                            print(
-                                yellow(f"Debug: coverage_increased = {review_agent_result.coverage_increased}"))
-                            print(
-                                yellow(f"Debug: type = {type(review_agent_result.coverage_increased)}"))
-
-                        if review_agent_result is None or not hasattr(review_agent_result, 'coverage_increased') or not review_agent_result.coverage_increased:
-                            # Coverage was not increased, but create a PR with insights
-                            insight_message = ""
-                            if review_agent_result is None:
-                                insight_message = f"Review agent returned None for report {i+1} ({report.file})."
-                            else:
-                                insight_message = f"Coverage was NOT increased for report {i+1} ({report.file})."
-                                if hasattr(review_agent_result, 'uncovered_segments') and review_agent_result.uncovered_segments:
-                                    insight_message += f" Uncovered segments: {review_agent_result.uncovered_segments}"
-
-                            print(yellow(insight_message))
-
-                            # Create a PR with insights about code coverage
-                            print(
-                                yellow(f"Creating PR with insights for report {i+1} ({report.file})..."))
-                            pull_request_container = builder.setup_pull_request_container(
-                                base_container=current_container,
-                                token=github_access_token
-                            )
-                            pull_deps = PullRequestAgentDependencies(
-                                config=config,
-                                container=pull_request_container,
-                                reporter=reporter,
-                                report=report,
-                                insight_context=insight_message  # Add the insight context
-                            )
-                            pull_request_result = await pull_request_agent.run(
-                                '''Create a pull request with insights about the code coverage.
-                                Include details about why the coverage wasn't increased and what areas need attention.''',
-                                deps=pull_deps
-                            )
-                            if pull_request_result:
-                                print(
-                                    green(f"PR created successfully for report {i+1}"))
-                            else:
-                                print(
-                                    yellow(f"PR creation may have failed for report {i+1}"))
-
-                            # Add after PR operations:
-                            current_container = await pull_deps.container.sync()
-
-                            # Skip to the next report
-                            continue
-
-                        # Coverage was increased, proceed with regular pull request
-                        print(green(
-                            f"Coverage was increased for report {i+1} ({report.file}). Creating pull request..."))
-                        current_container = await review_deps.container.sync()  # Update container state
-
-                        # Create a regular pull request with the improved code
+                        # Create a regular pull request with the generated code
                         pull_request_container = builder.setup_pull_request_container(
                             base_container=current_container,
                             token=github_access_token
@@ -321,8 +253,8 @@ class CoverageAgent:
                             report=report,
                         )
                         pull_request_result = await pull_request_agent.run(
-                            '''Create a pull request with the code changes that improved test coverage.
-                            Include details about what was improved and which tests were added.''',
+                            '''Create a pull request with the newly generated tests.
+                            Include details about what tests were added and how they improve the codebase.''',
                             deps=pull_deps
                         )
                         if pull_request_result:

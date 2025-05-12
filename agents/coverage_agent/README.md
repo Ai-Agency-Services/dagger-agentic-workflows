@@ -6,7 +6,6 @@ Prerequisites for Local Dev Setup
 
 1. Install Dagger.io (IMPORTANT: For now, our agent works on Dagger version 0.18.5, instructions on how to install a specfic version of Dagger can be found [here](https://docs.dagger.io/install/))
 
-    
 ## Configuration
 
 1. All repositories should be configured to run tests and generate coverage reports.
@@ -18,7 +17,8 @@ Prerequisites for Local Dev Setup
 4. Create a `config.yaml` file anywhere on desk with the following content:
 
 This is a sample configuration file for our [Github-Dagger-Agent Repo](../../agents/coverage_agent/demo/agencyservices.yaml):
-```
+
+```yaml
 $schema: http://json-schema.org/draft-07/schema#
 
 container:
@@ -125,22 +125,15 @@ flowchart TD
     subgraph ProcessLoop["For each report in limit"]
         loopReports --> runCoverAgent[Run Cover Agent to Generate Tests]
         
-        runCoverAgent -- Success --> runReviewAgent[Run Review Agent]
+        runCoverAgent -- Success --> setupSuccessPR[Setup PR Container]
         runCoverAgent -- Failure/Error --> setupFailurePR[Setup PR Container]
         
         setupFailurePR --> runPRAgent1[Run PR Agent with Error Context]
         runPRAgent1 --> createFailurePR[Create PR with Error Comments]
         createFailurePR --> nextReport[Move to Next Report]
         
-        runReviewAgent -- Coverage Increased --> setupSuccessPR[Setup PR Container]
-        runReviewAgent -- No Increase/Error --> setupInsightPR[Setup PR Container]
-        
-        setupInsightPR --> runPRAgent2[Run PR Agent with Insight Context]
-        runPRAgent2 --> createInsightPR[Create PR with Coverage Insights]
-        createInsightPR --> nextReport
-        
         setupSuccessPR --> runPRAgent3[Run PR Agent with Success Context]
-        runPRAgent3 --> createSuccessPR[Create PR with Test Improvements]
+        runPRAgent3 --> createSuccessPR[Create PR with New Tests]
         createSuccessPR --> nextReport
     end
     
@@ -155,12 +148,6 @@ flowchart TD
         fixTests --> runTests
     end
     
-    subgraph ReviewAgentProcess["Review Agent Process"]
-        getInitialCov[Get Initial Coverage] --> getCurrentCov[Get Current Coverage]
-        getCurrentCov --> compare[Compare Coverage]
-        compare --> returnResult[Return CoverageReview]
-    end
-    
     subgraph PRAgentProcess["Pull Request Agent Process"]
         gitAdd[Git Add Changes] --> gitCommit[Git Commit]
         gitCommit --> gitPush[Git Push to Remote]
@@ -170,8 +157,4 @@ flowchart TD
         createNewPR --> done[Done]
         updateExisting --> done
     end
-
 ```
-
-
-[def]: https://docs.dagger.io/install/

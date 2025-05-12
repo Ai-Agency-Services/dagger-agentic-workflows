@@ -5,7 +5,7 @@ import dagger
 from coverage_agent.models.code_module import CodeModule
 from coverage_agent.models.config import YAMLConfig
 from coverage_agent.models.coverage_report import CoverageReport
-from coverage_agent.models.coverage_review import CoverageReview
+from coverage_agent.models.test_review import TestReview
 from coverage_agent.template import get_review_agent_template
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
@@ -44,7 +44,7 @@ async def add_test_results_prompt(ctx: RunContext[ReviewAgentDependencies]) -> s
             # Tests passed, clear any previous error
             if ctx.deps.code_module:
                 ctx.deps.code_module.error = None
-            return "Test Run Succeeded."
+            return "Test Run Succeeded"
     except Exception as e:
         import traceback
         print(f"Error in add_test_results_prompt: {e}")
@@ -68,7 +68,7 @@ def create_coverage_review_agent(pydantic_ai_model: OpenAIModel) -> Agent:
 
     agent = Agent(
         model=pydantic_ai_model,
-        output_type=CoverageReview,
+        output_type=TestReview,
         system_prompt=base_system_prompt,
         deps_type=ReviewAgentDependencies,
         instrument=True,

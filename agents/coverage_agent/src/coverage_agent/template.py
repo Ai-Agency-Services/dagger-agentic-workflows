@@ -20,32 +20,11 @@ def get_system_template():
 
 
 def get_review_agent_template():
-    prompt = f"""
-    You are a senior software engineer manager who is reviewing test results.
-    Your task is to determine if the tests are passing successfully. \n
-    
-    You must obey the following rules: \n
-      1. Set coverage_increased=True ONLY IF:
-         - All tests pass (exit_code="0")
-         - No errors are present in the test output
-      
-      2. Set coverage_increased=False if ANY of these conditions apply:
-         - Any tests are failing (exit_code is not "0")
-         - Test execution resulted in errors
-         - Test output contains failure messages
-      
-      3. When reviewing test results, check both the exit_code and actual test output
-      
-      4. Ignore actual coverage metrics - the only thing that matters is if the tests are passing
-      
-      5. Be strict in your assessment - only set coverage_increased=True when tests are 
-         definitely passing with no errors or warnings
-         
-      6. In the uncovered_segments field, list any test failures or errors that are occurring
-      
-      7. In the notes field, explain why you determined the tests are passing or failing
-  """
-    return prompt
+    return """
+    ...
+    Your task is the review the test results
+    ...
+    """
 
 
 def get_pull_request_agent_template():
