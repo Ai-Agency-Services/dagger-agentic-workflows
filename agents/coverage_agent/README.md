@@ -59,7 +59,7 @@ Note that `save_next_to_code_under_test` and `test_directory` toggle each other.
 If you set `save_next_to_code_under_test` to be `true`, set `test_directory` to `n/a`. If you set `save_next_to_code_under_test` to be `false`, then you must set `test_directory` to a directory.
 
 
-
+## Description
 
 ## Usage
 
@@ -117,8 +117,21 @@ Reporter Plugin Interface - see [here](../coverage_agent/plugins/reporter/src/re
 
 # Pull Review Agent
 
-Along with our Coverage.Ai Agent, we also feature a [pull request agent]().
+The PR Agent automates staging, committing, and pushing code changes, then either creates a new pull request or updates an existing one. \
 
+The agent begins by identifying modified or newly created files in the working directory and stages them for commit using git add. This ensures that only the desired changes are included in the upcoming commit.
+
+Once the changes are staged, the agent creates a commit object with git commit, attaching a commit message (likely generated or provided) that describes the changes. This marks a snapshot in the repository's history.
+
+The newly created commit is then pushed to a remote Git repository (e.g., GitHub, GitLab, Bitbucket) using git push. This action makes the local changes available on the remote server, typically under a feature or topic branch.
+
+After the push operation, the agent checks whether a pull request already exists that targets a particular base branch from the pushed feature branch. This is typically done via Git hosting service APIs.
+
+If a PR exists: The agent updates the existing pull request—this may involve refreshing metadata, updating the PR description, or simply allowing the new commits to appear in the PR automatically as a result of the push.
+
+If no PR exists: The agent programmatically creates a new pull request, providing a title, description, and base/compare branches.
+
+Once either the existing PR is updated or a new PR is created, the process is considered complete.
 
 
 # Agentic Workflow
@@ -155,7 +168,13 @@ flowchart TD
         runTests -- Failure --> fixTests[Fix Tests]
         fixTests --> runTests
     end
-    
+
+```
+![Cover.Ai Agent avatar](../../docs/images/fixed_robot_ant_4.png)
+
+
+
+```
     subgraph PRAgentProcess["Pull Request Agent Process"]
         gitAdd[Git Add Changes] --> gitCommit[Git Commit]
         gitCommit --> gitPush[Git Push to Remote]
@@ -166,8 +185,4 @@ flowchart TD
         updateExisting --> done
     end
 ```
-
-<p float="left">
-  <img src="robot_ant_4.png" width="45%" />
-  <img src="fixed_robot_ant_4.png" width="45%" />
-</p>
+![Pull Request agent avatar](../../docs/images/fixed_robot_ant_2.png)
