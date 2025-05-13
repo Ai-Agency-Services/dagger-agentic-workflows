@@ -61,6 +61,7 @@ If you set `save_next_to_code_under_test` to be `true`, set `test_directory` to 
 
 ## Description
 
+
 ## Usage
 
 In order to see all functions available with these agents, type in the following command using Dagger: ``` dagger functions ```
@@ -117,19 +118,19 @@ Reporter Plugin Interface - see [here](../coverage_agent/plugins/reporter/src/re
 
 # Pull Review Agent
 
-The PR Agent automates staging, committing, and pushing code changes, then either creates a new pull request or updates an existing one. \
+The PR Agent automates staging, committing, and pushing code changes, then either creates a new pull request or updates an existing one.
 
-The agent begins by identifying modified or newly created files in the working directory and stages them for commit using git add. This ensures that only the desired changes are included in the upcoming commit.
+The agent begins by identifying modified or newly created files in the working directory and stages them for commits.
 
-Once the changes are staged, the agent creates a commit object with git commit, attaching a commit message (likely generated or provided) that describes the changes. This marks a snapshot in the repository's history.
+Once the changes are staged, the agent creates a commit object, attaching a commit message that describes the changes.
 
-The newly created commit is then pushed to a remote Git repository (e.g., GitHub, GitLab, Bitbucket) using git push. This action makes the local changes available on the remote server, typically under a feature or topic branch.
+The newly created commit is then pushed to a remote Git repository.
 
-After the push operation, the agent checks whether a pull request already exists that targets a particular base branch from the pushed feature branch. This is typically done via Git hosting service APIs.
+After the push, the agent checks whether a pull request already exists that targets a particular base branch from the pushed feature branch.
 
-If a PR exists: The agent updates the existing pull request—this may involve refreshing metadata, updating the PR description, or simply allowing the new commits to appear in the PR automatically as a result of the push.
+`If a PR exists`: The agent updates the existing pull request—this may involve refreshing metadata, updating the PR description, or simply allowing the new commits to appear in the PR automatically as a result of the push. 
 
-If no PR exists: The agent programmatically creates a new pull request, providing a title, description, and base/compare branches.
+`If not`: The agent programmatically creates a new pull request, providing a title, description, and base/compare branches.
 
 Once either the existing PR is updated or a new PR is created, the process is considered complete.
 
@@ -169,12 +170,6 @@ flowchart TD
         fixTests --> runTests
     end
 
-```
-![Cover.Ai Agent avatar](../../docs/images/fixed_robot_ant_4.png)
-
-
-
-```
     subgraph PRAgentProcess["Pull Request Agent Process"]
         gitAdd[Git Add Changes] --> gitCommit[Git Commit]
         gitCommit --> gitPush[Git Push to Remote]
@@ -185,4 +180,3 @@ flowchart TD
         updateExisting --> done
     end
 ```
-![Pull Request agent avatar](../../docs/images/fixed_robot_ant_2.png)
