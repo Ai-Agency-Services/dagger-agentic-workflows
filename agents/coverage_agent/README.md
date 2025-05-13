@@ -45,18 +45,18 @@ test_generation:
 
 ### Briefly covering all of the properties within the config:
 
-work_dir refers to the working directory, which you define within the dockerfile itself \
-docker_file_path is where you created your dockerfile in the repository that you want to generate tests for.
+`work_dir` refers to the working directory, which you define within the dockerfile itself \
+`docker_file_path` is where you created your dockerfile in the repository that you want to generate tests for.
 
-user_email refers to the email that the agent will adopt when making changes to your repo \
-user_name refers to the username that the agent will adopt whenever changes are made to the repo.
+`user_email` refers to the email that the agent will adopt when making changes to your repo \
+`user_name` refers to the username that the agent will adopt whenever changes are made to the repo.
 
-name refers to the name of the plugin, in this case it is Jest (Pytest is also supported!)\
-output_file_path points to the file that your reporter reads for the test results \
-report_directory is unique to your repo and should be replaced with the directory you want your reports to be stored in.
+`name` refers to the name of the plugin, in this case it is `Jest` (`Pytest` is also supported!)\
+`output_file_path` points to the file that your reporter reads for the test results \
+`report_directory` is unique to your repo and should be replaced with the directory you want your reports to be stored in.
 
-Note that save_next_to_code_under_test and test_directory toggle each other. \
-If you set save_next_to_code_under_test to be true, set test_directory to n/a. If you set save_next_to_code_under_test to be false, then you must set test_directory to a directory.
+Note that `save_next_to_code_under_test` and `test_directory` toggle each other. \
+If you set `save_next_to_code_under_test` to be `true`, set `test_directory` to `n/a`. If you set `save_next_to_code_under_test` to be `false`, then you must set `test_directory` to a directory.
 
 
 
@@ -113,6 +113,14 @@ Reporter Plugin Interface - see [here](../coverage_agent/plugins/reporter/src/re
 
 ## [Click here for Pytest implementation](../coverage_agent/plugins/reporter/pytest/src/pytest_reporter_plugin/main.py)
 
+
+
+# Pull Review Agent
+
+Along with our Coverage.Ai Agent, we also feature a [pull request agent]().
+
+
+
 # Agentic Workflow
 
 ``` mermaid
@@ -158,3 +166,8 @@ flowchart TD
         updateExisting --> done
     end
 ```
+
+<p float="left">
+  <img src="robot_ant_4.png" width="45%" />
+  <img src="fixed_robot_ant_4.png" width="45%" />
+</p>
