@@ -61,7 +61,7 @@ If you set `save_next_to_code_under_test` to be `true`, set `test_directory` to 
 
 ## Description
 
-The workflow begins by retrieving the Code Under Test, which is the target module for analysis and testing.
+The workflow begins by retrieving the Code Under Test (CUT), which is the target module for analysis and testing.
 
 Once the CUT is obtained, the process analyzes the coverage report to determine which parts of the code are already tested and which parts require additional test coverage.
 
