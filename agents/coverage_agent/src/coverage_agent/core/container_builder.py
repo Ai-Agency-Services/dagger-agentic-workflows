@@ -1,6 +1,5 @@
-import os
-
 import dagger
+import logfire
 from coverage_agent.models.config import YAMLConfig
 from dagger import dag
 from simple_chalk import green, red, yellow
@@ -23,7 +22,7 @@ class ContainerBuilder:
                 # Avoid prompts
                 .with_env_variable("DEBIAN_FRONTEND", "noninteractive")
                 .with_exec(["apt-get", "update", "-y"])
-                .with_exec(["apt-get", "install", "-y", "--no-install-recommends", "git", "bash", "gh"])
+                .with_exec(["apt-get", "install", "-y", "--no-install-recommends", "git", "bash", "gh", "tree"])
                 .with_exec(["apt-get", "clean"])  # Clean up cache
             )
             print(green("Agent dependencies installed using apt."))
@@ -31,12 +30,12 @@ class ContainerBuilder:
         except Exception as e_apk:
             print(yellow(f"apk failed ({e_apk}), trying apt..."))
             try:
-                # Try apk first
+                # Try apk alpine as a fallback
                 print("Attempting to install agent dependencies using apk...")
                 container = (
                     container
                     .with_exec(["apk", "update"])
-                    .with_exec(["apk", "add", "--no-cache", "git", "bash", "github-cli"])
+                    .with_exec(["apk", "add", "--no-cache", "git", "bash", "github-cli",  "tree"])
                 )
                 print(green("Agent dependencies installed using apk."))
                 return container
@@ -53,13 +52,15 @@ class ContainerBuilder:
             container
             .with_exec(["git", "config", "--global", "user.email", self.config.git.user_email])
             .with_exec(["git", "config", "--global", "user.name", self.config.git.user_name])
+            .with_exec(["git", "config", "--global", "safe.directory", self.config.container.work_dir])
         )
 
-    def build_test_environment(
+    async def build_test_environment(
         self,
         source: dagger.Directory,
         config: YAMLConfig,
         dockerfile_path: str = None,
+        logfire_access_token: dagger.Secret = None,
     ) -> dagger.Container:
         """
         Builds the primary container environment for testing.
@@ -83,10 +84,22 @@ class ContainerBuilder:
             try:
                 print(
                     f"Attempting to build container from Dockerfile: {dockerfile_path}")
-                base_container = dag.container().with_workdir(config.container.work_dir).build(
-                    context=source,
-                    dockerfile=dockerfile_path  # Path relative to context
-                )
+                if logfire_access_token:
+                    logfire.configure(token=await logfire_access_token.plaintext(),
+                                      send_to_logfire=True,
+                                      service_name="coverage-agent",
+                                      )
+                base_container = (
+                    dag.container()
+                    .with_workdir(config.container.work_dir)
+                    .with_env_variable("OTEL_EXPORTER_OTLP_ENDPOINT", "https://logfire-api.pydantic.dev")
+                    .with_env_variable("OTEL_EXPORTER_OTLP_HEADERS", f"Authorization={await logfire_access_token.plaintext()}")
+                    .with_env_variable("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "https://logfire-api.pydantic.dev/v1/metrics")
+                    .with_env_variable("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "https://logfire-api.pydantic.dev/v1/logs")
+                    .build(
+                        context=source,
+                        dockerfile=dockerfile_path  # Path relative to context
+                    ))
                 print(
                     green(f"Successfully built base container from Dockerfile: {dockerfile_path}"))
             except Exception as e:
@@ -137,6 +150,7 @@ class ContainerBuilder:
             .with_secret_variable("GITHUB_TOKEN", token)
             .with_exec(["gh", "auth", "setup-git"])
             .with_exec(["gh", "auth", "status"])
+            .with_exec(["git", "add", "."])
         )
         print(green("Pull request container setup complete."))
         return container

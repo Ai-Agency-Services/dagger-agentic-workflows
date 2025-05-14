@@ -1,3 +1,4 @@
+from typing import Optional  # Import Optional
 from pydantic import BaseModel, Field
 
 
@@ -5,13 +6,17 @@ class CodeModule(BaseModel):
     """
     Represents a single code solution.
     Attributes:
-        strategy: str
-        imports: str
+        strategy: Optional[str]
         code: str
+        error: Optional[str]
     """
 
-    strategy: str = Field(description="The strategy to improve test coverage.")
-    imports: str = Field(
-        description="The import statements for the code block.")
+    strategy: Optional[str] = Field(
+        default=None,
+        description="The strategy to improve test coverage.")
     code: str = Field(
-        description="The code block excluding import statements.")
+        description="The complete code solution.")
+    error: Optional[str] = Field(  # Keep error optional as well
+        default=None,
+        description="Error message if the code generation fails."
+    )

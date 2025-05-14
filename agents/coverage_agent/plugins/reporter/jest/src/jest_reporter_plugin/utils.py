@@ -24,6 +24,8 @@ def extract_coverage_data_from_table(
                 if folder
                 else f"{report_directory}/{path}"
             )
+
+            # Extract all the percentages
             statements_percentage = float(
                 columns[2].text.strip().replace("%", ""))
             branches_percentage = float(
@@ -31,20 +33,20 @@ def extract_coverage_data_from_table(
             functions_percentage = float(
                 columns[6].text.strip().replace("%", ""))
             lines_percentage = float(columns[8].text.strip().replace("%", ""))
-            coverage_percentage = round(
-                (
-                    statements_percentage
-                    + branches_percentage
-                    + functions_percentage
-                    + lines_percentage
-                )
-                / 4,
-                2,
-            )
+
+            # Use statement coverage as the main metric (matching Jest UI)
+            coverage_percentage = statements_percentage
+
+            # Optional: Store all metrics if needed
             data = {
                 "file": file,
                 "coverage_report_path": coverage_report_path,
                 "coverage_percentage": coverage_percentage,
+                # Optional: include individual metrics
+                "statements_percentage": statements_percentage,
+                "branches_percentage": branches_percentage,
+                "functions_percentage": functions_percentage,
+                "lines_percentage": lines_percentage
             }
             coverage_data.append(data)
     return coverage_data
@@ -55,10 +57,7 @@ def extract_coverage_data_from_row(
     report_directory: str,
 ) -> List[CoverageReport]:
     """Extract coverage data from HTML coverage report."""
-    # soup = BeautifulSoup(row, "html.parser")
     coverage_data = []
-
-    # Iterate through each row in the coverage summary table
     columns = row.find_all("td")
     if columns:
         file = columns[0].text.strip()
@@ -68,20 +67,19 @@ def extract_coverage_data_from_row(
         branches_percentage = float(columns[4].text.strip().replace("%", ""))
         functions_percentage = float(columns[6].text.strip().replace("%", ""))
         lines_percentage = float(columns[8].text.strip().replace("%", ""))
-        coverage_percentage = round(
-            (
-                statements_percentage
-                + branches_percentage
-                + functions_percentage
-                + lines_percentage
-            )
-            / 4,
-            2,
-        )
+
+        # Use statement coverage as the main metric
+        coverage_percentage = statements_percentage
+
         data = {
             "file": file,
             "coverage_report_path": coverage_report_path,
             "coverage_percentage": coverage_percentage,
+            # Optional: include individual metrics
+            "statements_percentage": statements_percentage,
+            "branches_percentage": branches_percentage,
+            "functions_percentage": functions_percentage,
+            "lines_percentage": lines_percentage
         }
         coverage_data.append(data)
     return coverage_data
@@ -90,28 +88,33 @@ def extract_coverage_data_from_row(
 async def find_index_html_files(
     container: dagger.Container, directory: str
 ) -> List[Tuple[str, str]]:
-    """Find the index.html files in the test container and return a list of (dir_path, file_path) tuples."""
-    print(f"Finding index.html files in {directory}")
+    """Find the top-level index.html file in the coverage report directory."""
+    print(f"Finding top-level index.html file in {directory}")
 
+    # Look directly for the top-level index.html file
     result = await container.with_exec(
         [
             "sh",
             "-c",
             f"""
-                find "{directory}" -type f -name "index.html" | while read -r file_path; do
-                dir_path=$(dirname "$file_path")
-                echo "Directory: $dir_path, File Path: $file_path"
-                done
+                if [ -f "{directory}/index.html" ]; then
+                    echo "Directory: {directory}, File Path: {directory}/index.html"
+                elif [ -f "{directory}/lcov-report/index.html" ]; then
+                    echo "Directory: {directory}/lcov-report, File Path: {directory}/lcov-report/index.html"
+                else
+                    echo "No top-level index.html found"
+                fi
             """,
         ]
     ).stdout()
 
     index_files: List[Tuple[str, str]] = []
     for line in result.strip().splitlines():
-        parts = line.split(", ")
-        dir_path = parts[0].replace("Directory: ", "").strip()
-        file_path = parts[1].replace("File Path: ", "").strip()
-        index_files.append((dir_path, file_path))
+        if line.startswith("Directory:"):
+            parts = line.split(", ")
+            dir_path = parts[0].replace("Directory: ", "").strip()
+            file_path = parts[1].replace("File Path: ", "").strip()
+            index_files.append((dir_path, file_path))
 
     return index_files
 
