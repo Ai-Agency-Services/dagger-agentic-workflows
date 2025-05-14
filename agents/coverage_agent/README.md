@@ -1,10 +1,8 @@
-# GitHub Dagger Agents
-
-Coverage.Ai Agent
+# Cover.Ai 
 
 Prerequisites for Local Dev Setup
 
-1. Install Dagger.io (IMPORTANT: For now, our agent works on Dagger version 0.18.5, instructions on how to install a specfic version of Dagger can be found [here](https://docs.dagger.io/install/))
+1. Install Dagger.io (IMPORTANT: For now, our agent works on Dagger version `0.18.5`, instructions on how to install a specific version of Dagger can be found [here](https://docs.dagger.io/install/))
 
 ## Configuration
 
@@ -36,7 +34,6 @@ reporter:
     report_directory: "/app/coverage"
 
 test_generation:
-    iterations: 1
     limit: 1
     save_next_to_code_under_test: true
     test_directory: "n/a"
@@ -45,21 +42,18 @@ test_generation:
 
 ### Briefly covering all of the properties within the config:
 
-work_dir refers to the working directory, which you define within the dockerfile itself \
-docker_file_path is where you created your dockerfile in the repository that you want to generate tests for.
+`work_dir` refers to the working directory, which you define within the Dockerfile.  
+`docker_file_path` is where you created your Dockerfile in the repository that you want to generate tests for.
 
-user_email refers to the email that the agent will adopt when making changes to your repo \
-user_name refers to the username that the agent will adopt whenever changes are made to the repo.
+`user_email` refers to the email that the agent will adopt when making changes to your repository.
+`user_name` refers to the user name that the agent will adopt whenever changes are made to the repository.
 
-name refers to the name of the plugin, in this case it is Jest (Pytest is also supported!)\
-output_file_path points to the file that your reporter reads for the test results \
-report_directory is unique to your repo and should be replaced with the directory you want your reports to be stored in.
+`name` refers to the name of the plugin, in this case it is `Jest` (`Pytest` is also supported!).
+`output_file_path` points to the file that your reporter reads for the test results.
+`report_directory` is unique to your repository and should be replaced with the directory you want your reports to be stored in.
 
-Note that save_next_to_code_under_test and test_directory toggle each other. \
-If you set save_next_to_code_under_test to be true, set test_directory to n/a. If you set save_next_to_code_under_test to be false, then you must set test_directory to a directory.
-
-
-
+Note that `save_next_to_code_under_test` and `test_directory` toggle each other.
+If you set `save_next_to_code_under_test` to be `true`, set `test_directory` to `n/a`. If you set `save_next_to_code_under_test` to be `false`, then you must set `test_directory` to a directory.
 
 ## Usage
 
@@ -79,8 +73,8 @@ ARGUMENTS
 ```
 Here, we provide the config file, a GitHub classic token, the target branch, an optional Logfire token, the desired model, an API key (OpenRouter or OpenAI), and specify the provider (Openrouter or Openai).
 
-In order to generate a Github token, please visit [here](https://github.com/settings/tokens) (Remember that your token is supposed to be a classic token).\
-For OpenAI API keys, you must create an OpenAI account and generate a key [here](https://platform.openai.com/api-keys).\
+In order to generate a Github token, please visit [here](https://github.com/settings/tokens) (Remember that your token is supposed to be a classic token).
+For OpenAI API keys, you must create an OpenAI account and generate a key [here](https://platform.openai.com/api-keys).
 For OpenRouter API keys, you must create an OpenRouter account and generate a key [here](https://openrouter.ai/settings/keys).
 
 An example of what a call to dagger using the REQUIRED arguments is:
@@ -112,6 +106,9 @@ Reporter Plugin Interface - see [here](../coverage_agent/plugins/reporter/src/re
 ## [Click here for Jest implementation](../coverage_agent/plugins/reporter/jest/src/jest_reporter_plugin/main.py)
 
 ## [Click here for Pytest implementation](../coverage_agent/plugins/reporter/pytest/src/pytest_reporter_plugin/main.py)
+
+
+
 
 # Agentic Workflow
 
@@ -147,7 +144,7 @@ flowchart TD
         runTests -- Failure --> fixTests[Fix Tests]
         fixTests --> runTests
     end
-    
+
     subgraph PRAgentProcess["Pull Request Agent Process"]
         gitAdd[Git Add Changes] --> gitCommit[Git Commit]
         gitCommit --> gitPush[Git Push to Remote]

@@ -1,11 +1,15 @@
-# GitHub Dagger Agents
+# Dagger AI Work-flows
 
-Overview
+## Overview
 
-This Github repo is a mono repository that contains an accumulation of agentic Github bots. The bots are designed with the intent of automating tasks and helping with streamlining of processes in a Github environment. Utilizing the power of automation, these bots search to augment cooperation, enhance effectiveness, and guarantee consistency across different repositories.</p>
+This repository is a collection of agentic work flows built with dagger.
 
-## Arachnid
+## Hive
 
-## Agents
-[![Coverage.Ai Agent avatar](docs/images/robot_ant_4.png)](agents/coverage_agent/README.md)
-### If you want to know learn more about the coverage agent, please visit [here](agents/coverage_agent/README.md)
+## Cover.AI Agentic Work-flow
+
+| [![Coverage.Ai Agent avatar](docs/images/cover.ai.png)](agents/coverage_agent/README.md) | [![Pull Request Agent avatar](docs/images/pully_ai.png)](agents/coverage_agent/README.md) |
+| :----------------------------------------------------------: | :----------------------------------------------------------: |
+|                           Cover.Ai                           |                           Pully.Ai                           |
+
+### [Click here to learn more](agents/coverage_agent/README.md)
