@@ -1,10 +1,10 @@
 # GitHub Dagger Agents
 
-Coverage.Ai Agent
+Cover.Ai Agent
 
 Prerequisites for Local Dev Setup
 
-1. Install Dagger.io (IMPORTANT: For now, our agent works on Dagger version `0.18.5`, instructions on how to install a specfic version of Dagger can be found [here](https://docs.dagger.io/install/))
+1. Install Dagger.io (IMPORTANT: For now, our agent works on Dagger version `0.18.5`, instructions on how to install a specific version of Dagger can be found [here](https://docs.dagger.io/install/))
 
 ## Configuration
 
@@ -36,7 +36,6 @@ reporter:
     report_directory: "/app/coverage"
 
 test_generation:
-    iterations: 1
     limit: 1
     save_next_to_code_under_test: true
     test_directory: "n/a"
@@ -45,35 +44,18 @@ test_generation:
 
 ### Briefly covering all of the properties within the config:
 
-`work_dir` refers to the working directory, which you define within the dockerfile itself \
-`docker_file_path` is where you created your dockerfile in the repository that you want to generate tests for.
+`work_dir` refers to the working directory, which you define within the Dockerfile.  
+`docker_file_path` is where you created your Dockerfile in the repository that you want to generate tests for.
 
-`user_email` refers to the email that the agent will adopt when making changes to your repo \
-`user_name` refers to the username that the agent will adopt whenever changes are made to the repo.
+`user_email` refers to the email that the agent will adopt when making changes to your repository.
+`user_name` refers to the user name that the agent will adopt whenever changes are made to the repository.
 
-`name` refers to the name of the plugin, in this case it is `Jest` (`Pytest` is also supported!)\
-`output_file_path` points to the file that your reporter reads for the test results \
-`report_directory` is unique to your repo and should be replaced with the directory you want your reports to be stored in.
+`name` refers to the name of the plugin, in this case it is `Jest` (`Pytest` is also supported!).
+`output_file_path` points to the file that your reporter reads for the test results.
+`report_directory` is unique to your repository and should be replaced with the directory you want your reports to be stored in.
 
-Note that `save_next_to_code_under_test` and `test_directory` toggle each other. \
+Note that `save_next_to_code_under_test` and `test_directory` toggle each other.
 If you set `save_next_to_code_under_test` to be `true`, set `test_directory` to `n/a`. If you set `save_next_to_code_under_test` to be `false`, then you must set `test_directory` to a directory.
-
-
-## Description
-
-The workflow begins by retrieving the Code Under Test (CUT), which is the target module for analysis and testing.
-
-Once the CUT is obtained, the process analyzes the coverage report to determine which parts of the code are already tested and which parts require additional test coverage.
-
-Based on the coverage analysis, new unit tests are automatically generated to improve the test coverage and address uncovered paths in the code.
-
-The generated tests are executed in an isolated container environment to ensure consistency and to prevent side effects on the host system.
-
-`Success`: If all tests pass, the updated code module along with the new tests is returned.
-
-`Failure`: If any tests fail, the workflow transitions to the Fix Tests phase.
-
-Failed tests are examined and corrected. Once fixed, the updated tests are re-executed by looping back to the Run Tests in Container step, continuing the cycle until all tests pass successfully.
 
 ## Usage
 
@@ -93,8 +75,8 @@ ARGUMENTS
 ```
 Here, we provide the config file, a GitHub classic token, the target branch, an optional Logfire token, the desired model, an API key (OpenRouter or OpenAI), and specify the provider (Openrouter or Openai).
 
-In order to generate a Github token, please visit [here](https://github.com/settings/tokens) (Remember that your token is supposed to be a classic token).\
-For OpenAI API keys, you must create an OpenAI account and generate a key [here](https://platform.openai.com/api-keys).\
+In order to generate a Github token, please visit [here](https://github.com/settings/tokens) (Remember that your token is supposed to be a classic token).
+For OpenAI API keys, you must create an OpenAI account and generate a key [here](https://platform.openai.com/api-keys).
 For OpenRouter API keys, you must create an OpenRouter account and generate a key [here](https://openrouter.ai/settings/keys).
 
 An example of what a call to dagger using the REQUIRED arguments is:
@@ -128,24 +110,6 @@ Reporter Plugin Interface - see [here](../coverage_agent/plugins/reporter/src/re
 ## [Click here for Pytest implementation](../coverage_agent/plugins/reporter/pytest/src/pytest_reporter_plugin/main.py)
 
 
-
-# Pull Review Agent
-
-The PR Agent automates staging, committing, and pushing code changes, then either creates a new pull request or updates an existing one.
-
-The agent begins by identifying modified or newly created files in the working directory and stages them for commits.
-
-Once the changes are staged, the agent creates a commit object, attaching a commit message that describes the changes.
-
-The newly created commit is then pushed to a remote Git repository.
-
-After the push, the agent checks whether a pull request already exists that targets a particular base branch from the pushed feature branch.
-
-`If a PR exists`: The agent updates the existing pull request—this may involve refreshing metadata, updating the PR description, or simply allowing the new commits to appear in the PR automatically as a result of the push. 
-
-`If not`: The agent programmatically creates a new pull request, providing a title, description, and base/compare branches.
-
-Once either the existing PR is updated or a new PR is created, the process is considered complete.
 
 
 # Agentic Workflow
