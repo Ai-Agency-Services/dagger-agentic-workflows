@@ -12,11 +12,11 @@ This Github repo is a mono repository that contains an accumulation of agentic G
 
 <div style="display: flex; align-items: center; justify-content: flex-start; gap: 10px;">
     <a href="agents/coverage_agent/README.md">
-        <img src="docs/images/fixed_robot_ant_4.png" alt="Coverage.Ai Agent avatar" width="200">
+        <img src="docs/images/fixed_robot_ant_2.png" alt="Coverage.Ai Agent avatar" width="200">
     </a>
     <div style="width: 2px; background-color: #ccc; height: 200px;"></div>
     <a href="agents/coverage_agent/README.md">
-        <img src="docs/images/fixed_robot_ant_2.png" alt="Pull Request Agent avatar" width="200">
+        <img src="docs/images/fixed_robot_ant_4.png" alt="Pull Request Agent avatar" width="200">
     </a>
 </div>
 

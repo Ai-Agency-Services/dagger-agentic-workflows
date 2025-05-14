@@ -69,9 +69,7 @@ Based on the coverage analysis, new unit tests are automatically generated to im
 
 The generated tests are executed in an isolated container environment to ensure consistency and to prevent side effects on the host system.
 
-Evaluate Test Results
-
-`Success`: If all tests pass, the updated code module along with the new tests is returned as a deliverable.
+`Success`: If all tests pass, the updated code module along with the new tests is returned.
 
 `Failure`: If any tests fail, the workflow transitions to the Fix Tests phase.
 
