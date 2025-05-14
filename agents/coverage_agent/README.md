@@ -59,7 +59,7 @@ Note that `save_next_to_code_under_test` and `test_directory` toggle each other.
 If you set `save_next_to_code_under_test` to be `true`, set `test_directory` to `n/a`. If you set `save_next_to_code_under_test` to be `false`, then you must set `test_directory` to a directory.
 
 
-## Description of our coverage agent
+## Description
 
 The workflow begins by retrieving the Code Under Test, which is the target module for analysis and testing.
 
