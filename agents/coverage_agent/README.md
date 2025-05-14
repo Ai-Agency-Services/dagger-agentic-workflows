@@ -1,6 +1,4 @@
-# GitHub Dagger Agents
-
-Cover.Ai Agent
+# Cover.Ai 
 
 Prerequisites for Local Dev Setup
 
