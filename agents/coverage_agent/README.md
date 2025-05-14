@@ -59,8 +59,23 @@ Note that `save_next_to_code_under_test` and `test_directory` toggle each other.
 If you set `save_next_to_code_under_test` to be `true`, set `test_directory` to `n/a`. If you set `save_next_to_code_under_test` to be `false`, then you must set `test_directory` to a directory.
 
 
-## Description
+## Description of our coverage agent
 
+The workflow begins by retrieving the Code Under Test, which is the target module for analysis and testing.
+
+Once the CUT is obtained, the process analyzes the coverage report to determine which parts of the code are already tested and which parts require additional test coverage.
+
+Based on the coverage analysis, new unit tests are automatically generated to improve the test coverage and address uncovered paths in the code.
+
+The generated tests are executed in an isolated container environment to ensure consistency and to prevent side effects on the host system.
+
+Evaluate Test Results
+
+`Success`: If all tests pass, the updated code module along with the new tests is returned as a deliverable.
+
+`Failure`: If any tests fail, the workflow transitions to the Fix Tests phase.
+
+Failed tests are examined and corrected. Once fixed, the updated tests are re-executed by looping back to the Run Tests in Container step, continuing the cycle until all tests pass successfully.
 
 ## Usage
 
