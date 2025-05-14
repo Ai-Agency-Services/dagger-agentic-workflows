@@ -1,12 +1,12 @@
-# Cover.Ai 
+# Dagger AI Work-flows
 
 ## Overview
 
-Dagger module workflow that analyzes coverage reports and creates unit-tests. 
+This repository is a collection of agentic work flows built with dagger.
 
 ## Hive
 
-## Agents
+## Cover.AI Agentic Work-flow
 
 | [![Coverage.Ai Agent avatar](docs/images/cover.ai.png)](agents/coverage_agent/README.md) | [![Pull Request Agent avatar](docs/images/pully_ai.png)](agents/coverage_agent/README.md) |
 | :----------------------------------------------------------: | :----------------------------------------------------------: |
