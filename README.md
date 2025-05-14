@@ -1,8 +1,8 @@
-# GitHub Dagger Agents
+# Cover.Ai 
 
 ## Overview
 
-This Github repo is a mono repository that contains an accumulation of agentic Github bots. The bots are designed with the intent of automating tasks and helping with streamlining of processes in a Github environment. Utilizing the power of automation, these bots search to augment cooperation, enhance effectiveness, and guarantee consistency across different repositories.
+Dagger module workflow that analyzes coverage reports and creates unit-tests. 
 
 ## Hive
 
