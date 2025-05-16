@@ -11,7 +11,7 @@ class ContainerBuilder:
     def __init__(self, config: YAMLConfig):
         self.config = config
 
-    # TODO: """ use and agent for this """
+    # TODO: """ use an agent for this """
     def _install_agent_dependencies(self, container: dagger.Container) -> dagger.Container:
         """Installs agent-specific dependencies (git, bash, gh) into an existing container."""
         try:
