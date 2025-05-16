@@ -1,31 +1,24 @@
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry import trace
-from simple_chalk import green, red, yellow
-from pydantic_ai import Agent, UnexpectedModelBehavior
-from dagger.client.gen import Reporter
-from dagger import Doc, dag, function, object_type
+import traceback
+from typing import Annotated, Optional
+
+import dagger
+from coverage_agent.core.configuration_loader import ConfigurationLoader
+from coverage_agent.core.container_builder import ContainerBuilder
+from coverage_agent.core.coverai_agent import (CoverAgentDependencies,
+                                               create_coverai_agent)
+from coverage_agent.core.pull_request_agent import (
+    PullRequestAgentDependencies, create_pull_request_agent)
+from coverage_agent.models.code_module import CodeModule
+from coverage_agent.models.config import YAMLConfig
+from coverage_agent.models.coverage_report import CoverageReport
 from coverage_agent.utils import (create_llm_model,
                                   dagger_json_file_to_pydantic,
                                   get_llm_credentials,
                                   rank_reports_by_coverage)
-from coverage_agent.models.test_review import TestReview
-from coverage_agent.models.coverage_report import CoverageReport
-from coverage_agent.models.config import YAMLConfig
-from coverage_agent.models.code_module import CodeModule
-from coverage_agent.core.pull_request_agent import (
-    PullRequestAgentDependencies, create_pull_request_agent)
-from coverage_agent.core.coverai_agent import (CoverAgentDependencies,
-                                               create_coverai_agent)
-from coverage_agent.core.coverage_review_agent import (
-    ReviewAgentDependencies, create_coverage_review_agent)
-from coverage_agent.core.container_builder import ContainerBuilder
-from coverage_agent.core.configuration_loader import ConfigurationLoader
-import dagger
-from typing import Annotated, Optional
-import traceback
-import os
+from dagger import Doc, dag, function, object_type
+from dagger.client.gen import Reporter
+from pydantic_ai import Agent, UnexpectedModelBehavior
+from simple_chalk import green, red, yellow
 
 
 @object_type
@@ -46,7 +39,6 @@ class CoverageAgent:
     async def generate_unit_tests(
         self,
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
-        logfire_access_token: Annotated[Optional[dagger.Secret], Doc("Logfire access token")],
         repository_url: Annotated[str, Doc("Repository URL to generate tests for")],
         branch: Annotated[str, Doc("Branch to generate tests for")],
         model_name: Annotated[str, Doc(
@@ -60,19 +52,6 @@ class CoverageAgent:
 
     ) -> Optional[dagger.Container]:
         """Generate unit tests for a given repository using the CoverAI agent."""
-        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://logfire-api.pydantic.dev"
-        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization={await logfire_access_token.plaintext() if logfire_access_token else ""}"
-        os.environ["OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"] = 'https://logfire-api.pydantic.dev/v1/metrics'
-        os.environ["OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"] = 'https://logfire-api.pydantic.dev/v1/logs'
-
-        if logfire_access_token:
-            tracer_provider = TracerProvider()  # Renamed from provider to tracer_provider
-            processor = BatchSpanProcessor(OTLPSpanExporter(
-                endpoint="https://logfire-api.pydantic.dev/v1/traces",
-                headers={"Authorization": await logfire_access_token.plaintext()},
-            ))
-            tracer_provider.add_span_processor(processor)
-            trace.set_tracer_provider(tracer_provider)
 
         self.config = YAMLConfig(**self.config)
         # This now correctly prints the provider string
@@ -92,12 +71,7 @@ class CoverageAgent:
                 base_url=llm_credentials.base_url,
                 model_name=model_name
             )
-            review_ai_model = create_llm_model(
-                api_key=llm_credentials.api_key,
-                base_url=llm_credentials.base_url,
-                model_name='openai/gpt-4o-mini'
-            )
-            pull_request_ai_model = create_llm_model(
+            grok = create_llm_model(
                 api_key=llm_credentials.api_key,
                 base_url=llm_credentials.base_url,
                 model_name='x-ai/grok-3-mini-beta'
@@ -110,16 +84,13 @@ class CoverageAgent:
             pydantic_ai_model=cover_ai_model
         )
         unit_test_agent.instrument_all()
-        review_agent: Agent = create_coverage_review_agent(
-            pydantic_ai_model=review_ai_model
-        )
-        review_agent.instrument_all()
+
         pull_request_agent: Agent = create_pull_request_agent(
-            pydantic_ai_model=pull_request_ai_model
+            pydantic_ai_model=grok
         )
         pull_request_agent.instrument_all()
 
-        builder = ContainerBuilder(config=self.config)
+        builder = ContainerBuilder(config=self.config, model=grok)
 
         source = (
             await dag.git(url=repository_url, keep_git_dir=True)
@@ -132,7 +103,6 @@ class CoverageAgent:
             source=source,
             dockerfile_path=self.config.container.docker_file_path,
             config=self.config,
-            logfire_access_token=logfire_access_token
         )
         print(green("Test environment container built successfully."))
 
@@ -141,7 +111,6 @@ class CoverageAgent:
             start_container: dagger.Container,
             limit: Optional[int],
             cover_agent: Agent,
-            review_agent: Agent,
             pull_request_agent: Agent,
             config: YAMLConfig,
             reporter: Reporter
@@ -290,7 +259,6 @@ class CoverageAgent:
             start_container=container,  # Start with the initially built container
             limit=self.config.test_generation.limit,  # Use limit from config
             cover_agent=unit_test_agent,
-            review_agent=review_agent,
             pull_request_agent=pull_request_agent,
             config=self.config,
             reporter=self.reporter

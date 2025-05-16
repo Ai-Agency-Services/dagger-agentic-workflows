@@ -1,13 +1,34 @@
 import json
 import os
-from typing import List, NamedTuple, Optional, Tuple
-
+from typing import List, NamedTuple, Optional, Any, TypeVar, cast
+from pydantic import GetCoreSchemaHandler
+from pydantic_core import core_schema
 import dagger
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from simple_chalk import green, red
 
 from .models.coverage_report import CoverageReport
+
+T = TypeVar('T')
+
+
+def get_dagger_container_schema(cls: type[T], handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+    """Custom schema handler for dagger.Container type"""
+    return core_schema.union_schema(
+        [
+            # Allow passing a Container instance directly
+            handler.generate_schema(Any),
+            # Or None
+            core_schema.none_schema(),
+        ],
+        custom_error_type="dagger_container",
+    )
+
+
+# Monkey patch to add schema support
+if not hasattr(dagger.Container, "__get_pydantic_core_schema__"):
+    dagger.Container.__get_pydantic_core_schema__ = get_dagger_container_schema
 
 
 def base_file_name(file_path: str, test_suffix: str):
