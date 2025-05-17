@@ -6,7 +6,6 @@ from dagger import dag
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
 from simple_chalk import green, red, yellow
-from typing import Optional
 
 
 class ContainerBuilder:
