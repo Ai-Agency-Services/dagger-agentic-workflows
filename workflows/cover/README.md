@@ -1,4 +1,4 @@
-# Cover.Ai 
+# Cover.Ai
 
 Prerequisites for Local Dev Setup
 

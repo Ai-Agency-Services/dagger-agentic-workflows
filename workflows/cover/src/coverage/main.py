@@ -22,7 +22,7 @@ from simple_chalk import green, red, yellow
 
 
 @object_type
-class CoverageAgent:
+class Cover:
     """Coverage agent to generate unit tests for a given repository."""
     config: dict
     reporter: Reporter
