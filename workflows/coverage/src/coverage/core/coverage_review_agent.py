@@ -2,11 +2,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import dagger
-from coverage_agent.models.code_module import CodeModule
-from coverage_agent.models.config import YAMLConfig
-from coverage_agent.models.coverage_report import CoverageReport
-from coverage_agent.models.test_review import TestReview
-from coverage_agent.template import get_review_agent_template
+from coverage.models.code_module import CodeModule
+from coverage.models.config import YAMLConfig
+from coverage.models.coverage_report import CoverageReport
+from coverage.models.test_review import TestReview
+from coverage.template import get_review_agent_template
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
 from simple_chalk import yellow

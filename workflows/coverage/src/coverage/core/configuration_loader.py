@@ -5,7 +5,7 @@ from typing import Tuple
 import dagger
 import jsonschema
 import yaml
-from coverage_agent.models.config import YAMLConfig
+from coverage.models.config import YAMLConfig
 from dagger import dag
 from dagger.client.gen import Reporter
 

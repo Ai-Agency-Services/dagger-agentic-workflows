@@ -4,7 +4,7 @@ import json
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from coverage_agent.models.code_module import CodeModule
+from coverage.models.code_module import CodeModule
 from openai import OpenAI
 from simple_chalk import red
 

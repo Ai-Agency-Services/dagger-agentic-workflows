@@ -2,19 +2,19 @@ import traceback
 from typing import Annotated, Optional
 
 import dagger
-from coverage_agent.core.configuration_loader import ConfigurationLoader
-from coverage_agent.core.container_builder import ContainerBuilder
-from coverage_agent.core.coverai_agent import (CoverAgentDependencies,
-                                               create_coverai_agent)
-from coverage_agent.core.pull_request_agent import (
+from coverage.core.configuration_loader import ConfigurationLoader
+from coverage.core.container_builder import ContainerBuilder
+from coverage.core.coverai_agent import (CoverAgentDependencies,
+                                         create_coverai_agent)
+from coverage.core.pull_request_agent import (
     PullRequestAgentDependencies, create_pull_request_agent)
-from coverage_agent.models.code_module import CodeModule
-from coverage_agent.models.config import YAMLConfig
-from coverage_agent.models.coverage_report import CoverageReport
-from coverage_agent.utils import (create_llm_model,
-                                  dagger_json_file_to_pydantic,
-                                  get_llm_credentials,
-                                  rank_reports_by_coverage)
+from coverage.models.code_module import CodeModule
+from coverage.models.config import YAMLConfig
+from coverage.models.coverage_report import CoverageReport
+from coverage.utils import (create_llm_model,
+                            dagger_json_file_to_pydantic,
+                            get_llm_credentials,
+                            rank_reports_by_coverage)
 from dagger import Doc, dag, function, object_type
 from dagger.client.gen import Reporter
 from pydantic_ai import Agent, UnexpectedModelBehavior

@@ -1,7 +1,7 @@
 import dagger
-from coverage_agent.core.builder_agent import (BuilderAgentDependencies,
-                                               create_builder_agent)
-from coverage_agent.models.config import YAMLConfig
+from coverage.core.builder_agent import (BuilderAgentDependencies,
+                                         create_builder_agent)
+from coverage.models.config import YAMLConfig
 from dagger import dag
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel

@@ -5,12 +5,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 import dagger
-from coverage_agent.core.test_file_handler import TestFileHandler
-from coverage_agent.models.code_module import CodeModule
-from coverage_agent.models.config import YAMLConfig
-from coverage_agent.models.coverage_report import CoverageReport
-from coverage_agent.template import get_system_template
-from coverage_agent.utils import get_code_under_test_directory
+from coverage.core.test_file_handler import TestFileHandler
+from coverage.models.code_module import CodeModule
+from coverage.models.config import YAMLConfig
+from coverage.models.coverage_report import CoverageReport
+from coverage.template import get_system_template
+from coverage.utils import get_code_under_test_directory
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import \
     OpenAIModel  # Use the specific model type

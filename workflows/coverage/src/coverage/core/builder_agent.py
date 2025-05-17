@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import dagger
-from coverage_agent.template import get_container_builder_template
+from coverage.template import get_container_builder_template
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
 from simple_chalk import yellow

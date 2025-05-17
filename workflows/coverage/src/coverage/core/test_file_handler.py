@@ -1,9 +1,9 @@
 from datetime import datetime
 
 import dagger
-from coverage_agent.models.config import YAMLConfig
-from coverage_agent.models.coverage_report import CoverageReport
-from coverage_agent.utils import base_file_name, get_code_under_test_directory
+from coverage.models.config import YAMLConfig
+from coverage.models.coverage_report import CoverageReport
+from coverage.utils import base_file_name, get_code_under_test_directory
 
 
 class TestFileHandler:
