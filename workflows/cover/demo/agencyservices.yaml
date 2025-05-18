@@ -25,3 +25,8 @@ test_generation:
     save_next_to_code_under_test: true
     test_directory: "n/a"
     test_suffix: "test"
+
+agents:
+    unit_test_agent_model: "x-ai/grok-3-mini-beta"
+    pull_request_agent_model: "x-ai/grok-3-mini-beta"
+    builder_agent_model: "x-ai/grok-3-mini-beta"

@@ -1,0 +1,16 @@
+$schema: http://json-schema.org/draft-07/schema#
+
+container:
+    work_dir: "/app"
+    docker_file_path: "./dockerfile"
+
+llm:
+    provider: "openai"
+    model_name: "gpt-4o"
+
+git:
+    user_email: "AiTestGen@users.noreply.github.com"
+    user_name: "Ai-TestGen[bot]"
+
+agents:
+    agent_model: "x-ai/grok-3-mini-beta"

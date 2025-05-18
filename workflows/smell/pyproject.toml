@@ -1,14 +1,8 @@
 [project]
-name = "clean"
+name = "smell"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = [
-    "dagger-io",
-    "pydantic-ai>=0.2.4",
-    "pyyaml>=6.0.2",
-    "simple-chalk>=0.1.0",
-    "supabase>=2.15.1",
-]
+dependencies = ["dagger-io"]
 
 [build-system]
 requires = ["hatchling==1.25.0"]

@@ -4,6 +4,7 @@
         "deepseek",
         "logfire",
         "openrouter",
-        "pytest"
+        "pytest",
+        "supabase"
     ]
 }
