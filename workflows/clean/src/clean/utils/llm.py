@@ -2,7 +2,7 @@ from typing import Optional
 
 import dagger
 from clean.models.llm_credentials import LLMCredentials
-from pydantic_ai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from simple_chalk import red
 

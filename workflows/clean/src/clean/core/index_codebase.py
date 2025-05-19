@@ -4,7 +4,7 @@ import os
 from typing import List, Dict, Any
 
 import dagger
-from clean.models.config import YamlConfig
+from clean.models.config import YAMLConfig
 from clean.utils.code_parser import parse_code_file
 from clean.utils.embeddings import generate_embeddings
 from supabase import Client, create_client
@@ -28,6 +28,7 @@ async def process_file(
     filepath: str,
     supabase: Client,
     container: dagger.Container,
+    open_ai_key: dagger.Secret,
     chunk_size: int = 50,
 ) -> int:
     """
@@ -78,7 +79,11 @@ async def process_file(
 
         # Generate embeddings for each chunk
         for chunk in chunks:
-            embedding = await generate_embeddings(chunk["content"])
+            embedding = await generate_embeddings(
+                text=chunk["content"],
+                model="text-embedding-3-small",
+                openai_api_key=open_ai_key
+            )
 
             # Insert into Supabase
             supabase.table("code_embeddings").insert({
@@ -101,10 +106,11 @@ async def process_file(
 
 async def index_codebase(
     supabase_url: str,
+    open_ai_key: dagger.Secret,
     supabase_key: dagger.Secret,
     file_extensions: List[str],
     container: dagger.Container,
-    config: YamlConfig,
+    config: YAMLConfig,
 ) -> None:
     """
     Index all code files in a repository.
@@ -112,6 +118,7 @@ async def index_codebase(
     try:
         # Create Supabase client
         supabase = create_client(supabase_url, await supabase_key.plaintext())
+        print("Supabase client created")
         indexed_count = 0
 
         # Get all files with find command
@@ -149,6 +156,7 @@ async def index_codebase(
             indexed_count += await process_file(
                 filepath=filepath,
                 supabase=supabase,
+                open_ai_key=open_ai_key,
                 container=container,
                 chunk_size=config.indexing.chunk_size if hasattr(
                     config, "indexing") and hasattr(config.indexing, "chunk_size") else 50

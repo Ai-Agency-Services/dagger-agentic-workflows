@@ -1,4 +1,11 @@
+from typing import Optional, Dict
 from pydantic import BaseModel, Field, EmailStr
+
+
+class IndexingConfig(BaseModel):
+    skip_indexing: bool = False
+    chunk_size: int = 50  # This will be used as fallback_chunk_size
+    max_semantic_chunk_lines: int = 200  # Max lines for a semantic chunk
 
 
 class GenerationConfig(BaseModel):
@@ -23,14 +30,8 @@ class GitConfig(BaseModel):
 class LLMConfig(BaseModel):
     provider: str = Field(...,
                           description="LLM provider ('openrouter' or 'openai')")
-    open_router_api_key: str = Field(
-        ..., description="OpenRouter API key (required if provider is 'openrouter')"
-    )
     model_name: str = Field(
         ..., description="LLM model name (e.g., 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet')"
-    )
-    openai_api_key: str = Field(
-        ..., description="OpenAI API key (required if provider is 'openai')"
     )
 
 
@@ -39,3 +40,4 @@ class YAMLConfig(BaseModel):
     container: ContainerConfig
     llm: LLMConfig
     generation: GenerationConfig
+    indexing: IndexingConfig = IndexingConfig()

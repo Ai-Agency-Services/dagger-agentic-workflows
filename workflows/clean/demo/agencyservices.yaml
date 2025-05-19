@@ -5,12 +5,19 @@ container:
     docker_file_path: "./dockerfile"
 
 llm:
-    provider: "openai"
-    model_name: "gpt-4o"
+    provider: "openrouter"
+    model_name: "x-ai/grok-3-mini-beta"
 
 git:
     user_email: "AiTestGen@users.noreply.github.com"
     user_name: "Ai-TestGen[bot]"
+
+generation:
+    max_files: 5
+
+indexing:
+    skip_indexing: true
+    chunk_size: 50
 
 agents:
     agent_model: "x-ai/grok-3-mini-beta"

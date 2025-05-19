@@ -1,4 +1,3 @@
-import asyncio
 from typing import Annotated, NamedTuple, Optional
 
 import dagger
@@ -18,14 +17,13 @@ class LLMCredentials(NamedTuple):
 @object_type
 class Clean:
     config: dict
-    llm_credentials: LLMCredentials
 
     @classmethod
     async def create(cls, config_file: Annotated[dagger.File, Doc("Path to the YAML config file")]) -> "Clean":
         """ Create a Clean object from a YAML config file """
         config_str = await config_file.contents()
         config_dict = yaml.safe_load(config_str)
-        return cls(config=config_dict, llm_credentials=None)
+        return cls(config=config_dict)
 
     @function
     async def meaningful_names(
@@ -35,15 +33,17 @@ class Clean:
         supabase_key: Annotated[dagger.Secret, Doc("Supabase API key")],
         repository_url: Annotated[str, Doc("Repository URL to generate tests for")],
         branch: Annotated[str, Doc("Branch to generate tests for")],
+        open_router_api_key: Optional[dagger.Secret] = None,
+        openai_api_key: Optional[dagger.Secret] = None,
     ) -> str:
         """ Refactor the code to use meaningful names """
         try:
             self.config: YAMLConfig = YAMLConfig(**self.config)
-            asyncio.run(clean_names_workflow(
+            await clean_names_workflow(
                 config=self.config,
                 provider=self.config.llm.provider,
-                open_router_api_key=self.config.llm.open_router_api_key,
-                openai_api_key=self.config.llm.openai_api_key,
+                open_router_api_key=open_router_api_key,
+                openai_api_key=openai_api_key,
                 github_access_token=github_access_token,
                 repo_url=repository_url,
                 branch=branch,
@@ -51,7 +51,7 @@ class Clean:
                 supabase_key=supabase_key,
                 model_name=self.config.llm.model_name,
                 max_files=self.config.generation.max_files
-            ))
+            )
         except Exception as e:
             print(red(f"Error during workflow execution: {e}"))
             raise

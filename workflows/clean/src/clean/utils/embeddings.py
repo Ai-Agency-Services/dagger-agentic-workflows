@@ -1,24 +1,41 @@
-import openai
-import os
-from typing import List, Any, Dict
-import asyncio
-
-# TODO: Change to OpenRouter
-# Set your OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+from openai import OpenAI
+from typing import List
+import dagger
 
 
-async def generate_embeddings(text: str, model: str = "text-embedding-3-small") -> List[float]:
+async def generate_embeddings(
+    text: str,
+    openai_api_key: dagger.Secret,
+    model: str = "text-embedding-3-small",
+) -> List[float]:
     """
     Generate embeddings for the given text using OpenAI API.
     """
     try:
-        response = await openai.Embedding.acreate(
+        # Get the plaintext API key
+        api_key = await openai_api_key.plaintext()
+
+        if not api_key:
+            print("Warning: OpenAI API key is None or empty")
+            return [0.0] * 1536  # Return fallback
+
+        # Initialize the OpenAI client
+        client = OpenAI(api_key=api_key)
+
+        # Make the API call - no await needed with synchronous client
+        response = client.embeddings.create(
             model=model,
             input=text
         )
-        return response["data"][0]["embedding"]
+
+        # Check for valid response
+        if not response or not hasattr(response, 'data') or not response.data:
+            print("Warning: Invalid response from OpenAI embeddings API")
+            return [0.0] * 1536
+
+        # Extract the embedding
+        return response.data[0].embedding
+
     except Exception as e:
         print(f"Error generating embeddings: {e}")
-        # Return empty embedding vector as fallback
-        return [0.0] * 1536  # Default size for OpenAI embeddings
+        return [0.0] * 1536
