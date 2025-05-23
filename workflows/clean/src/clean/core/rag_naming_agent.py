@@ -348,10 +348,8 @@ def create_rag_naming_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     )
 
     # Register tools
-    agent.to_a2a(
-        broker=)
     agent.tool(scan_code_for_naming_issues)
-    # agent.tool(query_similar_code)
-    # agent.tool(suggest_better_names)
+    agent.tool(query_similar_code)
+    agent.tool(suggest_better_names)
 
     return agent
