@@ -22,8 +22,6 @@ class IndexingConfig(BaseModel):
 
 
 class TestGenerationConfig(BaseModel):
-    iterations: int = Field(...,
-                            description="Number of iterations for test generation")
     limit: Optional[int] = Field(
         default=None, description="Optional limit for test generation")  # Make limit optional
     test_directory: str = Field(

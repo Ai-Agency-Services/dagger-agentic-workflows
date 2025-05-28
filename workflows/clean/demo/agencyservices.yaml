@@ -19,7 +19,6 @@ git:
     user_name: "Ai-TestGen[bot]"
 
 test_generation:
-    iterations: 3
     limit: 5
     save_next_to_code_under_test: false
     test_directory: "tests"

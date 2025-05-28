@@ -638,11 +638,14 @@ class Clean:
     async def index_codebase_with_full_concurrency(
         self,
         supabase_url: str,
-        open_ai_key: dagger.Secret,
+        openai_api_key: dagger.Secret,
         supabase_key: dagger.Secret,
-        file_extensions: list[str],
-        container: dagger.Container,
-        max_concurrent: int = 5,  # Maximum concurrent file processing
+        github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
+        repository_url: Annotated[str, Doc("Repository URL to index")],
+        branch: Annotated[str, Doc("Branch to index")],
+        file_extensions: list[str] = ["py", "js",
+                                      "ts", "java", "c", "cpp", "go", "rs"],
+        max_concurrent: int = 5,
     ) -> None:
         """Alternative implementation: process all files with semaphore-based concurrency control."""
         try:
@@ -656,6 +659,27 @@ class Clean:
             for dir_name in exclude_dirs:
                 file_list_cmd.extend(["-not", "-path", f"./{dir_name}/*"])
 
+            try:
+                self.config: YAMLConfig = YAMLConfig(**self.config)
+                if openai_api_key:
+                    print(green("Setting OpenAI API key..."))
+                    os.environ["OPENAI_API_KEY"] = await openai_api_key.plaintext()
+
+                source = (
+                    await dag.git(url=repository_url, keep_git_dir=True)
+                    # Correct method name
+                    .with_auth_token(github_access_token)
+                    .branch(branch)
+                    .tree()
+                )
+
+            except Exception as e:
+                print(red(f"Failed to clone repository: {e}"))
+                raise
+
+            container = await dag.builder(self.config_file).build_test_environment(
+                source=source, dockerfile_path=self.config.container.docker_file_path
+            )
             file_list_output = await container.with_exec(file_list_cmd).stdout()
             all_files_relative = [
                 f.strip() for f in file_list_output.strip().split("\n") if f.strip()
@@ -681,28 +705,32 @@ class Clean:
 
             # Create semaphore to limit concurrent processing
             semaphore = anyio.Semaphore(max_concurrent)
+            results = []
 
-            async def process_with_semaphore(filepath: str) -> int:
+            async def process_with_semaphore(filepath: str):
                 """Process a file with semaphore-controlled concurrency."""
                 async with semaphore:
-                    return await self._process_single_file(  # Use the internal method
-                        filepath=filepath,
-                        supabase=supabase,
-                        container=container,
-                        open_ai_key=open_ai_key,
-                        max_semantic_chunk_lines=max_semantic_chunk_lines_val,
-                        fallback_chunk_size=fallback_chunk_size_val
-                    )
+                    try:
+                        result = await self._process_single_file(
+                            filepath=filepath,
+                            supabase=supabase,
+                            container=container,
+                            open_ai_key=openai_api_key,
+                            max_semantic_chunk_lines=max_semantic_chunk_lines_val,
+                            fallback_chunk_size=fallback_chunk_size_val
+                        )
+                        results.append(result)
+                    except Exception as e:
+                        print(f"Error processing {filepath}: {e}")
+                        results.append(0)
 
             # Process all files concurrently with controlled concurrency
             async with anyio.create_task_group() as tg:
-                tasks = []
                 for filepath in filtered_files:
-                    task = await tg.start_soon(process_with_semaphore, filepath)
-                    tasks.append(task)
+                    tg.start_soon(process_with_semaphore, filepath)
 
             # Sum up results
-            total_indexed_chunks = sum(tasks)
+            total_indexed_chunks = sum(results)
             print(
                 f"Successfully indexed a total of {total_indexed_chunks} code chunks.")
 
