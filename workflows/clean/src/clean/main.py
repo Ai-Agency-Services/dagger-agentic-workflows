@@ -4,14 +4,13 @@ from typing import Annotated, List, NamedTuple, Optional
 
 import anyio
 import dagger
-from dagger import dag
 import yaml
 from clean.core.clean_names_workflow import clean_names_workflow
 from clean.models.config import YAMLConfig
 from clean.utils.code_parser import parse_code_file
 from clean.utils.embeddings import generate_embeddings
 from clean.utils.file import get_file_size
-from dagger import Doc, function, object_type
+from dagger import Doc, dag, function, object_type
 from simple_chalk import green, red
 from supabase import Client, create_client
 

@@ -7,7 +7,6 @@ from builder.core.builder_agent import (BuilderAgentDependencies,
 from builder.models.config import YAMLConfig
 from dagger import dag, function, object_type
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
 from simple_chalk import green, red, yellow
 from typing_extensions import Doc
 

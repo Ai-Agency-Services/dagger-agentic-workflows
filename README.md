@@ -12,4 +12,4 @@ This repository is a collection of agentic work flows built with dagger.
 | :----------------------------------------------------------: | :----------------------------------------------------------: | :----------------------------------------------------------: |
 |                           Cover.Ai                           |                           Pully.Ai                           |                           Buildy.Ai                           |
 
-### [Click here to learn more](agents/coverage_agent/README.md)
+### [Click here to learn more](workflows/cover/README.md)
