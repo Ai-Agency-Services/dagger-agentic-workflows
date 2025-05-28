@@ -1,5 +1,6 @@
-from typing import Optional, Dict
-from pydantic import BaseModel, Field, EmailStr
+from typing import Optional
+
+from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
 
 class ReporterConfig(BaseModel):
@@ -15,17 +16,17 @@ class ReporterConfig(BaseModel):
     )
 
 
-class IndexingConfig(BaseModel):
-    skip_indexing: bool = False
-    chunk_size: int = 50  # This will be used as fallback_chunk_size
-    max_semantic_chunk_lines: int = 200  # Max lines for a semantic chunk
+class CoreAPIConfig(BaseModel):
+    model: str = Field(
+        ..., description="The model identifier for core API, e.g., 'gpt-4o-2024-08-06'"
+    )
+    fallback_models: list[str] = Field(
+        default_factory=list,
+        description="List of fallback models for the core API"
+    )
 
 
 class TestGenerationConfig(BaseModel):
-    iterations: int = Field(...,
-                            description="Number of iterations for test generation")
-    limit: Optional[int] = Field(
-        default=None, description="Optional limit for test generation")  # Make limit optional
     test_directory: str = Field(
         ..., description="Directory where tests will be generated"
     )
@@ -49,24 +50,9 @@ class GitConfig(BaseModel):
     user_email: EmailStr = Field(..., description="Email for commit author")
 
 
-class CoreAPIConfig(BaseModel):
-    model: str = Field(
-        ..., description="The model identifier for core API, e.g., 'gpt-4o-2024-08-06'"
-    )
-    provider: Optional[str] = Field(
-        default=None, description="The provider for the core API, e.g., 'openai'"
-    )
-    fallback_models: list[str] = Field(
-        default_factory=list,
-        description="List of fallback models for the core API"
-    )
-
-
-
 class YAMLConfig(BaseModel):
     reporter: ReporterConfig
-    git: GitConfig
-    container: ContainerConfig
     core_api: CoreAPIConfig
     test_generation: TestGenerationConfig
-    indexing: IndexingConfig = IndexingConfig()
+    git: GitConfig
+    container: ContainerConfig

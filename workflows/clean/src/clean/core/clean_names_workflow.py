@@ -3,7 +3,6 @@ from typing import List, Optional
 
 import dagger
 from dagger import dag
-from clean.core.index_codebase import index_codebase
 from clean.models.config import YAMLConfig
 from clean.core.meaningful_names_agent import (
     MeaningfulNamesAgentDependencies, create_meaningful_names_agent)
@@ -88,30 +87,6 @@ async def clean_names_workflow(
         ".c", ".cpp", ".hpp", ".h", ".go", ".rs",
         ".rb", ".php", ".swift", ".kt", ".cs"
     ]
-
-    # Check if indexing should be skipped
-    should_index = True
-    if hasattr(config, 'indexing') and hasattr(config.indexing, 'skip_indexing'):
-        should_index = not config.indexing.skip_indexing
-
-    if should_index:
-        print(green("Indexing code files for RAG..."))
-        # Don't use asyncio.run() as we're already in an async function
-        try:
-            await index_codebase(
-                open_ai_key=openai_api_key,
-                supabase_url=supabase_url,
-                supabase_key=supabase_key,
-                file_extensions=file_extensions,
-                container=container,
-                config=config
-            )
-            print(green("Code indexing complete!"))
-        except Exception as e:
-            print(red(f"Failed to index codebase: {e}"))
-            raise
-    else:
-        print(yellow("Skipping code indexing as configured."))
 
     # Create RAG agent
     rag_agent = create_rag_naming_agent(model)

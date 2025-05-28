@@ -4,20 +4,34 @@ container:
     work_dir: "/app"
     docker_file_path: "./dockerfile"
 
-llm:
+reporter:
+    name: "jest"
+    command: "npm run test:coverage"
+    output_path: "/app/coverage/testResults.json"
+    report_directory: "/app/coverage"
+
+core_api:
     provider: "openrouter"
-    model_name: "x-ai/grok-3-mini-beta"
+    model: "x-ai/grok-3-mini-beta"
 
 git:
     user_email: "AiTestGen@users.noreply.github.com"
     user_name: "Ai-TestGen[bot]"
 
-generation:
-    max_files: 5
+test_generation:
+    iterations: 3
+    limit: 5
+    save_next_to_code_under_test: false
+    test_directory: "tests"
+    test_suffix: "test"
 
 indexing:
-    skip_indexing: true
+    skip_indexing: false
     chunk_size: 50
+    max_semantic_chunk_lines: 200
+    batch_size: 5  # For concurrent processing (if you want to override the default)
+    similarity_threshold: 0.80  # For RAG agent queries
+    results_limit: 10  # Maximum results to return from vector searches
 
 agents:
     agent_model: "x-ai/grok-3-mini-beta"
