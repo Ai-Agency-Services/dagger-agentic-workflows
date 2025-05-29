@@ -3,6 +3,20 @@ revision = 2
 requires-python = ">=3.12"
 
 [[package]]
+name = "ais-dagger-agents-config"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/4e/215d1f2e00be13a9f249e7455e089c0a4af9cedc50936e8dbd436068a0dc/ais_dagger_agents_config-0.1.0.tar.gz", hash = "sha256:57f61cc2732511fcc453c9e1ed911ef7be94391a53136789e7797820c3177813", size = 2888, upload-time = "2025-05-29T19:53:08.873Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/4a/590ba003fafd8447bab08e8d081ef1eff7667ba72afb5d92d1c0b47320a4/ais_dagger_agents_config-0.1.0-py3-none-any.whl", hash = "sha256:44b8977b567f01ca19e75ab3e6a9ad4f1a4ae400020164a8ac7b6e406b764c1e", size = 3584, upload-time = "2025-05-29T19:53:07.066Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -112,26 +126,23 @@ name = "builder"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "ais-dagger-agents-config" },
+    { name = "dagger-io" },
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-ai" },
     { name = "pyyaml" },
     { name = "simple-chalk" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "dagger-io" },
-]
-
 [package.metadata]
 requires-dist = [
-    { name = "dagger-io", marker = "extra == 'dev'", editable = "sdk" },
+    { name = "ais-dagger-agents-config" },
+    { name = "dagger-io", editable = "sdk" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.11.5" },
     { name = "pydantic-ai", specifier = ">=0.2.10" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "simple-chalk", specifier = ">=0.1.0" },
 ]
-provides-extras = ["dev"]
 
 [[package]]
 name = "cachetools"
