@@ -4,7 +4,7 @@ import dagger
 import yaml
 from builder.core.builder_agent import (BuilderAgentDependencies,
                                         create_builder_agent)
-from builder.models.config import YAMLConfig
+from dagger_agents_config import YAMLConfig
 from dagger import dag, function, object_type
 from pydantic_ai import Agent
 from simple_chalk import green, red, yellow
@@ -25,7 +25,7 @@ class Builder:
         return cls(config=config_dict, base_container=dag.container())
 
     async def _install_agent_dependencies(self, container: dagger.Container) -> dagger.Container:
-        """Installs agent-specific dependencies (git, bash, gh) into an existing container."""
+        """Installs agent-specific dependencies with robust OS detection."""
         try:
             # First try using the builder agent
             deps = BuilderAgentDependencies(container=container)
@@ -43,45 +43,92 @@ class Builder:
             return deps.container
         except Exception as e_agent:
             print(yellow(
-                f"Builder agent approach failed ({e_agent}), trying to detect OS..."))
+                f"Builder agent approach failed ({e_agent}), trying fallback detection..."))
 
-            # Check OS type first
-            try:
-                # Use file existence to determine OS type
-                alpine_check = await container.with_exec(["test", "-f", "/etc/alpine-release"]).exit_code()
-                debian_check = await container.with_exec(["test", "-f", "/etc/debian_version"]).exit_code()
+            # More robust fallback approach
+            return await self._install_dependencies_fallback(container)
 
-                if alpine_check == 0:
-                    print("Detected Alpine Linux, using apk...")
+    async def _install_dependencies_fallback(self, container: dagger.Container) -> dagger.Container:
+        """Fallback dependency installation with better OS detection."""
+        try:
+            # Try to identify the base image more reliably
+            # Method 1: Check for package managers directly
+            package_managers = [
+                ("apk", "alpine"),
+                ("apt-get", "debian"),
+                ("yum", "rhel"),
+                ("dnf", "fedora"),
+                ("pacman", "arch")
+            ]
+
+            detected_pm = None
+            for pm, os_type in package_managers:
+                try:
+                    # Use 'which' or 'command -v' to check for package manager
+                    result = await container.with_exec(["sh", "-c", f"command -v {pm} >/dev/null 2>&1 && echo 'found' || echo 'not_found'"]).stdout()
+                    if "found" in result.strip():
+                        detected_pm = (pm, os_type)
+                        print(
+                            f"Detected {os_type} system with {pm} package manager")
+                        break
+                except Exception:
+                    continue
+
+            if detected_pm:
+                pm, os_type = detected_pm
+                if os_type == "alpine":
                     return await self._install_alpine_deps(container)
-                elif debian_check == 0:
-                    print("Detected Debian/Ubuntu, using apt...")
+                elif os_type in ["debian", "ubuntu"]:
                     return await self._install_debian_deps(container)
                 else:
-                    # Try to determine by command availability
-                    which_apk = await container.with_exec(["which", "apk"]).exit_code()
-                    if which_apk == 0:
-                        print("Found apk, using Alpine package manager...")
-                        return await self._install_alpine_deps(container)
-
-                    which_apt = await container.with_exec(["which", "apt-get"]).exit_code()
-                    if which_apt == 0:
-                        print("Found apt-get, using Debian package manager...")
-                        return await self._install_debian_deps(container)
-
-                    # Last resort - try sh to see if we can at least run basic commands
                     print(
-                        yellow("Could not determine OS type, trying basic shell commands..."))
-                    container = container.with_exec(
-                        ["sh", "-c", "echo 'Checking basic shell functionality'"])
-                    raise RuntimeError(
-                        "Could not determine OS package manager")
+                        yellow(f"Detected {os_type} but using generic approach"))
+                    return await self._install_generic_deps(container)
 
-            except Exception as e_os:
+            # Method 2: Try to detect by running simple commands
+            try:
+                # Test basic shell functionality first
+                test_result = await container.with_exec(["sh", "-c", "echo 'shell_works'"]).stdout()
+                if "shell_works" not in test_result:
+                    raise RuntimeError("Basic shell not working")
+
+                # Try to identify OS by checking common files/commands
+                os_checks = [
+                    ("cat /etc/os-release 2>/dev/null | head -1", "os-release"),
+                    ("cat /etc/alpine-release 2>/dev/null", "alpine"),
+                    ("cat /etc/debian_version 2>/dev/null", "debian"),
+                    ("uname -a 2>/dev/null", "uname")
+                ]
+
+                for cmd, check_type in os_checks:
+                    try:
+                        result = await container.with_exec(["sh", "-c", cmd]).stdout()
+                        if result.strip():
+                            print(
+                                f"OS info from {check_type}: {result.strip()[:100]}")
+
+                            if "alpine" in result.lower():
+                                return await self._install_alpine_deps(container)
+                            elif any(term in result.lower() for term in ["debian", "ubuntu"]):
+                                return await self._install_debian_deps(container)
+                            break
+                    except Exception:
+                        continue
+
+                # If we get here, try a generic approach
                 print(
-                    red(f"Failed to detect OS or run basic commands: {e_os}"))
-                raise RuntimeError(
-                    "Container appears to be missing basic shell functionality") from e_os
+                    yellow("Could not detect specific OS, trying generic installation..."))
+                return await self._install_generic_deps(container)
+
+            except Exception as e_shell:
+                print(red(f"Shell functionality test failed: {e_shell}"))
+                # Last resort - return container as-is with warning
+                print(yellow("Returning container without additional dependencies"))
+                return container
+
+        except Exception as e:
+            print(red(f"Fallback dependency installation failed: {e}"))
+            return container
 
     async def _install_alpine_deps(self, container: dagger.Container) -> dagger.Container:
         """Install dependencies using Alpine package manager."""

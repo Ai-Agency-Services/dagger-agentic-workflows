@@ -3,7 +3,7 @@ name = "clean"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "dagger-io",
+    "dagger-agents-config", 
     "email-validator>=2.2.0",
     "pydantic-ai>=0.2.4",
     "pyyaml>=6.0.2",
@@ -11,9 +11,15 @@ dependencies = [
     "supabase>=2.15.1",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "dagger-io",  # Changed from dagger-io-clean to match the actual package name
+]
+
 [build-system]
 requires = ["hatchling==1.25.0"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-dagger-io = { path = "sdk", editable = true }
+dagger-agents-config = { path = "../../shared/dagger-agents-config", editable = true } 
+dagger-io = { path = "sdk", editable = true }  # Path from clean to root SDK

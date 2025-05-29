@@ -13,7 +13,7 @@ requires = ["hatchling==1.25.0"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-dagger-io = { path = "sdk", editable = true }
+dagger-io = { path = "../../../../sdk", editable = true }
 
 [project.entry-points."dagger.mod"]
 main_object = 'reporter:Reporter'

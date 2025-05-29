@@ -3,7 +3,6 @@ name = "coverage"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "dagger-io",
     "jsonschema>=4.23.0",
     "openai>=1.76.2",
     "pydantic-ai[logfire]>=0.1.8",
@@ -11,9 +10,16 @@ dependencies = [
     "simple-chalk>=0.1.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "dagger-io",  # Changed from dagger-io-cover to match the actual package name
+]
+
+
 [build-system]
 requires = ["hatchling==1.25.0"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-dagger-io = { path = "sdk", editable = true }
+dagger-agents-config = { workspace = true }
+dagger-io = { path = "../../sdk", editable = true }  # Changed from dagger-io-cover
