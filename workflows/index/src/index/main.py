@@ -7,11 +7,10 @@ import anyio
 import dagger
 import yaml
 from ais_dagger_agents_config.models import YAMLConfig
-from clean.utils.code_parser import parse_code_file
-from clean.utils.embeddings import generate_embeddings
-from clean.utils.file import get_file_size
-from clean.utils.llm import get_llm_credentials
 from dagger import Doc, dag, function, object_type
+from index.utils.code_parser import parse_code_file
+from index.utils.embeddings import generate_embeddings
+from index.utils.file import get_file_size
 from supabase import Client, create_client
 
 
@@ -40,12 +39,12 @@ class ChunkData:
 
 
 @object_type
-class Clean:
+class Index:
     config: dict
     config_file: dagger.File
 
     @classmethod
-    async def create(cls, config_file: Annotated[dagger.File, Doc("Path to the YAML config file")]) -> "Clean":
+    async def create(cls, config_file: Annotated[dagger.File, Doc("Path to the YAML config file")]) -> "Index":
         """Create a Clean object from a YAML config file."""
         config_str = await config_file.contents()
         config_dict = yaml.safe_load(config_str)
