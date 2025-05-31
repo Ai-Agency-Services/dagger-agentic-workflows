@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ais-dagger-agents-config"
+version = "0.1.4"
+description = "Shared configuration models for Dagger Agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Kambui Nurse", email = "kambui.nurse@agencyservices-ai.com"},
+]
+keywords = ["dagger", "configuration"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/Ai-Agency-Services/dagger-agentic-workflows"
+"Bug Tracker" = "https://github.com/Ai-Agency-Services/dagger-agentic-workflows/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ais_dagger_agents_config"]

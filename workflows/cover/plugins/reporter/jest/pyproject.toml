@@ -1,0 +1,22 @@
+[project]
+name = "jest-reporter-plugin"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4>=4.13.4",
+    "pydantic>=2.11.4",
+]
+
+
+[project.optional-dependencies]
+dev =[
+    "dagger-io"
+]
+
+[build-system]
+requires = ["hatchling==1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+dagger-agents-config = { workspace = true }
+dagger-io = { path = "../../../../../sdk", editable = true }  # Path from jest to root SDK

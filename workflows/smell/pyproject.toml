@@ -1,0 +1,17 @@
+[project]
+name = "smell"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+
+[project.optional-dependencies]
+dev = [
+    "dagger-io",
+]
+
+[build-system]
+requires = ["hatchling==1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+dagger-io = { path = "../../sdk", editable = true }
