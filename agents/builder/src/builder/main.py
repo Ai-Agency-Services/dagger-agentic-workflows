@@ -6,11 +6,11 @@ from ais_dagger_agents_config import YAMLConfig
 from builder.core.builder_agent import (BuilderAgentDependencies,
                                         create_builder_agent)
 from builder.models.llm_credentials import LLMCredentials
+from builder.utils import create_llm_model, get_llm_credentials
 from dagger import dag, function, object_type
 from pydantic_ai import Agent
 from simple_chalk import green, red, yellow
 from typing_extensions import Doc
-from builder.utils import create_llm_model, get_llm_credentials
 
 
 @object_type
@@ -286,8 +286,12 @@ class Builder:
             git_container = self._configure_git(container_with_deps)
 
             # Run the reporter command with error handling
-            cmd = f'cd {work_dir} && {self.config.reporter.command} || echo "Reporter command failed with exit code $?"'
-            final_container = git_container.with_exec(["bash", "-c", cmd])
+            if self.config.reporter:
+                cmd = f'cd {work_dir} && {self.config.reporter.command} || echo "Reporter command failed with exit code $?"'
+                final_container = git_container.with_exec(["bash", "-c", cmd])
+            else:
+                print(yellow("No reporter command specified, skipping execution."))
+                final_container = git_container
 
             print(green("Test environment container setup complete."))
             return final_container
