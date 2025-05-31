@@ -42,35 +42,37 @@ class IndexingConfig(BaseModel):
 
 
 class TestGenerationConfig(BaseModel):
+    """Test generation configuration with optional fields."""
     limit: Optional[int] = Field(
-        default=None, description="Optional limit for test generation")  # Make limit optional
-    test_directory: str = Field(
-        ..., description="Directory where tests will be generated"
+        default=None, description="Optional limit for test generation")
+    test_directory: Optional[str] = Field(
+        default=None, description="Directory where tests will be generated"
     )
-    test_suffix: str = Field(...,
-                             description="Suffix for generated test files")
-    save_next_to_code_under_test: bool = Field(
-        ..., description="Save next to code under test"
+    test_suffix: Optional[str] = Field(
+        default=None, description="Suffix for generated test files")
+    save_next_to_code_under_test: Optional[bool] = Field(
+        default=None, description="Save next to code under test"
     )
 
 
 class ReporterConfig(BaseModel):
-    """Reporter configuration."""
-    name: str = Field(...,
-                      description="The name of the reporter, e.g., 'jest'")
-    command: str = Field(...,
-                         description="The command to run tests with coverage")
-    report_directory: str = Field(
-        ..., description="The directory where coverage reports are saved"
+    """Reporter configuration with all optional fields."""
+    name: Optional[str] = Field(
+        default=None, description="The name of the reporter, e.g., 'jest'")
+    command: Optional[str] = Field(
+        default=None, description="The command to run tests with coverage")
+    report_directory: Optional[str] = Field(
+        default=None, description="The directory where coverage reports are saved"
     )
-    output_file_path: str = Field(
-        ..., description="The path to the JSON output file for test results"
+    output_file_path: Optional[str] = Field(
+        default=None, description="The path to the JSON output file for test results"
     )
 
 
 class CoreAPIConfig(BaseModel):
-    """Core API configuration."""
-    model: str = Field(description="Model to use for core operations")
+    """Core API configuration with optional fields."""
+    model: Optional[str] = Field(
+        default=None, description="Model to use for core operations")
     provider: Optional[str] = Field(
         default=None, description="Provider for the core API, e.g., 'openai'")
     fallback_models: List[str] = Field(
@@ -83,10 +85,10 @@ class YAMLConfig(BaseModel):
     """Main configuration model."""
     container: ContainerConfig
     git: GitConfig
-    indexing: IndexingConfig = Field(default_factory=IndexingConfig)
-    test_generation: TestGenerationConfig
-    reporter: ReporterConfig
-    core_api: CoreAPIConfig
+    indexing: Optional[IndexingConfig] = Field(default_factory=IndexingConfig)
+    test_generation: Optional[TestGenerationConfig] = Field(default=None)
+    reporter: Optional[ReporterConfig] = Field(default=None)
+    core_api: Optional[CoreAPIConfig] = Field(default=None)
 
     class Config:
         """Pydantic configuration."""

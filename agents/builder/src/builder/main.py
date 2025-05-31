@@ -2,13 +2,15 @@ from typing import Annotated
 
 import dagger
 import yaml
+from ais_dagger_agents_config import YAMLConfig
 from builder.core.builder_agent import (BuilderAgentDependencies,
                                         create_builder_agent)
-from dagger_agents_config import YAMLConfig
+from builder.models.llm_credentials import LLMCredentials
 from dagger import dag, function, object_type
 from pydantic_ai import Agent
 from simple_chalk import green, red, yellow
 from typing_extensions import Doc
+from builder.utils import create_llm_model, get_llm_credentials
 
 
 @object_type
@@ -24,14 +26,26 @@ class Builder:
         config_dict = yaml.safe_load(config_str)
         return cls(config=config_dict, base_container=dag.container())
 
-    async def _install_agent_dependencies(self, container: dagger.Container) -> dagger.Container:
+    async def _install_agent_dependencies(
+        self,
+        container: dagger.Container,
+        llm_credentials: LLMCredentials
+    ) -> dagger.Container:
         """Installs agent-specific dependencies with robust OS detection."""
         try:
             # First try using the builder agent
             deps = BuilderAgentDependencies(container=container)
             print("Installing agent dependencies using builder agent...")
+
+            model = await create_llm_model(
+                api_key=llm_credentials.api_key,
+                base_url=llm_credentials.base_url,
+                model_name=self.config.core_api.model
+            )
+
             builder_agent: Agent = create_builder_agent(
-                pydantic_ai_model=self.config.core_api.model)
+                pydantic_ai_model=model,
+            )
             builder_agent.instrument_all()
 
             await builder_agent.run(
@@ -207,6 +221,9 @@ class Builder:
         self,
         source: dagger.Directory,
         dockerfile_path: str,
+        openai_api_key: dagger.Secret,
+        open_router_api_key: dagger.Secret,
+        provider: str
     ) -> dagger.Container:
         """
         Builds the primary container environment for testing.
@@ -259,7 +276,13 @@ class Builder:
 
         # More robust dependency installation
         try:
-            container_with_deps = await self._install_agent_dependencies(self.base_container)
+            llm_credentials = await get_llm_credentials(
+                openai_key=openai_api_key,
+                open_router_key=open_router_api_key,
+                provider=provider
+            )
+
+            container_with_deps = await self._install_agent_dependencies(self.base_container, llm_credentials)
             git_container = self._configure_git(container_with_deps)
 
             # Run the reporter command with error handling

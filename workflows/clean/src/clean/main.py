@@ -6,10 +6,11 @@ from typing import Annotated, Dict, List, Optional, Tuple
 import anyio
 import dagger
 import yaml
-from clean.models.config import YAMLConfig
+from ais_dagger_agents_config.models import YAMLConfig
 from clean.utils.code_parser import parse_code_file
 from clean.utils.embeddings import generate_embeddings
 from clean.utils.file import get_file_size
+from clean.utils.llm import get_llm_credentials
 from dagger import Doc, dag, function, object_type
 from supabase import Client, create_client
 
@@ -291,7 +292,8 @@ class Clean:
         if code_file:
             file_language = getattr(code_file, 'language', 'unknown')
             all_file_symbols = getattr(code_file, 'symbols', [])
-            logger.info(f"Parsed {filepath}: language={file_language}, {len(all_file_symbols)} symbols")
+            logger.info(
+                f"Parsed {filepath}: language={file_language}, {len(all_file_symbols)} symbols")
 
         # 1. Try semantic chunking first
         if code_file and all_file_symbols:
@@ -299,7 +301,8 @@ class Clean:
                 filepath, lines, all_file_symbols, file_language, config, logger
             )
             if semantic_chunks:
-                logger.info(f"Created {len(semantic_chunks)} semantic chunks for {filepath}")
+                logger.info(
+                    f"Created {len(semantic_chunks)} semantic chunks for {filepath}")
                 return semantic_chunks
 
         # 2. Fallback to fixed-size chunking
@@ -307,7 +310,8 @@ class Clean:
             fallback_chunks = self._create_fallback_chunks(
                 filepath, lines, all_file_symbols, file_language, config, code_file, logger
             )
-            logger.info(f"Created {len(fallback_chunks)} fallback chunks for {filepath}")
+            logger.info(
+                f"Created {len(fallback_chunks)} fallback chunks for {filepath}")
             return fallback_chunks
 
         logger.warning(f"No chunks created for {filepath}")
@@ -390,14 +394,16 @@ class Clean:
         # Process embeddings in batches
         for i in range(0, len(chunks_data), config.embedding_batch_size):
             batch = chunks_data[i:i + config.embedding_batch_size]
-            logger.info(f"Generating embeddings for batch {i//config.embedding_batch_size + 1}: {len(batch)} chunks")
+            logger.info(
+                f"Generating embeddings for batch {i//config.embedding_batch_size + 1}: {len(batch)} chunks")
 
             # Generate embeddings concurrently for this batch
             embedding_results = await self._generate_embeddings_batch(
                 batch, openai_key, config.embedding_model, logger
             )
-            
-            logger.info(f"Generated {len(embedding_results)} embedding results")
+
+            logger.info(
+                f"Generated {len(embedding_results)} embedding results")
 
             # Insert valid results
             batch_inserts = 0
@@ -405,8 +411,9 @@ class Clean:
                 if embedding and await self._insert_chunk_safe(chunk, embedding, supabase, logger):
                     successful_inserts += 1
                     batch_inserts += 1
-            
-            logger.info(f"Successfully inserted {batch_inserts} chunks from this batch")
+
+            logger.info(
+                f"Successfully inserted {batch_inserts} chunks from this batch")
 
         logger.info(f"Total successful inserts: {successful_inserts}")
         return successful_inserts
@@ -448,7 +455,7 @@ class Clean:
             result = await self._store_chunks_with_embeddings(
                 chunks_data, supabase, openai_key, config, logger
             )
-            
+
             logger.info(f"File {filepath} processed: {result} chunks indexed")
             return result
 
@@ -491,6 +498,8 @@ class Clean:
     async def _setup_repository(
         self,
         github_token: dagger.Secret,
+        open_router_api_key: dagger.Secret,
+        openai_api_key: dagger.Secret,
         repo_url: str,
         branch: str
     ) -> Tuple[dagger.Container, List[str]]:
@@ -507,9 +516,13 @@ class Clean:
             # Build container
             config_obj = YAMLConfig(
                 **self.config) if isinstance(self.config, dict) else self.config
+
             container = await dag.builder(self.config_file).build_test_environment(
                 source=source,
-                dockerfile_path=config_obj.container.docker_file_path
+                dockerfile_path=config_obj.container.docker_file_path,
+                open_router_api_key=open_router_api_key,
+                provider=config_obj.core_api.provider if config_obj.core_api else None,
+                openai_api_key=open_router_api_key
             )
 
             # Get file list
@@ -589,6 +602,7 @@ class Clean:
         branch: Annotated[str, Doc("Branch to index")],
         supabase_url: str,
         openai_api_key: dagger.Secret,
+        open_router_api_key: dagger.Secret,
         supabase_key: dagger.Secret,
         clear_existing: bool = True,
     ) -> str:
@@ -603,7 +617,13 @@ class Clean:
                 os.environ["OPENAI_API_KEY"] = await openai_api_key.plaintext()
 
             # Setup repository and get files
-            container, files = await self._setup_repository(github_access_token, repository_url, branch)
+            container, files = await self._setup_repository(
+                github_access_token,
+                open_router_api_key,
+                openai_api_key,
+                repository_url,
+                branch
+            )
             logger.info(f"Found {len(files)} files to process")
 
             # Setup database

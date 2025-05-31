@@ -1,10 +1,15 @@
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import dagger
-from clean.models.llm_credentials import LLMCredentials
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from simple_chalk import red
+
+
+class LLMCredentials(NamedTuple):
+    """Holds the base URL and API key for an LLM provider."""
+    base_url: Optional[str]
+    api_key: str
 
 
 async def get_llm_credentials(
@@ -87,4 +92,4 @@ async def create_llm_model(
         return pydantic_ai_model
     except Exception as e:
         print(red(f"Failed to initialize Pydantic AI Provider/Model: {e}"))
-        raise  # Re-raise the exception to be handled by the caller
+        raise

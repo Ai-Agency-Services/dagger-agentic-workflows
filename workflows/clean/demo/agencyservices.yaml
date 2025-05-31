@@ -33,4 +33,4 @@ indexing:
     results_limit: 10  # Maximum results to return from vector searches
 
 agents:
-    agent_model: "x-ai/grok-3-mini-beta"
+    builder_model: "x-ai/grok-3-mini-beta"

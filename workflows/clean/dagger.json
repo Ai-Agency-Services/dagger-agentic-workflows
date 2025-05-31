@@ -8,6 +8,10 @@
     {
       "name": "builder",
       "source": "../../agents/builder"
+    },
+    {
+      "name": "dagger-agents-utils",
+      "source": "../../shared/dagger-agents-utils"
     }
   ]
 }

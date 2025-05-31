@@ -4,22 +4,20 @@ from .models import (
     YAMLConfig,
     ContainerConfig,
     GitConfig,
-    LLMConfig,
     IndexingConfig,
-    GenerationConfig,
+    TestGenerationConfig,
     ReporterConfig,
     CoreAPIConfig,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.4"
 
 __all__ = [
     "YAMLConfig",
-    "ContainerConfig", 
+    "ContainerConfig",
     "GitConfig",
-    "LLMConfig",
     "IndexingConfig",
-    "GenerationConfig",
+    "TestGenerationConfig",
     "ReporterConfig",
     "CoreAPIConfig",
 ]
