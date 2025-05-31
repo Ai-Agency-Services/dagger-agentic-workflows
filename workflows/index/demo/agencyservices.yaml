@@ -4,12 +4,6 @@ container:
     work_dir: "/app"
     docker_file_path: "./dockerfile"
 
-reporter:
-    name: "jest"
-    command: "npm run test:coverage"
-    output_path: "/app/coverage/testResults.json"
-    report_directory: "/app/coverage"
-
 core_api:
     provider: "openrouter"
     model: "x-ai/grok-3-mini-beta"

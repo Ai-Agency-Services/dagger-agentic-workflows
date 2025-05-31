@@ -286,8 +286,12 @@ class Builder:
             git_container = self._configure_git(container_with_deps)
 
             # Run the reporter command with error handling
-            cmd = f'cd {work_dir} && {self.config.reporter.command} || echo "Reporter command failed with exit code $?"'
-            final_container = git_container.with_exec(["bash", "-c", cmd])
+            if self.config.reporter:
+                cmd = f'cd {work_dir} && {self.config.reporter.command} || echo "Reporter command failed with exit code $?"'
+                final_container = git_container.with_exec(["bash", "-c", cmd])
+            else:
+                print(yellow("No reporter command specified, skipping execution."))
+                final_container = git_container
 
             print(green("Test environment container setup complete."))
             return final_container
