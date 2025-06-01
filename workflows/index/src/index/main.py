@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass
 from typing import Annotated, Dict, List, Optional, Tuple
 
+from ais_dagger_agents_config import IndexingConfig, ConcurrencyConfig
 import anyio
 import dagger
 import yaml
@@ -63,21 +64,24 @@ class Index:
         config_obj = YAMLConfig(
             **self.config) if isinstance(self.config, dict) else self.config
 
-        if not hasattr(config_obj, 'indexing'):
-            return ProcessingConfig()
+        # Default to empty configs if not present
+        indexing_config = getattr(
+            config_obj, 'indexing', None) or IndexingConfig()
+        concurrency_config = getattr(
+            config_obj, 'concurrency', None) or ConcurrencyConfig()
 
-        indexing_config = config_obj.indexing
         return ProcessingConfig(
             max_semantic_chunk_lines=getattr(
                 indexing_config, 'max_semantic_chunk_lines', 200),
             fallback_chunk_size=getattr(indexing_config, 'chunk_size', 50),
             max_file_size=getattr(indexing_config, 'max_file_size', 1_000_000),
-            batch_size=getattr(indexing_config, 'batch_size', 5),
-            max_concurrent=getattr(indexing_config, 'max_concurrent', 5),
+            # Get concurrency settings from the concurrency config
+            batch_size=getattr(concurrency_config, 'batch_size', 5),
+            max_concurrent=getattr(concurrency_config, 'max_concurrent', 5),
+            embedding_batch_size=getattr(
+                concurrency_config, 'embedding_batch_size', 10),
             embedding_model=getattr(
                 indexing_config, 'embedding_model', 'text-embedding-3-small'),
-            embedding_batch_size=getattr(
-                indexing_config, 'embedding_batch_size', 10),
         )
 
     def _validate_symbol_lines(self, symbol_obj, total_lines: int, filepath: str, logger: logging.Logger) -> bool:

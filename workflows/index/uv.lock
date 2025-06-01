@@ -75,16 +75,16 @@ wheels = [
 
 [[package]]
 name = "ais-dagger-agents-config"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/d6/338aa70ad6677d86fe45f2e80b51300b325ec407500fc58ce22b6e20628b/ais_dagger_agents_config-0.1.4.tar.gz", hash = "sha256:42a70427c1bda14465d2f97eb0a06d7faca632a147bc9d350d40e32fd43944ca", size = 3104 }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/31/a12b8485c9de77a9c2009bee0260ef09b84b9e75aa65a5b5eebeadb8ee4d/ais_dagger_agents_config-0.1.5.tar.gz", hash = "sha256:1117c65ef85113d32358a8ba6112d9f6248adbe6ebe3a4adb2d0633a67734fe1", size = 3309 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/04/57ae1ee530f532f87bee6ec02e76931100a245fa470c61ddfdcb6b843151/ais_dagger_agents_config-0.1.4-py3-none-any.whl", hash = "sha256:d32ab6e40a288c111b04c692e5e2c706d92c2a17e563f642c2eb655729ee2748", size = 3811 },
+    { url = "https://files.pythonhosted.org/packages/36/43/e113238172f4df4508a1cc2320fa59276002b6819d991b68a9d47c5cee9e/ais_dagger_agents_config-0.1.5-py3-none-any.whl", hash = "sha256:ae249292190a0ebaed8198491837a7664507a6b1930925cabe65161be9c9264c", size = 4025 },
 ]
 
 [[package]]
@@ -1763,15 +1763,15 @@ wheels = [
 
 [[package]]
 name = "uvicorn"
-version = "0.34.2"
+version = "0.34.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "h11" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/ae/9bbb19b9e1c450cf9ecaef06463e40234d98d95bf572fab11b4f19ae5ded/uvicorn-0.34.2.tar.gz", hash = "sha256:0e929828f6186353a80b58ea719861d2629d766293b6d19baf086ba31d4f3328", size = 76815 }
+sdist = { url = "https://files.pythonhosted.org/packages/de/ad/713be230bcda622eaa35c28f0d328c3675c371238470abdea52417f17a8e/uvicorn-0.34.3.tar.gz", hash = "sha256:35919a9a979d7a59334b6b10e05d77c1d0d574c50e0fc98b8b1a0f165708b55a", size = 76631 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b1/4b/4cef6ce21a2aaca9d852a6e84ef4f135d99fcd74fa75105e2fc0c8308acd/uvicorn-0.34.2-py3-none-any.whl", hash = "sha256:deb49af569084536d269fe0a6d67e3754f104cf03aba7c11c40f01aadf33c403", size = 62483 },
+    { url = "https://files.pythonhosted.org/packages/6d/0d/8adfeaa62945f90d19ddc461c55f4a50c258af7662d34b6a3d5d1f8646f6/uvicorn-0.34.3-py3-none-any.whl", hash = "sha256:16246631db62bdfbf069b0645177d6e8a77ba950cfedbfd093acef9444e4d885", size = 62431 },
 ]
 
 [[package]]

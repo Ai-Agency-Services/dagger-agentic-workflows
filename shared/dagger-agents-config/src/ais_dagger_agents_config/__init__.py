@@ -3,6 +3,7 @@
 from .models import (
     YAMLConfig,
     ContainerConfig,
+    ConcurrencyConfig,
     GitConfig,
     IndexingConfig,
     TestGenerationConfig,
@@ -10,11 +11,12 @@ from .models import (
     CoreAPIConfig,
 )
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 __all__ = [
     "YAMLConfig",
     "ContainerConfig",
+    "ConcurrencyConfig",
     "GitConfig",
     "IndexingConfig",
     "TestGenerationConfig",

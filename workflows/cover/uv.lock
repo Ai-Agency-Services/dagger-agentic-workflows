@@ -3,16 +3,16 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "ais-dagger-agents-config"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/d6/338aa70ad6677d86fe45f2e80b51300b325ec407500fc58ce22b6e20628b/ais_dagger_agents_config-0.1.4.tar.gz", hash = "sha256:42a70427c1bda14465d2f97eb0a06d7faca632a147bc9d350d40e32fd43944ca", size = 3104 }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/31/a12b8485c9de77a9c2009bee0260ef09b84b9e75aa65a5b5eebeadb8ee4d/ais_dagger_agents_config-0.1.5.tar.gz", hash = "sha256:1117c65ef85113d32358a8ba6112d9f6248adbe6ebe3a4adb2d0633a67734fe1", size = 3309 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/04/57ae1ee530f532f87bee6ec02e76931100a245fa470c61ddfdcb6b843151/ais_dagger_agents_config-0.1.4-py3-none-any.whl", hash = "sha256:d32ab6e40a288c111b04c692e5e2c706d92c2a17e563f642c2eb655729ee2748", size = 3811 },
+    { url = "https://files.pythonhosted.org/packages/36/43/e113238172f4df4508a1cc2320fa59276002b6819d991b68a9d47c5cee9e/ais_dagger_agents_config-0.1.5-py3-none-any.whl", hash = "sha256:ae249292190a0ebaed8198491837a7664507a6b1930925cabe65161be9c9264c", size = 4025 },
 ]
 
 [[package]]
@@ -233,6 +233,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ais-dagger-agents-config" },
+    { name = "dagger-io" },
     { name = "jsonschema" },
     { name = "openai" },
     { name = "pydantic", extra = ["email"] },
@@ -240,15 +241,10 @@ dependencies = [
     { name = "simple-chalk" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "dagger-io" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "ais-dagger-agents-config", specifier = ">=0.1.0,<0.2.0" },
-    { name = "dagger-io", marker = "extra == 'dev'", editable = "sdk" },
+    { name = "dagger-io", editable = "sdk" },
     { name = "jsonschema", specifier = ">=4.23.0" },
     { name = "openai", specifier = ">=1.76.2" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.11.4" },

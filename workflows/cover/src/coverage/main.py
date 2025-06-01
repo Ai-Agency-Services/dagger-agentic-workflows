@@ -1,15 +1,15 @@
+import logging
 import traceback
 from typing import Annotated, Optional
 
 import dagger
 import yaml
+from ais_dagger_agents_config import YAMLConfig
 from coverage.core.coverai_agent import (CoverAgentDependencies,
                                          create_coverai_agent)
 from coverage.core.pull_request_agent import (PullRequestAgentDependencies,
                                               create_pull_request_agent)
 from coverage.models.code_module import CodeModule
-# from coverage.models.config import YAMLConfig
-from ais_dagger_agents_config import YAMLConfig
 from coverage.models.coverage_report import CoverageReport
 from coverage.utils import (create_llm_model, dagger_json_file_to_pydantic,
                             get_llm_credentials, rank_reports_by_coverage)
@@ -37,6 +37,27 @@ class Cover:
         reporter = dag.reporter(name=reporter_name)
 
         return cls(config=config_dict, reporter=reporter, config_file=config_file)
+
+    def _setup_logging(self):
+        """Setup logging configuration."""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(
+            "Cover agent initialized with configuration: %s", self.config)
+
+    def _get_process_config(self) -> ProcessingConfig:
+        """Extract processing configuration from the YAML config."""
+        try:
+            config_obj = YAMLConfig(
+                **self.config) if isinstance(self.config, dict) else self.config
+            if not hasattr(config_obj, "")
+            return ProcessingConfig(**self.config["test_generation"])
+        except KeyError as e:
+            raise ValueError(f"Missing required configuration key: {e}")
+
 
     @function
     async def generate_unit_tests(
