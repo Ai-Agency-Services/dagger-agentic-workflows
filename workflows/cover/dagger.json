@@ -8,6 +8,10 @@
     {
       "name": "Reporter",
       "source": "plugins/reporter"
+    },
+    {
+      "name": "builder",
+      "source": "../../agents/builder"
     }
   ]
 }

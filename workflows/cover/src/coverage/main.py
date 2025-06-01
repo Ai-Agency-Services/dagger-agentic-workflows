@@ -2,8 +2,8 @@ import traceback
 from typing import Annotated, Optional
 
 import dagger
+import yaml
 from coverage.core.configuration_loader import ConfigurationLoader
-from coverage.core.container_builder import ContainerBuilder
 from coverage.core.coverai_agent import (CoverAgentDependencies,
                                          create_coverai_agent)
 from coverage.core.pull_request_agent import (PullRequestAgentDependencies,
@@ -23,15 +23,20 @@ from simple_chalk import green, red, yellow
 class Cover:
     """Coverage agent to generate unit tests for a given repository."""
     config: dict
+    config_file: dagger.File
     reporter: Reporter
 
     @classmethod
     async def create(
         cls, config_file: Annotated[dagger.File, "Path to the configuration file"]
     ):
-        """Creates an instance of the CoverageAgent class."""
-        config_dict, reporter_instance = await ConfigurationLoader.load(config=config_file)
-        return cls(config=config_dict, reporter=reporter_instance)
+        config_str = await config_file.contents()
+        config_dict = yaml.safe_load(config_str)
+
+        reporter_name = config_dict["reporter"]["name"]
+        reporter = dag.reporter(name=reporter_name)
+
+        return cls(config=config_dict, reporter=reporter, config_file=config_file)
 
     @function
     async def generate_unit_tests(
@@ -88,8 +93,6 @@ class Cover:
         )
         pull_request_agent.instrument_all()
 
-        builder = ContainerBuilder(config=self.config, model=grok)
-
         source = (
             await dag.git(url=repository_url, keep_git_dir=True)
             .with_auth_token(github_access_token)
@@ -97,10 +100,12 @@ class Cover:
             .tree()
         )
 
-        container = await builder.build_test_environment(
+        container = await dag.builder(self.config_file).build_test_environment(
             source=source,
             dockerfile_path=self.config.container.docker_file_path,
-            config=self.config,
+            open_router_api_key=open_router_api_key,
+            openai_api_key=openai_api_key,
+            provider=provider,
         )
         print(green("Test environment container built successfully."))
 
@@ -174,7 +179,7 @@ class Cover:
                             # Create a PR with insights about the issues
                             print(
                                 yellow(f"Creating PR with insights for report {i+1} ({report.file})..."))
-                            pull_request_container = builder.setup_pull_request_container(
+                            pull_request_container = dag.builder(self.config_file).setup_pull_request_container(
                                 base_container=current_container,
                                 token=github_access_token
                             )
@@ -208,7 +213,7 @@ class Cover:
                             f"Successfully generated tests for report {i+1} ({report.file}). Creating pull request..."))
 
                         # Create a regular pull request with the generated code
-                        pull_request_container = builder.setup_pull_request_container(
+                        pull_request_container = dag.builder(self.config_file).setup_pull_request_container(
                             base_container=current_container,
                             token=github_access_token
                         )

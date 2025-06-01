@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Optional
 
 import dagger
 import yaml
@@ -221,9 +221,9 @@ class Builder:
         self,
         source: dagger.Directory,
         dockerfile_path: str,
-        openai_api_key: dagger.Secret,
         open_router_api_key: dagger.Secret,
-        provider: str
+        provider: str,
+        openai_api_key: Optional[dagger.Secret] = None
     ) -> dagger.Container:
         """
         Builds the primary container environment for testing.
