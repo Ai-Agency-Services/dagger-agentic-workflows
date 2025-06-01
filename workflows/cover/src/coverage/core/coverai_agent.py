@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 import dagger
 from coverage.core.test_file_handler import TestFileHandler
 from coverage.models.code_module import CodeModule
-from coverage.models.config import YAMLConfig
+from ais_dagger_agents_config import YAMLConfig
 from coverage.models.coverage_report import CoverageReport
 from coverage.template import get_system_template
 from coverage.utils import get_code_under_test_directory
@@ -382,7 +382,7 @@ async def run_tests_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
         test_command = ctx.deps.config.reporter.command
         result_container = await ctx.deps.container.with_exec(["bash", "-c", f"{test_command}; echo -n $? > /exit_code"])
         test_results = await result_container.file(
-            f"{ctx.deps.config.reporter.output_path}"
+            f"{ctx.deps.config.reporter.output_file_path}"
         ).contents()
 
         error = await ctx.deps.reporter.parse_test_results(test_results)

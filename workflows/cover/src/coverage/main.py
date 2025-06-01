@@ -3,13 +3,13 @@ from typing import Annotated, Optional
 
 import dagger
 import yaml
-from coverage.core.configuration_loader import ConfigurationLoader
 from coverage.core.coverai_agent import (CoverAgentDependencies,
                                          create_coverai_agent)
 from coverage.core.pull_request_agent import (PullRequestAgentDependencies,
                                               create_pull_request_agent)
 from coverage.models.code_module import CodeModule
-from coverage.models.config import YAMLConfig
+# from coverage.models.config import YAMLConfig
+from ais_dagger_agents_config import YAMLConfig
 from coverage.models.coverage_report import CoverageReport
 from coverage.utils import (create_llm_model, dagger_json_file_to_pydantic,
                             get_llm_credentials, rank_reports_by_coverage)
