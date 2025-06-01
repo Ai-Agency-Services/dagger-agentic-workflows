@@ -123,7 +123,7 @@ wheels = [
 
 [[package]]
 name = "dagger-io"
-source = { editable = "sdk" }
+source = { editable = "../../../../../sdk" }
 dependencies = [
     { name = "anyio" },
     { name = "beartype" },
@@ -152,7 +152,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "aiohttp", specifier = ">=3.9.3" },
-    { name = "codegen", editable = "sdk/codegen" },
+    { name = "codegen", editable = "../../../../../sdk/codegen" },
     { name = "mypy", specifier = ">=1.8.0" },
     { name = "pytest", specifier = ">=8.0.2" },
     { name = "pytest-httpx", specifier = ">=0.30.0" },
@@ -280,16 +280,21 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
-    { name = "dagger-io" },
     { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "dagger-io" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.13.4" },
-    { name = "dagger-io", editable = "sdk" },
+    { name = "dagger-io", marker = "extra == 'dev'", editable = "../../../../../sdk" },
     { name = "pydantic", specifier = ">=2.11.4" },
 ]
+provides-extras = ["dev"]
 
 [[package]]
 name = "markdown-it-py"
