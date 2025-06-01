@@ -30,3 +30,7 @@ agents:
     unit_test_agent_model: "x-ai/grok-3-mini-beta"
     pull_request_agent_model: "x-ai/grok-3-mini-beta"
     builder_agent_model: "x-ai/grok-3-mini-beta"
+
+concurrency:
+  batch_size: 2  # Start small and increase if stable
+  max_concurrent: 2

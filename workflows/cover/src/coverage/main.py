@@ -70,6 +70,8 @@ class Cover:
         github_access_token: dagger.Secret,
         container: dagger.Container,
         semaphore: anyio.Semaphore,
+        batch_index: int,
+        report_index: int,
     ) -> dagger.Container:
         """Process a single coverage report with semaphore-based concurrency control."""
         async with semaphore:
@@ -77,10 +79,28 @@ class Cover:
                 print(green(
                     f"--- Processing report: {report.file} ({report.coverage_percentage}%) ---"))
 
-                # Create Dependencies for this iteration
+                # Create a unique branch name for this report based on batch and report indices
+                unique_branch_name = f"test-gen-batch-{batch_index}-report-{report_index}-{report.file.replace('/', '-')}"
+
+                # Configure git before starting work
+                try:
+                    # Configure git to handle conflicts
+                    await container.with_exec(["git", "config", "pull.rebase", "false"]).sync()
+
+                    # Create and checkout a new branch specific to this report
+                    current_container = await container.with_exec(["git", "checkout", "-b", unique_branch_name]).sync()
+                    print(
+                        green(f"Created new branch {unique_branch_name} for {report.file}"))
+                except Exception as git_err:
+                    print(
+                        yellow(f"Git setup error for {report.file}: {git_err}"))
+                    # Continue with existing container if branch creation fails
+                    current_container = container
+
+                # Create Dependencies for this iteration, using the container with unique branch
                 deps = CoverAgentDependencies(
                     config=config,
-                    container=container,
+                    container=current_container,
                     report=report,
                     reporter=reporter
                 )
@@ -180,15 +200,15 @@ class Cover:
                 return container
 
     async def _process_reports_concurrently(
-            self,
-            ranked_reports: list[CoverageReport],
-            limit: Optional[int],
-            cover_agent: Agent,
-            pull_request_agent: Agent,
-            config: YAMLConfig,
-            reporter: Reporter,
-            github_access_token: dagger.Secret,
-            container: dagger.Container,
+        self,
+        ranked_reports: list[CoverageReport],
+        limit: Optional[int],
+        cover_agent: Agent,
+        pull_request_agent: Agent,
+        config: YAMLConfig,
+        reporter: Reporter,
+        github_access_token: dagger.Secret,
+        container: dagger.Container,
     ) -> dagger.Container:
         """Process coverage reports with controlled concurrency."""
 
@@ -211,8 +231,9 @@ class Cover:
         current_container = container
         for batch_start in range(0, len(reports_to_process), batch_size):
             batch = reports_to_process[batch_start:batch_start + batch_size]
+            batch_index = batch_start // batch_size + 1  # Calculate batch number
             print(
-                green(f"Processing batch {batch_start // batch_size + 1}, size {len(batch)}"))
+                green(f"Processing batch {batch_index}, size {len(batch)}"))
 
             # Create a task group to process the batch concurrently
             async with anyio.create_task_group() as tg:
@@ -234,6 +255,8 @@ class Cover:
                         github_access_token=github_access_token,
                         container=current_container,
                         semaphore=semaphore,
+                        batch_index=batch_index,  # Add the batch index parameter
+                        report_index=i,           # Add the report index parameter
                     )
                     results.append(result_container)
                     del processing[i]
@@ -248,7 +271,13 @@ class Cover:
             if results:
                 current_container = results[-1]
 
-            print(green(f"Completed batch {batch_start // batch_size + 1}"))
+            print(green(f"Completed batch {batch_index}"))
+
+            import gc
+            gc.collect()  # Force garbage collection between batches
+
+            # Consider adding a small delay to allow memory to stabilize
+            await anyio.sleep(1.0)
 
         return current_container
 
