@@ -2,8 +2,9 @@ import json
 import os
 import traceback
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
 
+import anyio
 import dagger
 from coverage.core.test_file_handler import TestFileHandler
 from coverage.models.code_module import CodeModule
@@ -369,39 +370,64 @@ async def write_test_file_tool(ctx: RunContext[CoverAgentDependencies], contents
         return f"Error writing test file: {e}"
 
 
-async def run_tests_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
-    """Tool: Attempt to run all of the unit tests in the container using the configured command.
-
-    This tool is part of the agent's self-correction loop.
-    It executes the tests generated in the previous step.
-    If errors occur, they are captured and stored in `ctx.deps.current_code_module.error`.
-    The `add_current_code_module_prompt` will then feed this error back to the LLM
-    in the next iteration, asking it to correct the generated code.
-    """
+async def run_tests_tool(
+    ctx: RunContext[CoverAgentDependencies],
+    test_command: Annotated[str, "The test command to run (e.g., 'npm test')"],
+) -> dict:
+    """Run the tests for the code module."""
     try:
-        test_command = ctx.deps.config.reporter.command
-        result_container = await ctx.deps.container.with_exec(["bash", "-c", f"{test_command}; echo -n $? > /exit_code"])
-        test_results = await result_container.file(
-            f"{ctx.deps.config.reporter.output_file_path}"
-        ).contents()
+        print(f"Running tests with command: {test_command}")
 
-        error = await ctx.deps.reporter.parse_test_results(test_results)
-        if error:
-            # Store the error for the next iteration's system prompt (self-correction)
-            if ctx.deps.current_code_module:
-                ctx.deps.current_code_module.error = error
-            else:
-                # Should ideally not happen if write_test_file_tool was called first,
-                # but handle defensively.
-                print(yellow(
-                    "Warning: run_tests_tool executed without a current_code_module being set."))
-            # Return the error message to the agent/user
-            return f"Test Run Failed: {error}"
-        else:
-            # Tests passed, clear any previous error
-            if ctx.deps.current_code_module:
-                ctx.deps.current_code_module.error = None
-            return "Test Run Succeeded."
+        # Set a timeout for the test command (adjust based on your needs)
+        timeout_seconds = 300  # 5 minutes
+
+        # Create a timeout context
+        try:
+            # Use a timeout for the exec operation
+            async with anyio.move_on_after(timeout_seconds) as scope:
+                result_container = await ctx.deps.container.with_exec(
+                    ["bash", "-c", f"{test_command}; echo -n $? > /exit_code"]
+                ).sync()
+
+                # Check if we timed out
+                if scope.cancel_called:
+                    print(
+                        yellow(f"Test command timed out after {timeout_seconds} seconds"))
+                    return {
+                        "success": False,
+                        "output": f"Test command timed out after {timeout_seconds} seconds",
+                        "exit_code": 124  # Standard timeout exit code
+                    }
+
+            # Get the exit code
+            exit_code_file = await result_container.file("/exit_code").contents()
+            exit_code = int(exit_code_file) if exit_code_file else -1
+
+            # Set the container in the dependencies
+            ctx.deps.container = result_container
+
+            # Get the test output
+            test_output = ""
+            try:
+                # Try to get stdout from the command execution
+                test_output = await result_container.stdout()
+            except Exception as output_err:
+                test_output = f"Error retrieving test output: {output_err}"
+
+            return {
+                "success": exit_code == 0,
+                "output": test_output,
+                "exit_code": exit_code
+            }
+
+        except dagger.ExecError as exec_err:
+            # Handle exec errors
+            print(red(f"Test execution failed: {exec_err}"))
+            return {
+                "success": False,
+                "output": f"Test execution error: {exec_err}",
+                "exit_code": -1
+            }
 
     except Exception as e:
         # Handle unexpected errors during test execution itself (not test failures)
