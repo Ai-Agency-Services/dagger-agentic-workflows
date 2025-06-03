@@ -17,6 +17,15 @@ class GitConfig(BaseModel):
     user_email: EmailStr = Field(description="Git user email")
 
 
+class ConcurrencyConfig(BaseModel):
+    """Configuration for controlling concurrency across operations."""
+    batch_size: int = Field(default=5, description="Files per batch")
+    max_concurrent: int = Field(
+        default=5, description="Max concurrent operations")
+    embedding_batch_size: int = Field(
+        default=10, description="Embeddings per batch")
+
+
 class IndexingConfig(BaseModel):
     """Code indexing configuration."""
     max_semantic_chunk_lines: int = Field(
@@ -24,13 +33,8 @@ class IndexingConfig(BaseModel):
     chunk_size: int = Field(default=50, description="Fallback chunk size")
     max_file_size: int = Field(
         default=1_000_000, description="Max file size to process")
-    batch_size: int = Field(default=5, description="Files per batch")
-    max_concurrent: int = Field(
-        default=5, description="Max concurrent operations")
     embedding_model: str = Field(
         default="text-embedding-3-small", description="Embedding model")
-    embedding_batch_size: int = Field(
-        default=10, description="Embeddings per batch")
     file_extensions: List[str] = Field(
         default=["py", "js", "ts", "java", "c", "cpp", "go", "rs"],
         description="File extensions to process"
@@ -39,6 +43,26 @@ class IndexingConfig(BaseModel):
     skip_indexing: bool = Field(
         default=False, description="Skip indexing if true"
     )
+    concurrency: ConcurrencyConfig = Field(
+        default_factory=ConcurrencyConfig,
+        description="Concurrency settings"
+    )
+    
+    # For backward compatibility - these properties delegate to concurrency config
+    @property
+    def batch_size(self) -> int:
+        """Returns batch size from concurrency config."""
+        return self.concurrency.batch_size
+        
+    @property
+    def max_concurrent(self) -> int:
+        """Returns max concurrent from concurrency config."""
+        return self.concurrency.max_concurrent
+        
+    @property
+    def embedding_batch_size(self) -> int:
+        """Returns embedding batch size from concurrency config."""
+        return self.concurrency.embedding_batch_size
 
 
 class TestGenerationConfig(BaseModel):
@@ -85,6 +109,7 @@ class YAMLConfig(BaseModel):
     """Main configuration model."""
     container: ContainerConfig
     git: GitConfig
+    concurrency: Optional[ConcurrencyConfig] = Field(default_factory=ConcurrencyConfig)
     indexing: Optional[IndexingConfig] = Field(default_factory=IndexingConfig)
     test_generation: Optional[TestGenerationConfig] = Field(default=None)
     reporter: Optional[ReporterConfig] = Field(default=None)

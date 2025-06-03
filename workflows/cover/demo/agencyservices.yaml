@@ -5,7 +5,8 @@ container:
     docker_file_path: "./dockerfile"
 
 core_api:
-    model: "openai/gpt-4o"
+    model: "x-ai/grok-3-mini-beta"
+    provider: "openrouter"
     fallback_models:
         - "openai/gpt-4o"
         - "openai/gpt-3.5-turbo"
@@ -30,3 +31,7 @@ agents:
     unit_test_agent_model: "x-ai/grok-3-mini-beta"
     pull_request_agent_model: "x-ai/grok-3-mini-beta"
     builder_agent_model: "x-ai/grok-3-mini-beta"
+
+concurrency:
+  batch_size: 2  # Start small and increase if stable
+  max_concurrent: 2

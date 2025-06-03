@@ -2,7 +2,7 @@ import json
 import os
 import traceback
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
 
 import dagger
 from coverage.core.test_file_handler import TestFileHandler
