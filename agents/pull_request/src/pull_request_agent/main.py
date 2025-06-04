@@ -11,8 +11,6 @@ from pull_request_agent.utils import create_llm_model, get_llm_credentials
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from typing_extensions import Doc
 
-logger = logging.getLogger(__name__)
-
 
 @object_type
 class PullRequestAgent:
@@ -25,6 +23,15 @@ class PullRequestAgent:
         config_str = await config_file.contents()
         config_dict = yaml.safe_load(config_str)
         return cls(config=config_dict, container=dag.container())
+
+    def _setup_logging(self):
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(
+            "PullRequestAgent logging initialized. Configuration: %s", self.config)
 
     @function
     async def run(
@@ -46,6 +53,7 @@ class PullRequestAgent:
             insight_context: Optional[str] = None,
         ) -> dagger.Container:
             try:
+                self._setup_logging()
                 deps = PullRequestAgentDependencies(
                     config=self.config,
                     container=container,
@@ -56,7 +64,6 @@ class PullRequestAgent:
                     api_key=llm_credentials.api_key,
                     base_url=llm_credentials.base_url,
                     model_name=self.config.core_api.model
-
                 )
                 agent: Agent = create_pull_request_agent(
                     pydantic_ai_model=model)
@@ -67,17 +74,18 @@ class PullRequestAgent:
                     deps=deps
                 )
                 messages = result.all_messages()
-                logger.info(f"Agent completed with {len(messages)} messages")
+                self.logger.info(
+                    f"Agent completed with {len(messages)} messages")
 
                 if result.usage:
-                    print(f"Token usage: {result.usage.total_tokens} tokens")
+                    print(f"Token usage: {result.usage()} tokens")
 
-                return deps.container.with_new_file("/status.txt", "success").sync()
+                return await deps.container.with_new_file("/status.txt", "success").sync()
             except UnexpectedModelBehavior as agent_error:
-                logger.error(
-                    f"Error creating PullRequestAgentDependencies: {e}")
+                self.logger.error(
+                    f"Error creating PullRequestAgentDependencies: {agent_error}")
                 print(f"Error running Pull Request Agent: {agent_error}")
-                return container.with_new_file("/error.txt", str(agent_error))
+                return await container.with_new_file("/error.txt", str(agent_error))
 
         try:
             self.config = YAMLConfig(**self.config)
@@ -86,16 +94,14 @@ class PullRequestAgent:
                 open_router_key=open_router_api_key,
                 openai_key=openai_api_key
             )
-            run_agent_task = await _run_agent(
+            return await _run_agent(
                 self,
                 llm_credentials=llm_credentials,
                 container=container,
                 error_context=error_context,
                 insight_context=insight_context
             )
-            return await run_agent_task
 
         except Exception as e:
-            logger.error(f"Error creating PullRequestAgent: {e}")
-            # Must return a Container since that's the declared return type
-            return container.with_new_file("/error.txt", str(e))
+            self.logger.error(f"Error creating PullRequestAgent: {e}")
+            return await container.with_new_file("/error.txt", str(e))

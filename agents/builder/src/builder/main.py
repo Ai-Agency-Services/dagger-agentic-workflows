@@ -26,14 +26,125 @@ class Builder:
         config_dict = yaml.safe_load(config_str)
         return cls(config=config_dict, base_container=dag.container())
 
-    async def _install_agent_dependencies(
+    def _setup_logging(self):
+        """Initializes logging for the Builder."""
+        import logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(
+            "Builder logging initialized. Configuration: %s", self.config)
+
+    async def _install_dependencies(
         self,
         container: dagger.Container,
         llm_credentials: LLMCredentials
     ) -> dagger.Container:
-        """Installs agent-specific dependencies with robust OS detection."""
+        """Installs dependencies using OS detection first, then agent as fallback."""
         try:
-            # First try using the builder agent
+            # First try using direct OS detection
+            print("Installing dependencies using OS detection...")
+            container_with_deps = await self._install_dependencies_by_os_detection(container)
+            print(green("Dependencies installed successfully using OS detection."))
+            return container_with_deps
+
+        except Exception as e_detect:
+            print(yellow(
+                f"OS detection approach failed ({e_detect}), trying builder agent fallback..."))
+
+            # Fall back to using the builder agent
+            return await self._install_dependencies_with_agent(container, llm_credentials)
+
+    async def _install_dependencies_by_os_detection(self, container: dagger.Container) -> dagger.Container:
+        """Install dependencies based on OS detection."""
+        try:
+            print("Starting OS detection...")
+
+            # Method 1: Check /etc/os-release first (most reliable)
+            try:
+                os_release = await container.with_exec(["sh", "-c", "cat /etc/os-release 2>/dev/null || echo 'not found'"]).stdout()
+
+                if "ubuntu" in os_release.lower() or "debian" in os_release.lower():
+                    print(green("Detected Debian/Ubuntu system via /etc/os-release"))
+                    return await self._install_debian_deps(container)
+                elif "alpine" in os_release.lower():
+                    print(green("Detected Alpine system via /etc/os-release"))
+                    return await self._install_alpine_deps(container)
+            except Exception as e_os:
+                print(
+                    yellow(f"OS detection via /etc/os-release failed: {e_os}"))
+
+            # Method 2: Check for package managers directly (with verification)
+            package_managers = [
+                # Try Debian/Ubuntu first since it's more common
+                ("apt-get", "debian"),
+                ("apk", "alpine"),
+                ("yum", "rhel"),
+                ("dnf", "fedora"),
+                ("pacman", "arch")
+            ]
+
+            for pm, os_type in package_managers:
+                try:
+                    # First check if the package manager exists
+                    pm_check = await container.with_exec(["sh", "-c", f"which {pm} || echo 'not found'"]).stdout()
+
+                    # Important: Only consider it found if "not found" is NOT in the output
+                    if "not found" not in pm_check:
+                        print(
+                            green(f"Detected {os_type} system with {pm} package manager"))
+
+                        # Double verification step
+                        if pm == "apk":
+                            # Verify APK works before proceeding
+                            verify = await container.with_exec(["sh", "-c", "apk --version || echo 'failed'"]).stdout()
+                            if "failed" in verify:
+                                print(
+                                    yellow("False positive on apk detection, continuing search..."))
+                                continue
+                            return await self._install_alpine_deps(container)
+                        elif pm == "apt-get":
+                            # Verify apt-get works before proceeding
+                            verify = await container.with_exec(["sh", "-c", "apt-get --version || echo 'failed'"]).stdout()
+                            if "failed" in verify:
+                                print(
+                                    yellow("False positive on apt-get detection, continuing search..."))
+                                continue
+                            return await self._install_debian_deps(container)
+                        else:
+                            print(
+                                yellow(f"Detected {os_type} but using generic approach"))
+                            return await self._install_generic_deps(container)
+                except Exception:
+                    continue
+
+            # Method 3: Try file-based detection as a last resort
+            try:
+                # Check for specific files that indicate OS type
+                debian_check = await container.with_exec(["sh", "-c", "[ -f /etc/debian_version ] && echo 'debian' || echo 'not found'"]).stdout()
+                if "debian" in debian_check:
+                    print(green("Detected Debian-based system via /etc/debian_version"))
+                    return await self._install_debian_deps(container)
+            except Exception:
+                pass
+
+            # If we get here, try a generic approach
+            print(yellow("Could not reliably detect OS, trying generic installation..."))
+            return await self._install_generic_deps(container)
+
+        except Exception as e:
+            print(red(f"OS detection-based installation failed: {e}"))
+            raise
+
+    async def _install_dependencies_with_agent(
+        self,
+        container: dagger.Container,
+        llm_credentials: LLMCredentials
+    ) -> dagger.Container:
+        """Install dependencies using the builder agent."""
+        try:
             deps = BuilderAgentDependencies(container=container)
             print("Installing agent dependencies using builder agent...")
 
@@ -49,100 +160,15 @@ class Builder:
             builder_agent.instrument_all()
 
             await builder_agent.run(
-                prompt="Install necessary dependencies including git, bash, and github-cli.",
+                prompt="Install necessary dependencies including git, bash, tree, and github-cli.",
                 deps=deps,
             )
 
             print(green("Agent dependencies installed using builder agent."))
             return deps.container
         except Exception as e_agent:
-            print(yellow(
-                f"Builder agent approach failed ({e_agent}), trying fallback detection..."))
-
-            # More robust fallback approach
-            return await self._install_dependencies_fallback(container)
-
-    async def _install_dependencies_fallback(self, container: dagger.Container) -> dagger.Container:
-        """Fallback dependency installation with better OS detection."""
-        try:
-            # Try to identify the base image more reliably
-            # Method 1: Check for package managers directly
-            package_managers = [
-                ("apk", "alpine"),
-                ("apt-get", "debian"),
-                ("yum", "rhel"),
-                ("dnf", "fedora"),
-                ("pacman", "arch")
-            ]
-
-            detected_pm = None
-            for pm, os_type in package_managers:
-                try:
-                    # Use 'which' or 'command -v' to check for package manager
-                    result = await container.with_exec(["sh", "-c", f"command -v {pm} >/dev/null 2>&1 && echo 'found' || echo 'not_found'"]).stdout()
-                    if "found" in result.strip():
-                        detected_pm = (pm, os_type)
-                        print(
-                            f"Detected {os_type} system with {pm} package manager")
-                        break
-                except Exception:
-                    continue
-
-            if detected_pm:
-                pm, os_type = detected_pm
-                if os_type == "alpine":
-                    return await self._install_alpine_deps(container)
-                elif os_type in ["debian", "ubuntu"]:
-                    return await self._install_debian_deps(container)
-                else:
-                    print(
-                        yellow(f"Detected {os_type} but using generic approach"))
-                    return await self._install_generic_deps(container)
-
-            # Method 2: Try to detect by running simple commands
-            try:
-                # Test basic shell functionality first
-                test_result = await container.with_exec(["sh", "-c", "echo 'shell_works'"]).stdout()
-                if "shell_works" not in test_result:
-                    raise RuntimeError("Basic shell not working")
-
-                # Try to identify OS by checking common files/commands
-                os_checks = [
-                    ("cat /etc/os-release 2>/dev/null | head -1", "os-release"),
-                    ("cat /etc/alpine-release 2>/dev/null", "alpine"),
-                    ("cat /etc/debian_version 2>/dev/null", "debian"),
-                    ("uname -a 2>/dev/null", "uname")
-                ]
-
-                for cmd, check_type in os_checks:
-                    try:
-                        result = await container.with_exec(["sh", "-c", cmd]).stdout()
-                        if result.strip():
-                            print(
-                                f"OS info from {check_type}: {result.strip()[:100]}")
-
-                            if "alpine" in result.lower():
-                                return await self._install_alpine_deps(container)
-                            elif any(term in result.lower() for term in ["debian", "ubuntu"]):
-                                return await self._install_debian_deps(container)
-                            break
-                    except Exception:
-                        continue
-
-                # If we get here, try a generic approach
-                print(
-                    yellow("Could not detect specific OS, trying generic installation..."))
-                return await self._install_generic_deps(container)
-
-            except Exception as e_shell:
-                print(red(f"Shell functionality test failed: {e_shell}"))
-                # Last resort - return container as-is with warning
-                print(yellow("Returning container without additional dependencies"))
-                return container
-
-        except Exception as e:
-            print(red(f"Fallback dependency installation failed: {e}"))
-            return container
+            print(red(f"Builder agent installation failed: {e_agent}"))
+            raise
 
     async def _install_alpine_deps(self, container: dagger.Container) -> dagger.Container:
         """Install dependencies using Alpine package manager."""
@@ -206,6 +232,49 @@ class Builder:
             print(red(f"Failed to install dependencies with apt-get: {e}"))
             raise
 
+    async def _install_generic_deps(self, container: dagger.Container) -> dagger.Container:
+        """Install dependencies using a generic approach when OS cannot be identified."""
+        try:
+            print(yellow("Using generic approach to install dependencies..."))
+
+            # Try multiple commands with fallbacks
+            try:
+                # Try to install git using whatever package manager is available
+                container = container.with_exec([
+                    "sh", "-c",
+                    "(apt-get update && apt-get install -y git bash tree curl) || " +
+                    "(apk update && apk add --no-cache git bash tree curl) || " +
+                    "(yum install -y git bash tree curl) || " +
+                    "(dnf install -y git bash tree curl) || " +
+                    "echo 'Failed to install using known package managers'"
+                ])
+
+                # Try to install GitHub CLI
+                container = container.with_exec([
+                    "sh", "-c",
+                    "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null || true && " +
+                    "curl -fsSL https://github.com/cli/cli/releases/download/v2.35.0/gh_2.35.0_linux_amd64.tar.gz -o /tmp/gh.tar.gz && " +
+                    "mkdir -p /tmp/gh && tar -xzf /tmp/gh.tar.gz -C /tmp/gh --strip-components=1 && " +
+                    "cp /tmp/gh/bin/gh /usr/local/bin/ 2>/dev/null || true"
+                ])
+            except Exception as e_install:
+                print(
+                    yellow(f"Generic installation partially failed: {e_install}"))
+
+            # Basic verification
+            try:
+                git_version = await container.with_exec(["sh", "-c", "git --version || echo 'git not found'"]).stdout()
+                if "git not found" not in git_version:
+                    print(green(f"Git detected: {git_version.strip()}"))
+            except Exception:
+                pass
+
+            print(yellow("Generic dependency installation completed with best effort"))
+            return container
+        except Exception as e:
+            print(red(f"Generic dependency installation failed: {e}"))
+            raise
+
     def _configure_git(self, container: dagger.Container) -> dagger.Container:
         """Configures git user name and email in the container."""
         print("Configuring git user...")
@@ -230,6 +299,7 @@ class Builder:
         """
         # Use one consistent path - config.container.work_dir
         self.config = YAMLConfig(**self.config)
+        self._setup_logging()
         work_dir = self.config.container.work_dir
 
         if dockerfile_path:
@@ -282,7 +352,8 @@ class Builder:
                 provider=provider
             )
 
-            container_with_deps = await self._install_agent_dependencies(self.base_container, llm_credentials)
+            # Fixed the missing method call
+            container_with_deps = await self._install_dependencies(self.base_container, llm_credentials)
             git_container = self._configure_git(container_with_deps)
 
             # Run the reporter command with error handling
@@ -316,6 +387,7 @@ class Builder:
             A container configured for PR operations.
         """
         print("Configuring container for pull requests...")
+        self._setup_logging()
         container = (
             base_container
             .with_secret_variable("GITHUB_TOKEN", token)

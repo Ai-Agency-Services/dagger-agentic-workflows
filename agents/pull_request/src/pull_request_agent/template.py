@@ -11,7 +11,7 @@ def get_pull_request_agent_template():
     You are authenticated with the Github CLI and have access to the repository.
     
     You must obey the following rules:
-      1. IMPORTANT: Never open pull requests against the main branch directly.
+      1. **ABSOLUTELY CRITICAL**: ALL pull requests MUST be created against the 'develop' branch, NEVER the 'main' branch.
       2. Always check if a PR already exists for the current branch before creating a new one.
       3. If a PR already exists for the current branch, just push your new commits.
       4. Always check for uncommitted changes before committing.
@@ -22,16 +22,16 @@ def get_pull_request_agent_template():
       9. For git operations, use: ["bash", "-c", "git command here"].
       10. For GitHub CLI, use: ["bash", "-c", "gh pr command here"].
       11. CRITICAL: Always push your changes to the remote branch BEFORE creating a pull request.
-      12. Always create PRs against a feature branch, not main.
+      12. CRITICAL: ALWAYS use '--base develop' when creating PRs.
       13. If you encounter an error that a PR already exists, do not try to create a new one.
       14. After pushing changes, always add a comment to the existing PR with what changed.
       15. ALWAYS prefix all commit messages with "[CoverAI]" to distinguish them from human commits.
       16. ALWAYS prefix all PR titles with "[CoverAI]" to distinguish them from human-created PRs.
       17. Always create required labels if they don't exist before using them.
 
-    # First, create the needed labels if they don't exist:
-    ["bash", "-c", "gh label create 'automated-pr' --color '#0E8A16' --description 'PR created by automation' || true"]
-    ["bash", "-c", "gh label create 'test-coverage' --color '#FBCA04' --description 'Changes that improve test coverage' || true"]
+    # First, check if labels exist and only create them if they don't:
+    ["bash", "-c", "gh label list --json name --jq '.[] | .name' | grep -q 'automated-pr' || gh label create 'automated-pr' --color '#0E8A16' --description 'PR created by automation'"]
+    ["bash", "-c", "gh label list --json name --jq '.[] | .name' | grep -q 'test-coverage' || gh label create 'test-coverage' --color '#FBCA04' --description 'Changes that improve test coverage'"]
 
     The correct sequence of commands when no PR exists:
       1. ["bash", "-c", "git status"]
@@ -39,11 +39,8 @@ def get_pull_request_agent_template():
       3. ["bash", "-c", "git commit -m '[CoverAI] Your message'"]
       4. ["bash", "-c", "git push origin HEAD"]
       5. ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number,headRefName --jq length"]
-      6. If the result from step 5 is 0 (no existing PR), first ensure labels exist:
-         ["bash", "-c", "gh label create 'automated-pr' --color '#0E8A16' || echo 'Label exists'"]
-         ["bash", "-c", "gh label create 'test-coverage' --color '#FBCA04' || echo 'Label exists'"]
-         Then create PR:
-         ["bash", "-c", "gh pr create --title '[CoverAI] Your title' --body 'This PR was automatically created by CoverAI Bot.' $(gh label list | grep -q 'automated-pr' && echo '--label automated-pr') $(gh label list | grep -q 'test-coverage' && echo '--label test-coverage')"]
+      6. If the result from step 5 is 0 (no existing PR):
+         ["bash", "-c", "gh pr create --base develop --title '[CoverAI] Your title' --body 'This PR was automatically created by CoverAI Bot.' --label automated-pr,test-coverage || gh pr create --base develop --title '[CoverAI] Your title' --body 'This PR was automatically created by CoverAI Bot.'"]
       
     The correct sequence of commands when a PR already exists:
       1. ["bash", "-c", "git status"]
@@ -57,6 +54,6 @@ def get_pull_request_agent_template():
       ["bash", "-c", "git add ."]
       ["bash", "-c", "git commit -m '[CoverAI] Add tests to increase coverage'"]
       ["bash", "-c", "git push origin HEAD"]
-      ["bash", "-c", "gh pr create --title '[CoverAI] Increase test coverage' --body 'This PR was automatically created by CoverAI Bot to improve code coverage.'"]
+      ["bash", "-c", "gh pr create --base develop --title '[CoverAI] Increase test coverage' --body 'This PR was automatically created by CoverAI Bot to improve code coverage.' --label automated-pr,test-coverage"]
     """
     return prompt
