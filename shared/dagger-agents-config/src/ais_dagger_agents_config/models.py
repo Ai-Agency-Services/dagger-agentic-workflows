@@ -1,6 +1,15 @@
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 
-from pydantic import BaseModel, Field, EmailStr
+import dagger
+from dagger import object_type
+from pydantic import BaseModel, EmailStr, Field
+
+
+@object_type
+class LLMCredentials(NamedTuple):
+    """Holds the base URL and API key for an LLM provider."""
+    base_url: Optional[str]
+    api_key: dagger.Secret
 
 
 class ContainerConfig(BaseModel):
@@ -47,18 +56,18 @@ class IndexingConfig(BaseModel):
         default_factory=ConcurrencyConfig,
         description="Concurrency settings"
     )
-    
+
     # For backward compatibility - these properties delegate to concurrency config
     @property
     def batch_size(self) -> int:
         """Returns batch size from concurrency config."""
         return self.concurrency.batch_size
-        
+
     @property
     def max_concurrent(self) -> int:
         """Returns max concurrent from concurrency config."""
         return self.concurrency.max_concurrent
-        
+
     @property
     def embedding_batch_size(self) -> int:
         """Returns embedding batch size from concurrency config."""
@@ -109,7 +118,8 @@ class YAMLConfig(BaseModel):
     """Main configuration model."""
     container: ContainerConfig
     git: GitConfig
-    concurrency: Optional[ConcurrencyConfig] = Field(default_factory=ConcurrencyConfig)
+    concurrency: Optional[ConcurrencyConfig] = Field(
+        default_factory=ConcurrencyConfig)
     indexing: Optional[IndexingConfig] = Field(default_factory=IndexingConfig)
     test_generation: Optional[TestGenerationConfig] = Field(default=None)
     reporter: Optional[ReporterConfig] = Field(default=None)

@@ -22,7 +22,7 @@ reporter:
     report_directory: "/app/coverage"
 
 test_generation:
-    iterations: 1
+    limit: 2
     save_next_to_code_under_test: false
     test_directory: "tests"
     test_suffix: "test"
