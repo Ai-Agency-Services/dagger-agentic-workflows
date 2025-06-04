@@ -1,23 +1,20 @@
 import logging
-import os
 import traceback
-from typing import Annotated, Optional, List
+from typing import Annotated, List, Optional
 
 import anyio
 import dagger
 import yaml
-from ais_dagger_agents_config import YAMLConfig, ConcurrencyConfig
-from coverage.core.coverai_agent import (
-    CoverAgentDependencies, create_coverai_agent)
-from coverage.core.pull_request_agent import (
-    PullRequestAgentDependencies, create_pull_request_agent)
+from ais_dagger_agents_config import YAMLConfig
+from coverage.core.coverai_agent import (CoverAgentDependencies,
+                                         create_coverai_agent)
 from coverage.models.code_module import CodeModule
 from coverage.models.coverage_report import CoverageReport
 from coverage.utils import (create_llm_model, dagger_json_file_to_pydantic,
                             get_llm_credentials, rank_reports_by_coverage)
-from dagger import Doc, dag, field, function, object_type
+from dagger import DaggerError, Doc, dag, field, function, object_type
 from dagger.client.gen import Reporter
-from pydantic_ai import Agent, UnexpectedModelBehavior
+from pydantic_ai import UnexpectedModelBehavior
 from simple_chalk import green, red, yellow
 
 
@@ -26,17 +23,12 @@ class Cover:
     """Coverage agent to generate unit tests for a given repository."""
     config: dict
     config_file: dagger.File
+    container: Optional[dagger.Container] = field(default=None)
     reporter: Reporter
     github_token: Optional[dagger.Secret] = None
     open_router_api_key: Optional[dagger.Secret] = None
     openai_api_key: Optional[dagger.Secret] = None
     model: str = "x-ai/grok-3-mini-beta"
-
-    # Static container for testing environment
-    container: Optional[dagger.Container] = field(default=None)
-
-    # Remove problematic agent members
-    # No _test_agent, _pr_agent or _github_token here - they'll be local variables in methods instead
 
     @classmethod
     async def create(
@@ -83,34 +75,36 @@ class Cover:
             "OpenAI API key (required if provider is 'openai')")] = None
     ) -> dagger.Container:
         """Set up the test environment and return a ready-to-use container."""
-        # Set longer timeout for Dagger operations
-        os.environ['DAGGER_TIMEOUT'] = '600'
-        self.github_token = github_access_token
-        self.open_router_api_key = open_router_api_key
-        self.openai_api_key = openai_api_key
-        self.config: YAMLConfig = YAMLConfig(**self.config)
-        self.model = model_name
-        # We no longer store github_token as a member variable
+        try:
+            self.github_token = github_access_token
+            self.open_router_api_key = open_router_api_key
+            self.openai_api_key = openai_api_key
+            self.config: YAMLConfig = YAMLConfig(**self.config)
+            self.model = model_name
+            # We no longer store github_token as a member variable
 
-        # Setup repository
-        source = (
-            await dag.git(url=repository_url, keep_git_dir=True)
-            .with_auth_token(github_access_token)
-            .branch(branch)
-            .tree()
-        )
+            # Setup repository
+            source = (
+                await dag.git(url=repository_url, keep_git_dir=True)
+                .with_auth_token(github_access_token)
+                .branch(branch)
+                .tree()
+            )
 
-        # Build test container
-        self.container = await dag.builder(self.config_file).build_test_environment(
-            source=source,
-            dockerfile_path=self.config.container.docker_file_path,
-            open_router_api_key=open_router_api_key,
-            openai_api_key=openai_api_key,
-            provider=provider,
-        )
-        print(green("Test environment container built successfully."))
+            # Build test container
+            self.container = await dag.builder(self.config_file).build_test_environment(
+                source=source,
+                dockerfile_path=self.config.container.docker_file_path,
+                open_router_api_key=open_router_api_key,
+                openai_api_key=openai_api_key,
+                provider=provider,
+            )
+            print(green("Test environment container built successfully."))
 
-        return self.container
+            return self.container
+        except DaggerError as e:
+            print(red(f"Error setting up environment: {e}"))
+            return "Test pipeline failure: " + e.stderr
 
     @function
     async def process_report(
@@ -131,8 +125,10 @@ class Cover:
             raise ValueError(
                 "Environment not set up. Call setup_environment first.")
 
+        error_message = f"Unknown error processing report {report.file}"
+
         try:
-            # Set up LLM models and agents inside this method
+
             llm_credentials = await get_llm_credentials(
                 provider=provider,
                 open_router_key=open_router_api_key,
@@ -145,17 +141,9 @@ class Cover:
                 model_name=model_name
             )
 
-            grok = create_llm_model(
-                api_key=llm_credentials.api_key,
-                base_url=llm_credentials.base_url,
-                model_name='x-ai/grok-3-mini-beta'
-            )
-
             # Create agents as local variables
             test_agent = create_coverai_agent(pydantic_ai_model=cover_ai_model)
-            pr_agent = create_pull_request_agent(pydantic_ai_model=grok)
             test_agent.instrument_all()
-            pr_agent.instrument_all()
 
             # Create a unique branch name
             unique_branch_name = f"test-gen-{branch_suffix}-{report.file.replace('/', '-')}"
@@ -206,7 +194,7 @@ class Cover:
                 # Test generation failed
                 error_message = ""
                 if code_module_result is None:
-                    error_message = f"Agent returned None for report {coverage_report.file}."
+                    error_message = f"Agent returned None for report {report.file}."
                 else:
                     error_message = f"Agent encountered an error: {code_module_result.error}"
 
@@ -218,18 +206,14 @@ class Cover:
                     token=github_access_token
                 )
 
-                pull_deps = PullRequestAgentDependencies(
-                    config=self.config,
+                pull_request_result = dag.pull_request_agent(self.config_file).run(
+                    provider=self.config.core_api.provider,
+                    open_router_api_key=self.open_router_api_key,
+                    error_context=code_module_result.error if hasattr(
+                        code_module_result, 'error') else error_message,
                     container=pull_request_container,
-                    reporter=self.reporter,
-                    report=report,
-                    insight_context=error_message
-                )
-
-                pull_request_result = await pr_agent.run(
-                    '''Create a pull request with insights about the issues encountered.
-                    Include details about why the tests couldn't be generated or what problems were found.''',
-                    deps=pull_deps
+                    insight_context=code_module_result.strategy if hasattr(
+                        code_module_result, 'strategy') else None,
                 )
 
                 if pull_request_result:
@@ -239,7 +223,7 @@ class Cover:
                     print(
                         yellow(f"PR creation may have failed for {report.file}"))
 
-                return await pull_deps.container.sync()
+                return await pull_request_result.sync()
             else:
                 # Tests generated successfully
                 print(
@@ -251,17 +235,14 @@ class Cover:
                     token=github_access_token
                 )
 
-                pull_deps = PullRequestAgentDependencies(
-                    config=self.config,
+                pull_request_result = dag.pull_request_agent(self.config_file).run(
+                    provider=self.config.core_api.provider,
+                    open_router_api_key=self.open_router_api_key,
+                    error_context=code_module_result.error if hasattr(
+                        code_module_result, 'error') else error_message,
                     container=pull_request_container,
-                    reporter=self.reporter,
-                    report=report
-                )
-
-                pull_request_result = await pr_agent.run(
-                    '''Create a pull request with the newly generated tests.
-                    Include details about what tests were added and how they improve the codebase.''',
-                    deps=pull_deps
+                    insight_context=code_module_result.strategy if hasattr(
+                        code_module_result, 'strategy') else None,
                 )
 
                 if pull_request_result:
@@ -271,14 +252,14 @@ class Cover:
                     print(
                         yellow(f"PR creation may have failed for {report.file}"))
 
-                return await pull_deps.container.sync()
+                return await pull_request_result.sync()
 
         except UnexpectedModelBehavior as agent_err:
             print(red(f"Model error processing {report}: {agent_err}"))
             traceback.print_exc()
             return self.container
-        except Exception as e:
-            print(red(f"Unexpected error processing {report}: {e}"))
+        except DaggerError as e:
+            print(red(f"Unexpected error processing {report}: {e.stderr}"))
             traceback.print_exc()
             return self.container
 
@@ -289,48 +270,63 @@ class Cover:
         batch_id: Annotated[str, Doc("Unique identifier for this batch")]
     ) -> dagger.Container:
         """Process a batch of reports concurrently."""
-        if not reports:
+        try:
+            if not reports:
+                return self.container
+
+            print(
+                green(f"Processing batch {batch_id} with {len(reports)} reports"))
+
+            # Use lower concurrency to avoid memory issues
+            max_concurrent = min(2, getattr(
+                self.config.concurrency, 'max_concurrent', 2))
+            semaphore = anyio.Semaphore(max_concurrent)
+            results = {}
+
+            async with anyio.create_task_group() as tg:
+                async def process_with_semaphore(i: int, report: dagger.File) -> None:
+                    # Add a try-except block to catch ALL errors
+                    try:
+                        async with semaphore:
+                            result = await self.process_report(
+                                report=report,
+                                branch_suffix=f"{batch_id}-{i}",
+                                github_access_token=self.github_token,
+                                model_name=self.config.core_api.model,
+                                provider=self.config.core_api.provider,
+                                open_router_api_key=self.open_router_api_key,
+                                openai_api_key=self.openai_api_key
+                            )
+                            results[i] = result
+                    except Exception as e:
+                        print(
+                            red(f"Error in task for report {report.file}: {str(e)}"))
+                        traceback.print_exc()
+                        # Still add the container to results to maintain ordering
+                        results[i] = self.container
+
+                # Start tasks for each report
+                for i, report in enumerate(reports):
+                    tg.start_soon(process_with_semaphore, i, report)
+
+            # After task group completion:
+            ordered_results = [results[i] for i in sorted(results.keys())]
+            if ordered_results:
+                self.container = ordered_results[-1]
+
+            # Force garbage collection
+            import gc
+            gc.collect()
+
+            # Allow time for resources to stabilize
+            await anyio.sleep(1.0)
+
             return self.container
 
-        print(
-            green(f"Processing batch {batch_id} with {len(reports)} reports"))
-
-        # Use lower concurrency to avoid memory issues
-        max_concurrent = min(2, getattr(
-            self.config.concurrency, 'max_concurrent', 2))
-        semaphore = anyio.Semaphore(max_concurrent)
-        results = []
-
-        async with anyio.create_task_group() as tg:
-            async def process_with_semaphore(i: int, report: dagger.File) -> None:
-                async with semaphore:
-                    result = await self.process_report(
-                        report=report,
-                        branch_suffix=f"{batch_id}-{i}",
-                        github_access_token=self.github_token,
-                        model_name=self.config.core_api.model,
-                        provider=self.config.core_api.provider,
-                        open_router_api_key=self.open_router_api_key,
-                        openai_api_key=self.openai_api_key
-                    )
-                    results.append(result)
-
-            # Start tasks for each report
-            for i, report in enumerate(reports):
-                tg.start_soon(process_with_semaphore, i, report)
-
-        # Return last container as result
-        if results:
-            self.container = results[-1]
-
-        # Force garbage collection
-        import gc
-        gc.collect()
-
-        # Allow time for resources to stabilize
-        await anyio.sleep(1.0)
-
-        return self.container
+        except DaggerError as e:
+            print(red(f"Error processing batch {batch_id}: {e.stderr}"))
+            traceback.print_exc()
+            return self.container
 
     @function
     async def generate_unit_tests(
@@ -395,7 +391,7 @@ class Cover:
             print(green("--- Test generation process complete ---"))
             return self.container
 
-        except Exception as e:
-            print(red(f"Error during coverage report processing: {e}"))
+        except DaggerError as e:
+            print(red(f"Error during coverage report processing: {e.stderr}"))
             traceback.print_exc()
             return self.container

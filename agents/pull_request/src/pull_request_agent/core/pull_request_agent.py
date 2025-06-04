@@ -1,64 +1,20 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 import dagger
-from coverage.models.config import YAMLConfig
-from coverage.models.coverage_report import CoverageReport
-from coverage.template import get_pull_request_agent_template
+from ais_dagger_agents_config import YAMLConfig
+from pull_request_agent.template import get_pull_request_agent_template
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
-from simple_chalk import blue, red, yellow
-
-if TYPE_CHECKING:
-    from dagger.client.gen import \
-        Reporter
+from simple_chalk import yellow
 
 
 @dataclass
 class PullRequestAgentDependencies:
     config: YAMLConfig
     container: dagger.Container
-    reporter: 'Reporter'  # Assuming Reporter is defined elsewhere
-    report: CoverageReport
-    error_context: Optional[str] = None  # For failed test generation
-    insight_context: Optional[str] = None  # For no coverage increase
-
-
-async def get_code_under_test_prompt(ctx: RunContext[PullRequestAgentDependencies]) -> str:
-    """ System Prompt: Get the code under test from the coverage report """
-    try:
-        coverage_report_html = await ctx.deps.reporter.get_coverage_html(
-            html_report_path=ctx.deps.report.coverage_report_path,
-            test_container=ctx.deps.container)
-        code_under_test = await ctx.deps.reporter.get_code_under_test(coverage_report_html)
-        return f"""
-                    \n ------- \n
-                    <code_under_test> \n
-                    {code_under_test}
-                    </code_under_test> \n
-                    \n ------- \n
-                """
-    except Exception as e:
-        print(f"Error in get_code_under_test_prompt: {e}")
-        return "\n ------- \n <code_under_test>Error retrieving code under test.</code_under_test> \n ------- \n"
-
-
-async def add_coverage_report_prompt(ctx: RunContext[PullRequestAgentDependencies]) -> str:
-    """ System Prompt: Get the coverage report content. """
-    try:
-        coverage_report_html = await ctx.deps.reporter.get_coverage_html(
-            html_report_path=ctx.deps.report.coverage_report_path,
-            test_container=ctx.deps.container)
-        return f"""
-                    \n ------- \n
-                    <coverage_report_html> \n
-                    {coverage_report_html}
-                    </coverage_report_html> \n
-                    \n ------- \n
-                """
-    except Exception as e:
-        print(f"Error in add_coverage_report_prompt: {e}")
-        return "\n ------- \n <coverage_report_html>Error retrieving coverage report.</coverage_report_html> \n ------- \n"
+    error_context: Optional[str] = None
+    insight_context: Optional[str] = None
 
 
 async def run_command(ctx: RunContext[PullRequestAgentDependencies], command: list[str]) -> str:
@@ -122,8 +78,6 @@ def create_pull_request_agent(pydantic_ai_model: OpenAIModel) -> Agent:
         result_retries=100
     )
 
-    agent.system_prompt(get_code_under_test_prompt)
-    agent.system_prompt(add_coverage_report_prompt)
     agent.tool(run_command)
 
     print(

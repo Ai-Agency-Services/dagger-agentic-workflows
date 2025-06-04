@@ -12,6 +12,10 @@
     {
       "name": "builder",
       "source": "../../agents/builder"
+    },
+    {
+      "name": "pull_request_agent",
+      "source": "../../agents/pull_request"
     }
   ]
 }
