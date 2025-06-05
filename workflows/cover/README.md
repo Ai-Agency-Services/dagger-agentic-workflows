@@ -14,7 +14,7 @@ Prerequisites for Local Dev Setup
 
 4. Create a `config.yaml` file anywhere on desk with the following content:
 
-This is a sample configuration file for our [Github-Dagger-Agent Repo](../../agents/coverage_agent/demo/agencyservices.yaml):
+This is a sample configuration file for our [Dagger-Agentic-Workflows Repo](../../workflows/cover/demo/agencyservices.yaml):
 
 ```yaml
 $schema: http://json-schema.org/draft-07/schema#
