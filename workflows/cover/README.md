@@ -170,4 +170,36 @@ flowchart TD
         createNewPR --> done[Done]
         updateExisting --> done
     end
+
+    subgraph BuilderAgentProcess["Builder Agent Process"]
+        startBuild[Start Build Process] --> loadConfig[Load YAML Config]
+        loadConfig --> setupLogging[Setup Logging]
+
+        setupLogging --> checkDockerfile{Dockerfile Provided?}
+        checkDockerfile -- Yes --> buildFromDockerfile[Build Container from Dockerfile]
+        checkDockerfile -- No --> useAlpineImage[Use Default Alpine Image]
+
+        buildFromDockerfile --> prepareContainer[Mount Source & Set Workdir]
+        useAlpineImage --> prepareContainer
+
+        prepareContainer --> getCreds[Fetch LLM Credentials]
+        getCreds --> installDeps[Install Dependencies]
+        installDeps --> tryOSDetect[Try OS-Based Detection]
+
+        tryOSDetect -- Success --> osDepsInstalled[Dependencies Installed via OS]
+        tryOSDetect -- Failure --> fallbackToAgent[Fallback to Builder Agent]
+
+        fallbackToAgent --> runBuilderAgent[Run Builder Agent to Install Deps]
+        runBuilderAgent --> agentDepsInstalled[Dependencies Installed via Agent]
+
+        osDepsInstalled --> configureGit[Configure Git in Container]
+        agentDepsInstalled --> configureGit
+
+        configureGit --> checkReporter{Reporter Command?}
+        checkReporter -- Yes --> runReporter[Run Reporter Command]
+        checkReporter -- No --> skipReporter[Skip Reporter Execution]
+
+        runReporter --> finishSuccess[Return Final Container]
+        skipReporter --> finishSuccess
+    end
 ```
