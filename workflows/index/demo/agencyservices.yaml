@@ -1,0 +1,30 @@
+$schema: http://json-schema.org/draft-07/schema#
+
+container:
+    work_dir: "/app"
+    docker_file_path: "./dockerfile"
+
+core_api:
+    provider: "openrouter"
+    model: "x-ai/grok-3-mini-beta"
+
+git:
+    user_email: "AiTestGen@users.noreply.github.com"
+    user_name: "Ai-TestGen[bot]"
+
+test_generation:
+    limit: 5
+    save_next_to_code_under_test: false
+    test_directory: "tests"
+    test_suffix: "test"
+
+indexing:
+    skip_indexing: false
+    chunk_size: 50
+    max_semantic_chunk_lines: 200
+    batch_size: 5  # For concurrent processing (if you want to override the default)
+    similarity_threshold: 0.80  # For RAG agent queries
+    results_limit: 10  # Maximum results to return from vector searches
+
+agents:
+    builder_model: "x-ai/grok-3-mini-beta"
