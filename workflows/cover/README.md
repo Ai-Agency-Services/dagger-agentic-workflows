@@ -121,7 +121,7 @@ Reporter Plugin Interface - see [here](../../workflows/cover/plugins/reporter/sr
 
 ## [Click here for Jest implementation](../../workflows/cover/plugins/reporter/jest/src/jest_reporter_plugin/main.py)
 
-## [Click here for Pytest implementation](../../workflows/cover/plugins/reporter/jest/src/jest_reporter_plugin/main.py)
+## [Click here for Pytest implementation](../../workflows/cover/plugins/reporter/pytest/src/pytest_reporter_plugin/main.py)
 
 
 
