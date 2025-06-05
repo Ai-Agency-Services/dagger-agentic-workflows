@@ -1,4 +1,5 @@
 import os
+import time
 import traceback
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
@@ -10,12 +11,10 @@ from coverage.models.code_module import CodeModule
 from coverage.models.coverage_report import CoverageReport
 from coverage.template import get_system_template
 from coverage.utils import get_code_under_test_directory
+from opentelemetry import trace
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
 from simple_chalk import blue, red, yellow
-import anyio
-from opentelemetry import trace
-import time
 
 # Initialize tracer for OpenTelemetry
 tracer = trace.get_tracer(__name__)
