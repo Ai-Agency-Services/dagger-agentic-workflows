@@ -103,9 +103,9 @@ parse-test-results     Parse the test results JSON file and return a str with th
 ```
 Reporter Plugin Interface - see [here](../coverage_agent/plugins/reporter/src/reporter/main.py)
 
-## [Click here for Jest implementation](../coverage_agent/plugins/reporter/jest/src/jest_reporter_plugin/main.py)
+## [Click here for Jest implementation](../../workflows/cover/plugins/reporter/jest/src/jest_reporter_plugin/main.py)
 
-## [Click here for Pytest implementation](../coverage_agent/plugins/reporter/pytest/src/pytest_reporter_plugin/main.py)
+## [Click here for Pytest implementation](../../workflows/cover/plugins/reporter/jest/src/jest_reporter_plugin/main.py)
 
 
 
