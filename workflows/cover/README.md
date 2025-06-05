@@ -23,6 +23,13 @@ container:
     work_dir: "/app"
     docker_file_path: "./dockerfile"
 
+core_api:
+    model: "x-ai/grok-3-mini-beta"
+    provider: "openrouter"
+    fallback_models:
+        - "openai/gpt-4o"
+        - "openai/gpt-3.5-turbo"
+
 git:
     user_email: "AiTestGen@users.noreply.github.com"
     user_name: "Ai-TestGen[bot]"
@@ -30,14 +37,23 @@ git:
 reporter:
     name: "jest"
     command: "npm run test:coverage"
-    output_path: "/app/coverage/testResults.json"
+    output_file_path: "/app/coverage/testResults.json"
     report_directory: "/app/coverage"
 
 test_generation:
-    limit: 1
-    save_next_to_code_under_test: true
-    test_directory: "n/a"
+    limit: 2
+    save_next_to_code_under_test: false
+    test_directory: "tests"
     test_suffix: "test"
+
+agents:
+    unit_test_agent_model: "x-ai/grok-3-mini-beta"
+    pull_request_agent_model: "x-ai/grok-3-mini-beta"
+    builder_agent_model: "x-ai/grok-3-mini-beta"
+
+concurrency:
+  batch_size: 2
+  max_concurrent: 2
 ```
 
 ### Briefly covering all of the properties within the config:
