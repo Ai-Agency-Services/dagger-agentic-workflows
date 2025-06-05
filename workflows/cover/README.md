@@ -101,7 +101,7 @@ get-coverage-html      Get the coverage HTML file from the report file
 get-coverage-reports   Extract coverage data from the HTML input and create a JSON file with the data
 parse-test-results     Parse the test results JSON file and return a str with the failed tests
 ```
-Reporter Plugin Interface - see [here](../coverage_agent/plugins/reporter/src/reporter/main.py)
+Reporter Plugin Interface - see [here](../../workflows/cover/plugins/reporter/src/reporter/main.py)
 
 ## [Click here for Jest implementation](../../workflows/cover/plugins/reporter/jest/src/jest_reporter_plugin/main.py)
 
