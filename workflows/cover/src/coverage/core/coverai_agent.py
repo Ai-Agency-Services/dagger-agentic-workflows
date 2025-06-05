@@ -1,20 +1,18 @@
-import json
 import os
 import traceback
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Annotated, Optional
+from typing import TYPE_CHECKING, Optional
 
 import dagger
+from ais_dagger_agents_config import YAMLConfig
 from coverage.core.test_file_handler import TestFileHandler
 from coverage.models.code_module import CodeModule
-from ais_dagger_agents_config import YAMLConfig
 from coverage.models.coverage_report import CoverageReport
 from coverage.template import get_system_template
 from coverage.utils import get_code_under_test_directory
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openai import \
-    OpenAIModel  # Use the specific model type
-from simple_chalk import red, yellow, blue
+from pydantic_ai.models.openai import OpenAIModel
+from simple_chalk import blue, red, yellow
 
 # Conditional import for Reporter type hint if it's complex
 if TYPE_CHECKING:
@@ -29,25 +27,6 @@ class CoverAgentDependencies:
     report: CoverageReport
     reporter: 'Reporter'
     current_code_module: Optional[CodeModule] = field(default=None)
-
-
-async def get_code_under_test_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
-    """ System Prompt: Get the code under test from the coverage report """
-    try:
-        coverage_report_html = await ctx.deps.reporter.get_coverage_html(
-            html_report_path=ctx.deps.report.coverage_report_path,
-            test_container=ctx.deps.container)
-        code_under_test = await ctx.deps.reporter.get_code_under_test(coverage_report_html)
-        return f"""
-                    \n ------- \n
-                    <code_under_test> \n
-                    {code_under_test}
-                    </code_under_test> \n
-                    \n ------- \n
-                """
-    except Exception as e:
-        print(f"Error in get_code_under_test_prompt: {e}")
-        return "\n ------- \n <code_under_test>Error retrieving code under test.</code_under_test> \n ------- \n"
 
 
 async def add_coverage_report_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
@@ -235,103 +214,25 @@ async def add_current_code_module_prompt(ctx: RunContext[CoverAgentDependencies]
         return "\n ------- \n <current_code_module>Error retrieving current code module.</current_code_module> \n ------- \n"
 
 
-# Keep this as a system prompt function
-async def find_symbol_references_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
-    """
-    System Prompt: Provide context about potential references to the file under test.
-    Uses ripgrep (rg) for searching. Ensure 'ripgrep' is installed in the container.
-
-    Returns:
-        A string containing a summary of potential references found, formatted for the system prompt,
-        or an error message.
-    """
+async def get_code_under_test_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
+    """ System Prompt: Get the code under test from the coverage report """
     try:
-        # Get the filename from the report
-        code_file_path = ctx.deps.report.file
-        # Use the filename (without path) as the search term.
-        # This is a simple text search, not a true symbol search.
-        search_term = os.path.basename(code_file_path)
-        # Define the search directory (e.g., the configured workdir)
-        search_dir = ctx.deps.config.container.work_dir
-
-        # Use --json for structured output, -- for safety with terms starting with '-'
-        # Add --case-sensitive if needed
-        rg_command = ["rg", "--json", "--", search_term, search_dir]
-
-        # Ensure all items in rg_command are strings before joining for the print statement
-        rg_command_str_list = [str(item) for item in rg_command]
-        print(yellow(
-            f"Running reference search for prompt context: {' '.join(rg_command_str_list)}"))
-
-        # Execute the command
-        result_container = await ctx.deps.container.with_exec(rg_command)
-
-        # Get stdout (JSON lines) and stderr
-        stdout = await result_container.stdout()
-        stderr = await result_container.stderr()
-
-        if stderr:
-            # rg often prints 'no matches found' to stderr, which isn't a true error
-            if "No files were searched" not in stderr and "No matches found" not in stderr:
-                print(
-                    red(f"ripgrep stderr (for prompt context): {stderr.strip()}"))
-                # Decide if stderr indicates a real error or just no matches/files searched
-
-        # Process the JSON Lines output
-        matches = []
-        if stdout:
-            for line in stdout.strip().split('\n'):
-                try:
-                    match_data = json.loads(line)
-                    if match_data.get("type") == "match":
-                        file_path = match_data.get(
-                            "data", {}).get("path", {}).get("text")
-                        line_num = match_data.get(
-                            "data", {}).get("line_number")
-                        line_text = match_data.get("data", {}).get(
-                            "lines", {}).get("text", "").strip()
-                        if file_path and line_num:
-                            # Format for readability in the prompt
-                            matches.append(
-                                f"  - {file_path} (Line {line_num}): {line_text}")
-                except json.JSONDecodeError:
-                    print(
-                        red(f"Failed to parse rg JSON line (for prompt context): {line}"))
-
-        # Format the results for the system prompt
-        if not matches:
-            references_context = f"No potential references found for the filename '{search_term}' in '{search_dir}' (excluding the file itself)."
-        else:
-            references_context = f"Potential references to the filename '{search_term}' found in other files:\n" + "\n".join(
-                matches)
-            # Limit output length if necessary for the prompt context
-            # Limit response size
-            references_context = references_context[:2000]
-
-        # Wrap in tags for clarity in the overall system prompt
+        coverage_report_html = await ctx.deps.reporter.get_coverage_html(
+            html_report_path=ctx.deps.report.coverage_report_path,
+            test_container=ctx.deps.container)
+        code_under_test = await ctx.deps.reporter.get_code_under_test(coverage_report_html)
         return f"""
                     \n ------- \n
-                    <symbol_references_context> \n
-                    {references_context}
-                    </symbol_references_context> \n
+                    <code_under_test> \n
+                    {code_under_test}
+                    </code_under_test> \n
                     \n ------- \n
                 """
-
     except Exception as e:
-        traceback.print_exc()
-        error_message = f"Error running ripgrep to find references for prompt context ('{search_term}'): {e}"
-        print(red(error_message))
-        # Return an error message within the tags for the prompt
-        return f"""
-                    \n ------- \n
-                    <symbol_references_context> \n
-                    {error_message}
-                    </symbol_references_context> \n
-                    \n ------- \n
-                """
+        print(f"Error in get_code_under_test_prompt: {e}")
+        return "\n ------- \n <code_under_test>Error retrieving code under test.</code_under_test> \n ------- \n"
 
 
-# --- Define Agent Tools (Standalone) ---
 async def read_file_tool(ctx: RunContext[CoverAgentDependencies], path: str) -> str:
     """Tool: Read the contents of a file in the workspace. Useful for reading reference files or test files.
     Args:
@@ -351,7 +252,10 @@ async def write_test_file_tool(ctx: RunContext[CoverAgentDependencies], contents
     try:
         test_file_handler = TestFileHandler(ctx.deps.config)
         ctx.deps.current_code_module = CodeModule(
-            code=contents
+            strategy="Generate unit tests to improve coverage",
+            imports="",  # These will be part of the contents
+            code=contents,
+            test_path=""  # Will be updated below
         )
         updated_container = await test_file_handler.handle_test_file(
             container=ctx.deps.container,
@@ -363,13 +267,18 @@ async def write_test_file_tool(ctx: RunContext[CoverAgentDependencies], contents
         save_dir = test_file_handler.get_save_path(
             await get_code_under_test_directory(ctx.deps.container, ctx.deps.report)
         )
-        return f"Successfully wrote content to {save_dir}/{file_written}."
+
+        # Store the test file path in the CodeModule
+        test_path = f"{save_dir}/{file_written}"
+        ctx.deps.current_code_module.test_path = test_path
+
+        return f"Successfully wrote content to {test_path}."
     except Exception as e:
         traceback.print_exc()
         return f"Error writing test file: {e}"
 
 
-async def run_tests_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
+async def run_all_tests_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
     """Tool: Attempt to run all of the unit tests in the container using the configured command.
 
     This tool is part of the agent's self-correction loop.
@@ -413,6 +322,133 @@ async def run_tests_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
         return error_msg
 
 
+async def run_test_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
+    """Tool: Run tests only for the generated code module.
+     This tool is part of the agent's self-correction lo
+    It executes the tests generated in the previous step.
+    If errors occur, they are captured and stored in `ctx.deps.current_code_module.error`.
+    The `add_current_code_module_prompt` will then feed this error back to the LLM
+    in the next iteration, asking it to correct the generated code."""
+    try:
+        print(yellow("=== START: run_test_tool ==="))
+        # Check if we have a current code module
+        if not ctx.deps.current_code_module:
+            return "No test file has been generated yet. Use write_test_file_tool first."
+
+        # Safely access test_path with getattr to avoid AttributeError
+        test_file_path = None
+
+        # Try multiple ways to get the test path
+        try:
+            test_file_path = getattr(
+                ctx.deps.current_code_module, 'test_path', None)
+            print(f"Got test path from current_code_module: {test_file_path}")
+        except (AttributeError, ValueError) as e:
+            print(f"Error getting test_path from current_code_module: {e}")
+            # Field doesn't exist in model, try alternative storage
+            pass
+
+        if not test_file_path:
+            return "Test file path is unknown. Please use write_test_file_tool first."
+
+        print(f"Preparing to run tests for specific file: {test_file_path}")
+
+        base_command = ctx.deps.config.reporter.command
+
+        file_test_command = None
+        try:
+            if hasattr(ctx.deps.config.reporter, 'file_test_command_template'):
+                # Use the reporter's file test command template if available
+                file_test_command = ctx.deps.config.reporter.file_test_command_template.replace(
+                    "{file}", test_file_path)
+                print(f"Using reporter-provided command: {file_test_command}")
+        except AttributeError as e:
+            print(f"Error checking for file_test_command_template: {e}")
+            pass
+
+        # Add fallback if still None
+        if not file_test_command:
+            reporter_name = getattr(
+                ctx.deps.config.reporter, 'name', '').lower()
+            if "jest" in reporter_name:
+                file_test_command = f"{base_command} -- {test_file_path} --verbose"
+            elif "pytest" in reporter_name:
+                file_test_command = f"python -m pytest {test_file_path} -v"
+            else:
+                # Generic fallback
+                file_test_command = f"{base_command} {test_file_path}"
+            print(f"Using fallback test command: {file_test_command}")
+
+        print(f"Running test command: {file_test_command}")
+
+        # Run the command with timeout
+        try:
+            result_container = await ctx.deps.container.with_exec(["bash", "-c", f"{file_test_command}; echo -n $? > /exit_code"])
+            print("Command execution completed")
+
+        except Exception as exec_err:
+            print(red(f"Error executing test command: {exec_err}"))
+            if ctx.deps.current_code_module:
+                ctx.deps.current_code_module.error = f"Test execution failed: {exec_err}"
+            return f"Test Run Failed for {test_file_path}: Test execution error: {exec_err}"
+
+        try:
+            if hasattr(ctx.deps.reporter, 'parse_test_results'):
+                print("Reporter has parse_test_results method")
+                try:
+                    output_file_path = getattr(
+                        ctx.deps.config.reporter, 'output_file_path', None)
+                    print(
+                        f"Output file path from config: '{output_file_path}'")
+
+                    if output_file_path:
+                        try:
+                            path = ctx.deps.config.reporter.output_file_path
+                            print(f"Full output file path: '{path}'")
+                            test_results = await result_container.file(path).contents()
+
+                            print("Parsing test results with reporter...")
+                            error = await ctx.deps.reporter.parse_test_results(test_results)
+                            print(f"Result of parsing: error={error}")
+                        except Exception as e:
+                            print(
+                                red(f"Error reading or parsing test results file: {e}"))
+                            error = f"Error accessing test results: {e}"
+                    else:
+                        print("No output file path configured, skipping file parsing")
+                        error = None
+                except Exception as e:
+                    print(red(f"Error in test results handling logic: {e}"))
+                    error = None
+            else:
+                print("Reporter doesn't have parse_test_results method")
+                error = None
+
+            # Update the code module with the error or success
+            if error:
+                print(f"Test failed with error: {error}")
+                ctx.deps.current_code_module.error = error
+                return f"Test Run Failed for {test_file_path}: {error}"
+            else:
+                print("No errors found, tests passed")
+                ctx.deps.current_code_module.error = None
+                return f"Test Run Succeeded for {test_file_path}."
+
+        except Exception as parse_err:
+            print(red(f"Error in test results parsing: {parse_err}"))
+
+    except Exception as e:
+        error_msg = f"Error running test for specific file: {e}"
+        print(red(f"EXCEPTION in run_test_tool: {e}"))
+        traceback.print_exc()
+        if ctx.deps.current_code_module:
+            ctx.deps.current_code_module.error = error_msg
+        return error_msg
+    finally:
+        print(yellow("=== END: run_test_tool ==="))
+        print("")  # Extra newline for better separation in logs
+
+
 def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     """
     Creates and configures the CoverAI agent instance.
@@ -445,8 +481,8 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     agent.system_prompt(add_dependency_files_prompt)
 
     agent.tool(read_file_tool)
+    agent.tool(run_test_tool)
     agent.tool(write_test_file_tool)
-    agent.tool(run_tests_tool)
 
     print(f"CoverAI Agent created with model: {pydantic_ai_model.model_name}")
     return agent

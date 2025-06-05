@@ -100,6 +100,13 @@ class ReporterConfig(BaseModel):
     output_file_path: Optional[str] = Field(
         default=None, description="The path to the JSON output file for test results"
     )
+    # Add new fields to support file-specific test commands
+    file_test_command_template: Optional[str] = Field(
+        default=None, description="Template for running tests on a specific file (use {file} as placeholder)"
+    )
+    test_timeout_seconds: int = Field(
+        default=60, description="Maximum time to wait for tests to complete"
+    )
 
 
 class CoreAPIConfig(BaseModel):
