@@ -16,10 +16,12 @@ git:
     user_name: "Ai-TestGen[bot]"
 
 reporter:
-    name: "jest"
-    command: "npm run test:coverage"
-    output_file_path: "/app/coverage/testResults.json"
-    report_directory: "/app/coverage"
+  name: "jest"
+  command: "npm run test:coverage"
+  report_directory: "coverage"
+  output_file_path: "/app/coverage/testResults.json"
+  file_test_command_template: "npm run test:coverage -- {file} --verbose"
+  test_timeout_seconds: 120
 
 test_generation:
     limit: 2
