@@ -14,7 +14,7 @@ Prerequisites for Local Dev Setup
 
 4. Create a `config.yaml` file anywhere on desk with the following content:
 
-This is a sample configuration file for our [Dagger-Agentic-Workflows Repo](../../workflows/cover/demo/agencyservices.yaml):
+This is a sample configuration file for our [Dagger-Agentic-Workflows Repo](../../workflows/cover/demo/config.yaml):
 
 ```yaml
 $schema: http://json-schema.org/draft-07/schema#
@@ -24,8 +24,7 @@ container:
     docker_file_path: "./dockerfile"
 
 core_api:
-    model: "x-ai/grok-3-mini-beta"
-    provider: "openrouter"
+    model: "openai/gpt-4o"
     fallback_models:
         - "openai/gpt-4o"
         - "openai/gpt-3.5-turbo"
@@ -37,23 +36,28 @@ git:
 reporter:
     name: "jest"
     command: "npm run test:coverage"
-    output_file_path: "/app/coverage/testResults.json"
-    report_directory: "/app/coverage"
+    output_path: "/app/coverage_reports/testResults.json"
+    report_directory: "/app/coverage_reports"
 
 test_generation:
-    limit: 2
+    iterations: 1
     save_next_to_code_under_test: false
     test_directory: "tests"
     test_suffix: "test"
 
-agents:
-    unit_test_agent_model: "x-ai/grok-3-mini-beta"
-    pull_request_agent_model: "x-ai/grok-3-mini-beta"
-    builder_agent_model: "x-ai/grok-3-mini-beta"
-
 concurrency:
-  batch_size: 2
-  max_concurrent: 2
+    batch_size: 5
+    max_concurrent: 5
+    embedding_batch_size: 10
+
+indexing:
+    max_semantic_chunk_lines: 200
+    chunk_size: 50
+    max_file_size: 1_000_000
+    embedding_model: "openai/text-embedding-3-small"
+    file_extensions: ["py", "js", "ts", "java", "c", "cpp", "go", "rs"]
+    max_files: 50
+    skip_indexing: false
 ```
 
 ### Briefly covering all of the properties within the config:
@@ -71,6 +75,17 @@ concurrency:
 Note that `save_next_to_code_under_test` and `test_directory` toggle each other.
 If you set `save_next_to_code_under_test` to be `true`, set `test_directory` to `n/a`. If you set `save_next_to_code_under_test` to be `false`, then you must set `test_directory` to a directory.
 
+`batch_size` refers to the number of units (like files or chunks) processed at once during async operations.
+`max_concurrent` is the maximum number of operations that run in parallel.
+`embedding_batch_size` defines how many code chunks are grouped in a single embedding call.
+`max_semantic_chunk_lines` refers to the maximum number of lines for chunks when splitting code based on logical breaks.
+`chunk_size` is a fallback line count per chunk when semantic splitting is not used or fails.
+`max_file_size` is the maximum file size that will be indexed. (NOTE: The size is in bytes)
+`embedding_model` refers to the model used to generate embeddings for code chunks.
+`file_extensions` is a list of the file types to include when indexing.
+`max_files` limits how many files will be indexed total.
+`skip_indexing` determines whether to skip the indexing process entirely. (This is set to be false by default)
+
 ## Usage
 
 In order to see all functions available with these agents, type in the following command using Dagger: ``` dagger functions ```
@@ -81,7 +96,6 @@ ARGUMENTS
       --branch string                 Branch to generate tests for [required]
       --github-access-token Secret    GitHub access token [required]
       --repository-url string         Repository URL to generate tests for [required]
-      --logfire-access-token Secret   Logfire access token
       --model-name string             LLM model name (e.g., 'openai/gpt-4o', 'anthropic/claude-3.5-sonnet') (default "openai/gpt-4.1-nano")
       --open-router-api-key Secret    OpenRouter API key (required if provider is 'openrouter')
       --openai-api-key Secret         OpenAI API key (required if provider is 'openai')
