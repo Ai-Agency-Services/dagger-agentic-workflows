@@ -1,7 +1,6 @@
 import logging
 import os
 import re
-import contextlib
 from dataclasses import dataclass
 from typing import Annotated, Dict, List, Optional, Tuple
 
@@ -668,9 +667,8 @@ class Index:
             .with_env_variable("NEO4J_dbms_memory_heap_max__size", "1G")
             .with_exposed_port(7474)  # HTTP interface
             .with_exposed_port(7687)  # Bolt protocol
-            # Persist data
             .with_mounted_cache("/data", dag.cache_volume("neo4j-data"))
-            .as_service(use_entrypoint=True)  # Use container's entrypoint
+            .as_service(use_entrypoint=True)
         )
 
     @function
@@ -678,14 +676,18 @@ class Index:
         """Run a query against the Neo4j service"""
         neo4j_svc = self.neo_service()
 
+        # Write the query to a file to avoid quoting issues
         return await (
             dag.container()
-            .from_("neo4j:5.13.0")
-            .with_service_binding("neo4j_db", neo4j_svc)  # Bind to the service
-            .with_env_variable("NEO4J_AUTH", "neo4j/devpassword")
+            .from_("neo4j:2025.05")
+            .with_service_binding("neo4j_db", neo4j_svc)
+            .with_new_file("/tmp/query.cypher", query)
             .with_exec([
-                "/bin/bash", "-c",
-                f'echo "{query}" | cypher-shell -a "bolt://neo4j_db:7687" -u neo4j -p devpassword'
+                "cypher-shell",
+                "-a", "neo4j_db:7687",
+                "-u", "neo4j",
+                "-p", "devpassword",
+                "-f", "/tmp/query.cypher"
             ])
             .stdout()
         )
@@ -810,7 +812,7 @@ class Index:
                 files,
                 supabase,
                 container,
-                openai_api_key,
+                openai_key,
                 config,
                 logger,
                 neo4j=neo4j
