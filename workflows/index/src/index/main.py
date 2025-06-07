@@ -1,17 +1,19 @@
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Annotated, Dict, List, Optional, Tuple
 
-from ais_dagger_agents_config import IndexingConfig, ConcurrencyConfig
 import anyio
 import dagger
 import yaml
+from ais_dagger_agents_config import ConcurrencyConfig, IndexingConfig
 from ais_dagger_agents_config.models import YAMLConfig
 from dagger import Doc, dag, function, object_type
 from index.utils.code_parser import parse_code_file
 from index.utils.embeddings import generate_embeddings
 from index.utils.file import get_file_size
+from index.utils.neo4j_connector import Neo4jConnector
 from supabase import Client, create_client
 
 
@@ -428,7 +430,8 @@ class Index:
         container: dagger.Container,
         openai_key: dagger.Secret,
         config: ProcessingConfig,
-        logger: logging.Logger
+        logger: logging.Logger,
+        neo4j: Optional[Neo4jConnector] = None  # Add neo4j parameter
     ) -> int:
         """Safely process a single file with comprehensive error handling."""
         try:
@@ -454,10 +457,59 @@ class Index:
 
             logger.info(f"Generated {len(chunks_data)} chunks for {filepath}")
 
-            # Generate embeddings and store
+            # Generate embeddings and store in Supabase
             result = await self._store_chunks_with_embeddings(
                 chunks_data, supabase, openai_key, config, logger
             )
+
+            # Add Neo4j integration here
+            if neo4j:
+                try:
+                    # Parse the file to get structured code information
+                    code_file = parse_code_file(content, filepath)
+                    if code_file:
+                        logger.info(f"Adding {filepath} to Neo4j graph")
+
+                        # Add file node
+                        neo4j.add_file_node(filepath, getattr(
+                            code_file, 'language', 'unknown'))
+
+                        # Add symbol nodes
+                        symbols = getattr(code_file, 'symbols', [])
+                        for symbol in symbols:
+                            if not hasattr(symbol, 'name') or not symbol.name:
+                                continue
+
+                            # Extract symbol properties
+                            symbol_type = symbol.type.capitalize() if hasattr(symbol, 'type') else 'Symbol'
+                            line_number = getattr(symbol, 'line_number', 0)
+                            end_line = getattr(symbol, 'end_line', line_number)
+
+                            # Collect additional properties
+                            properties = {}
+                            for attr in ['signature', 'docstring', 'visibility', 'scope']:
+                                if hasattr(symbol, attr) and getattr(symbol, attr):
+                                    properties[attr] = getattr(symbol, attr)
+
+                            # Add symbol to Neo4j
+                            neo4j.add_symbol(
+                                symbol_type=symbol_type,
+                                name=symbol.name,
+                                filepath=filepath,
+                                start_line=line_number,
+                                end_line=end_line,
+                                properties=properties
+                            )
+
+                        # Extract relationships between symbols
+                        await self._extract_relationships(filepath, code_file, neo4j)
+                        logger.info(
+                            f"Successfully added {filepath} to Neo4j with {len(symbols)} symbols")
+
+                except Exception as neo4j_err:
+                    logger.error(
+                        f"Failed to add {filepath} to Neo4j: {neo4j_err}")
+                    # Continue processing - don't let Neo4j errors stop the vector indexing
 
             logger.info(f"File {filepath} processed: {result} chunks indexed")
             return result
@@ -468,12 +520,13 @@ class Index:
 
     async def _process_files_with_semaphore(
         self,
-        files: List[str],
-        supabase: Client,
-        container: dagger.Container,
-        openai_key: dagger.Secret,
-        config: ProcessingConfig,
-        logger: logging.Logger
+        files,
+        supabase,
+        container,
+        openai_key,
+        config,
+        logger,
+        neo4j=None
     ) -> int:
         """Process files with semaphore-controlled concurrency using anyio."""
         if not files:
@@ -485,7 +538,7 @@ class Index:
         async def process_with_limit(filepath: str):
             async with semaphore:
                 result = await self._safe_process_file(
-                    filepath, supabase, container, openai_key, config, logger
+                    filepath, supabase, container, openai_key, config, logger, neo4j
                 )
                 results.append(result)
 
@@ -597,6 +650,7 @@ class Index:
             logger.error(f"Error in clear operation: {e}")
             return False, f"Clear operation failed: {e}"
 
+    # Add Neo4j integration to index_codebase method
     @function
     async def index_codebase(
         self,
@@ -606,8 +660,12 @@ class Index:
         supabase_url: str,
         openai_api_key: dagger.Secret,
         open_router_api_key: dagger.Secret,
+        neo_password: dagger.Secret,
         supabase_key: dagger.Secret,
+        neo_uri: str = "bolt://host.docker.internal:7687",
+        neo_user: str = "neo4j",
         clear_existing: bool = True,
+        use_neo4j: bool = True
     ) -> str:
         """Index all code files in a repository using anyio concurrency."""
         logger = self._setup_logging()
@@ -641,9 +699,37 @@ class Index:
                     logger.warning(f"⚠ {message}")
                     logger.warning("Continuing with indexing anyway...")
 
+            # Add Neo4j connector
+            neo4j = None
+            if use_neo4j and neo_password:
+                try:
+                    neo4j_password_text = await neo_password.plaintext()
+                    neo4j = Neo4jConnector(
+                        uri=neo_uri,
+                        username=neo_user,
+                        password=neo4j_password_text,
+                        database="neo4j"
+                    )
+                    connected = neo4j.connect()
+                    if connected and clear_existing:
+                        neo4j.clear_database()
+                    if not connected:
+                        logger.warning(
+                            "Failed to connect to Neo4j, continuing with Supabase only")
+                        neo4j = None
+                except Exception as e:
+                    logger.error(f"Neo4j initialization failed: {e}")
+                    neo4j = None
+
             # Process files with semaphore-controlled concurrency
             total_chunks = await self._process_files_with_semaphore(
-                files, supabase, container, openai_api_key, config, logger
+                files,
+                supabase,
+                container,
+                openai_api_key,
+                config,
+                logger,
+                neo4j=neo4j
             )
 
             logger.info(f"Successfully indexed {total_chunks} code chunks")
@@ -676,3 +762,61 @@ class Index:
         except Exception as e:
             logger.error(f"Clear operation failed: {e}")
             raise
+
+    async def _extract_relationships(self, filepath, code_file, neo4j):
+        """Extract relationships between code symbols"""
+        if not neo4j or not code_file.symbols:
+            return
+
+        # Map symbols by name for quick lookup
+        symbol_map = {}
+        for symbol in code_file.symbols:
+            if not hasattr(symbol, 'name') or not symbol.name:
+                continue
+            symbol_map[symbol.name] = symbol
+
+        # Process for import relationships
+        if code_file.language in ('python', 'javascript', 'typescript'):
+            # Find import statements and create relationships
+            import_pattern = r'import\s+(\w+)(?:\s*,\s*\{([^}]+)\})?\s+from\s+[\'"]([^\'"]+)[\'"]'
+            for i, line in enumerate(code_file.content.split('\n')):
+                for match in re.finditer(import_pattern, line):
+                    module_name = match.group(3)
+                    imported_name = match.group(1)
+                    if imported_name in symbol_map:
+                        neo4j.add_relationship(
+                            from_type='File',
+                            from_name='',
+                            from_filepath=filepath,
+                            from_line=0,
+                            to_type='Module',
+                            to_name=module_name,
+                            to_filepath=module_name,
+                            to_line=0,
+                            rel_type='IMPORTS'
+                        )
+
+        # Process function calls
+        if code_file.language in ('python', 'javascript', 'typescript'):
+            function_call_pattern = r'(\w+)\s*\('
+            for symbol in code_file.symbols:
+                if not hasattr(symbol, 'line_number') or not symbol.name:
+                    continue
+
+                # Find function calls within this symbol
+                if hasattr(symbol, 'body') and symbol.body:
+                    for match in re.finditer(function_call_pattern, symbol.body):
+                        called_func = match.group(1)
+                        if called_func in symbol_map and called_func != symbol.name:
+                            called_symbol = symbol_map[called_func]
+                            neo4j.add_relationship(
+                                from_type=symbol.type.capitalize(),
+                                from_name=symbol.name,
+                                from_filepath=filepath,
+                                from_line=symbol.line_number,
+                                to_type=called_symbol.type.capitalize(),
+                                to_name=called_symbol.name,
+                                to_filepath=filepath,
+                                to_line=called_symbol.line_number,
+                                rel_type='CALLS'
+                            )

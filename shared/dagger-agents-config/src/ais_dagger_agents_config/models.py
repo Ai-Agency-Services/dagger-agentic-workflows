@@ -121,6 +121,15 @@ class CoreAPIConfig(BaseModel):
     )
 
 
+class Neo4jConfig(BaseModel):
+    """Neo4j connection configuration"""
+    uri: str = "bolt://localhost:7687"
+    username: str = "neo4j"
+    password: dagger.Secret
+    database: str = "code"
+    enabled: bool = True
+
+
 class YAMLConfig(BaseModel):
     """Main configuration model."""
     container: ContainerConfig
@@ -131,6 +140,7 @@ class YAMLConfig(BaseModel):
     test_generation: Optional[TestGenerationConfig] = Field(default=None)
     reporter: Optional[ReporterConfig] = Field(default=None)
     core_api: Optional[CoreAPIConfig] = Field(default=None)
+    neo4j: Optional['Neo4jConfig'] = None
 
     class Config:
         """Pydantic configuration."""
