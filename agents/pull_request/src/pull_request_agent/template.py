@@ -37,7 +37,7 @@ def get_pull_request_agent_template():
       1. ["bash", "-c", "git status"]
       2. ["bash", "-c", "git add ."]
       3. ["bash", "-c", "git commit -m '[CoverAI] Your message'"]
-      4. ["bash", "-c", "git push origin HEAD"]
+      4. ["bash", "-c", "git push --set-upstream origin $(git branch --show-current) --force || git push origin HEAD --force"]
       5. ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number,headRefName --jq length"]
       6. If the result from step 5 is 0 (no existing PR):
          ["bash", "-c", "gh pr create --base develop --title '[CoverAI] Your title' --body 'This PR was automatically created by CoverAI Bot.' --label automated-pr,test-coverage || gh pr create --base develop --title '[CoverAI] Your title' --body 'This PR was automatically created by CoverAI Bot.'"]
@@ -46,7 +46,7 @@ def get_pull_request_agent_template():
       1. ["bash", "-c", "git status"]
       2. ["bash", "-c", "git add ."]
       3. ["bash", "-c", "git commit -m '[CoverAI] Update: Your message'"]
-      4. ["bash", "-c", "git push origin HEAD"]
+      4. ["bash", "-c", "git push --set-upstream origin $(git branch --show-current) --force || git push origin HEAD --force"]
       5. ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number --jq '.[0].number'"]
       6. ["bash", "-c", "gh pr comment $(gh pr list --head $(git branch --show-current) --json number --jq '.[0].number') --body '[CoverAI Bot] Added additional changes: Description of what was changed'"]
 

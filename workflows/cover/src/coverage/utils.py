@@ -1,34 +1,13 @@
 import json
 import os
-from typing import List, NamedTuple, Optional, Any, TypeVar, cast
-from pydantic import GetCoreSchemaHandler
-from pydantic_core import core_schema
+from typing import List, NamedTuple, Optional
+
 import dagger
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
-from simple_chalk import green, red
+from simple_chalk import red, yellow
 
 from .models.coverage_report import CoverageReport
-
-T = TypeVar('T')
-
-
-def get_dagger_container_schema(cls: type[T], handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
-    """Custom schema handler for dagger.Container type"""
-    return core_schema.union_schema(
-        [
-            # Allow passing a Container instance directly
-            handler.generate_schema(Any),
-            # Or None
-            core_schema.none_schema(),
-        ],
-        custom_error_type="dagger_container",
-    )
-
-
-# Monkey patch to add schema support
-if not hasattr(dagger.Container, "__get_pydantic_core_schema__"):
-    dagger.Container.__get_pydantic_core_schema__ = get_dagger_container_schema
 
 
 def base_file_name(file_path: str, test_suffix: str):
@@ -61,19 +40,6 @@ def dagger_json_file_to_pydantic(json_file: dagger.File, pydantic_model: type) -
         return [pydantic_model.model_validate(item) for item in data_list]
 
     return convert()
-
-
-def generate_code(code_module):
-    """
-    Combine the imports and code from a code module into a single string.
-
-    Args:
-        code_module: An object with `imports` and `code` attributes.
-
-    Returns:
-        str: The combined code as a string.
-    """
-    return f"{code_module.imports}\n{code_module.code}"
 
 
 async def get_code_under_test_directory(
@@ -191,23 +157,68 @@ async def get_code_under_test_directory(
                 f"Could not find directory for file: {report.file} (excluding specified paths)"))
             return "."  # Default to current directory if not found
         elif len(potential_dirs) > 1:
-            # If multiple found, try to prefer paths containing 'src' or 'lib'
-            preferred_dirs = [
-                d for d in potential_dirs if '/src' in d or '/lib' in d]
-            if preferred_dirs:
-                code_under_test_dir = preferred_dirs[0]
-                if len(preferred_dirs) > 1:
-                    print(red(
-                        f"Found multiple preferred directories for {report.file}: {preferred_dirs}. Returning first: {code_under_test_dir}"))
-                else:
-                    print(
-                        f"Found multiple directories for {report.file}, choosing preferred: {code_under_test_dir}")
+            # If multiple found, use more sophisticated path selection
 
+            # First, extract the basename without extension to help with matching
+            file_base = os.path.splitext(os.path.basename(report.file))[0]
+
+            # Look for path patterns in the filename (e.g., "component" in "use-toast.ts")
+            path_hints = []
+            for pattern in ["component", "hook", "util", "service", "model"]:
+                if pattern in file_base.lower():
+                    path_hints.append(pattern)
+
+            # Create a scoring system for paths
+            scored_dirs = []
+            for dir_path in potential_dirs:
+                score = 0
+
+                # Higher score for paths with '/src/' or '/lib/'
+                if '/src/' in dir_path:
+                    score += 5
+                if '/lib/' in dir_path:
+                    score += 5
+
+                # Higher score if path contains hints from filename
+                for hint in path_hints:
+                    if hint in dir_path.lower():
+                        score += 10
+
+                # Highest score for paths that have both the directory name
+                # matching part of the file name
+                dir_name = os.path.basename(dir_path)
+                if dir_name.lower() in file_base.lower() or file_base.lower() in dir_name.lower():
+                    score += 15
+
+                # Check if file likely exists in this directory
+                try:
+                    check_path = os.path.join(dir_path, report.file)
+                    # Just check if file exists, don't need output
+                    await test_container.with_exec(["ls", check_path]).exit_code()
+                    # File exists, highest priority
+                    score += 50
+                except:
+                    # File doesn't exist, lower score
+                    pass
+
+                scored_dirs.append((dir_path, score))
+
+            # Sort by score, highest first
+            scored_dirs.sort(key=lambda x: x[1], reverse=True)
+
+            # Take the highest-scoring directory
+            code_under_test_dir = scored_dirs[0][0]
+
+            # Log the chosen directory and why
+            if len(scored_dirs) > 1:
+                log_msg = f"Found multiple directories for {report.file}: {potential_dirs}"
+                score_info = ", ".join(
+                    [f"{d}(score:{s})" for d, s in scored_dirs[:3]])
+                log_msg += f"\nSelected based on scoring: {score_info}"
+                print(yellow(log_msg))
             else:
-                # Fallback to first match
-                code_under_test_dir = potential_dirs[0]
-                print(red(
-                    f"Found multiple possible directories for {report.file}: {potential_dirs}. No preferred ('src', 'lib'). Returning first match: {code_under_test_dir}"))
+                print(
+                    f"Selected directory for {report.file}: {code_under_test_dir}")
         else:
             code_under_test_dir = potential_dirs[0]
 
