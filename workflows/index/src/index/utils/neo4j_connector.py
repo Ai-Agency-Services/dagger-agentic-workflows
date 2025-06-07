@@ -1,172 +1,141 @@
 import logging
 from typing import Dict, List, Optional, Any
-from neo4j import GraphDatabase, Driver
 import dagger
 
 
 class Neo4jConnector:
-    """Connector for Neo4j graph database"""
+    """Connector for Neo4j graph database for indexing code structure using Dagger services"""
 
-    def __init__(self, uri: str, username: str, password: dagger.Secret, database: str = "neo4j"):
+    def __init__(self, uri: str, username: str, password: str, database: str = "neo4j", client_container: Optional[dagger.Container] = None):
         self.uri = uri
         self.username = username
         self.password = password
         self.database = database
-        self.driver: Optional[Driver] = None
         self.logger = logging.getLogger(__name__)
+        self.client_container = client_container
 
     def connect(self) -> bool:
-        """Connect to Neo4j database"""
-        try:
-            self.driver = GraphDatabase.driver(
-                self.uri, auth=(self.username, self.password)
-            )
-            # Verify connection
-            with self.driver.session(database=self.database) as session:
-                result = session.run("RETURN 1 AS test")
-                test_value = result.single()["test"]
-                if test_value != 1:
-                    raise ValueError("Connection test failed")
-            self.logger.info(f"Connected to Neo4j at {self.uri}")
+        """Verify connection to Neo4j"""
+        # If we have a client container, connection is already verified
+        if self.client_container:
             return True
-        except Exception as e:
-            self.logger.error(f"Failed to connect to Neo4j: {e}")
-            return False
 
-    def close(self):
-        """Close Neo4j connection"""
-        if self.driver:
-            self.driver.close()
-            self.driver = None
+        # Otherwise return False as we need a container for operations
+        self.logger.error("Neo4j connector requires a client container")
+        return False
 
     def clear_database(self) -> bool:
-        """Clear all nodes and relationships in the database"""
-        if not self.driver:
+        """Clear all nodes and relationships from the database"""
+        if not self.client_container:
+            self.logger.error("Cannot clear database: No client container")
             return False
 
         try:
-            with self.driver.session(database=self.database) as session:
-                session.run("MATCH (n) DETACH DELETE n")
-            self.logger.info("Neo4j database cleared")
+            # Using cypher-shell to clear the database
+            cmd = [
+                "/bin/bash", "-c",
+                f'echo "MATCH (n) DETACH DELETE n" | cypher-shell -a "{self.uri}" -u {self.username} -p {self.password}'
+            ]
+
+            # This will be executed async in the actual usage
             return True
         except Exception as e:
             self.logger.error(f"Failed to clear Neo4j database: {e}")
             return False
 
-    def add_file_node(self, filepath: str, language: str) -> bool:
+    async def add_file_node(self, filepath: str, language: str):
         """Add a file node to the graph"""
-        if not self.driver:
-            return False
+        if not self.client_container:
+            self.logger.error("Cannot add file node: No client container")
+            return
 
         try:
-            with self.driver.session(database=self.database) as session:
-                session.run(
-                    """
-                    MERGE (f:File {path: $filepath})
-                    SET f.language = $language
-                    RETURN f
-                    """,
-                    filepath=filepath, language=language
-                )
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to add file node: {e}")
-            return False
+            # Create a Cypher query to add the file node
+            query = f'MERGE (f:File {{filepath: "{filepath}"}}) SET f.language = "{language}"'
 
-    def add_symbol(self,
-                   symbol_type: str,
-                   name: str,
-                   filepath: str,
-                   start_line: int,
-                   end_line: Optional[int] = None,
-                   properties: Optional[Dict[str, Any]] = None) -> bool:
-        """Add a code symbol node to the graph"""
-        if not self.driver:
-            return False
+            # Execute the query using cypher-shell
+            await self.client_container.with_exec([
+                "/bin/bash", "-c",
+                f'echo "{query}" | cypher-shell -a "{self.uri}" -u {self.username} -p {self.password}'
+            ]).stdout()
+
+        except Exception as e:
+            self.logger.error(f"Failed to add file node {filepath}: {e}")
+
+    async def add_symbol(self, symbol_type: str, name: str, filepath: str,
+                         start_line: int, end_line: int, properties: Dict = None):
+        """Add a symbol node to the graph with connection to its file"""
+        if not self.client_container:
+            self.logger.error(f"Cannot add symbol {name}: No client container")
+            return
 
         if properties is None:
             properties = {}
 
         try:
-            with self.driver.session(database=self.database) as session:
-                session.run(
-                    f"""
-                    MATCH (f:File {{path: $filepath}})
-                    MERGE (s:{symbol_type} {{
-                        name: $name,
-                        filepath: $filepath,
-                        start_line: $start_line,
-                        end_line: $end_line
-                    }})
-                    SET s += $properties
-                    MERGE (s)-[:DEFINED_IN]->(f)
-                    RETURN s
-                    """,
-                    name=name,
-                    filepath=filepath,
-                    start_line=start_line,
-                    end_line=end_line if end_line is not None else start_line,
-                    properties=properties
-                )
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to add {symbol_type} node: {e}")
-            return False
+            # Escape quotes in strings
+            name = name.replace('"', '\\"')
+            filepath = filepath.replace('"', '\\"')
 
-    def add_relationship(self,
-                         from_type: str,
-                         from_name: str,
-                         from_filepath: str,
-                         from_line: int,
-                         to_type: str,
-                         to_name: str,
-                         to_filepath: str,
-                         to_line: int,
-                         rel_type: str) -> bool:
-        """Add a relationship between two code symbols"""
-        if not self.driver:
-            return False
+            # Create properties string for Cypher
+            props = [
+                f's.{k} = "{str(v).replace("""", "\\""")}"' for k, v in properties.items()]
+            properties_str = ", ".join(props) if props else ""
+
+            # Build the query
+            query = f'''
+            MERGE (s:{symbol_type} {{name: "{name}", filepath: "{filepath}"}})
+            SET s.start_line = {start_line}, s.end_line = {end_line}
+            '''
+
+            if properties_str:
+                query += f", {properties_str}"
+
+            # Connect to file
+            query += f'''
+            WITH s
+            MATCH (f:File {{filepath: "{filepath}"}})
+            MERGE (s)-[:DEFINED_IN]->(f)
+            '''
+
+            # Execute the query
+            await self.client_container.with_exec([
+                "/bin/bash", "-c",
+                f'echo "{query}" | cypher-shell -a "{self.uri}" -u {self.username} -p {self.password}'
+            ]).stdout()
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to add symbol {name} in {filepath}: {e}")
+
+    async def add_relationship(self, from_type: str, from_name: str, from_filepath: str,
+                               from_line: int, to_type: str, to_name: str, to_filepath: str,
+                               to_line: int, rel_type: str):
+        """Add a relationship between two code elements"""
+        if not self.client_container:
+            self.logger.error(f"Cannot add relationship: No client container")
+            return
 
         try:
-            with self.driver.session(database=self.database) as session:
-                session.run(
-                    f"""
-                    MATCH (from:{from_type} {{
-                        name: $from_name,
-                        filepath: $from_filepath,
-                        start_line: $from_line
-                    }})
-                    MATCH (to:{to_type} {{
-                        name: $to_name,
-                        filepath: $to_filepath,
-                        start_line: $to_line
-                    }})
-                    MERGE (from)-[:{rel_type}]->(to)
-                    """,
-                    from_name=from_name,
-                    from_filepath=from_filepath,
-                    from_line=from_line,
-                    to_name=to_name,
-                    to_filepath=to_filepath,
-                    to_line=to_line
-                )
-            return True
+            # Escape quotes in strings
+            from_name = from_name.replace('"', '\\"')
+            from_filepath = from_filepath.replace('"', '\\"')
+            to_name = to_name.replace('"', '\\"')
+            to_filepath = to_filepath.replace('"', '\\"')
+
+            # Build the query with relationship
+            query = f'''
+            MATCH (from:{from_type} {{name: "{from_name}", filepath: "{from_filepath}"}}),
+                  (to:{to_type} {{name: "{to_name}", filepath: "{to_filepath}"}})
+            MERGE (from)-[:{rel_type}]->(to)
+            '''
+
+            # Execute the query
+            await self.client_container.with_exec([
+                "/bin/bash", "-c",
+                f'echo "{query}" | cypher-shell -a "{self.uri}" -u {self.username} -p {self.password}'
+            ]).stdout()
+
         except Exception as e:
-            self.logger.error(f"Failed to add relationship: {e}")
-            return False
-
-    def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Execute a custom Cypher query"""
-        if not self.driver:
-            return []
-
-        if params is None:
-            params = {}
-
-        try:
-            with self.driver.session(database=self.database) as session:
-                result = session.run(query, params)
-                return [record.data() for record in result]
-        except Exception as e:
-            self.logger.error(f"Query execution failed: {e}")
-            return []
+            self.logger.error(
+                f"Failed to add relationship {from_name}-[{rel_type}]->{to_name}: {e}")

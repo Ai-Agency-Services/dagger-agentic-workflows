@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import contextlib
 from dataclasses import dataclass
 from typing import Annotated, Dict, List, Optional, Tuple
 
@@ -652,6 +653,44 @@ class Index:
 
     # Add Neo4j integration to index_codebase method
     @function
+    def neo_service(self) -> dagger.Service:
+        """Create a Neo4j service as a Dagger service"""
+        return (
+            dag.container()  # Changed from dag.container()
+            .from_("neo4j:2025.05")  # Changed to valid version
+            .with_env_variable("NEO4J_AUTH", "neo4j/devpassword")
+            .with_env_variable("NEO4J_PLUGINS", '["apoc"]')
+            .with_env_variable("NEO4J_apoc_export_file_enabled", "true")
+            .with_env_variable("NEO4J_apoc_import_file_enabled", "true")
+            .with_env_variable("NEO4J_apoc_import_file_use__neo4j__config", "true")
+            .with_env_variable("NEO4J_dbms_memory_pagecache_size", "1G")
+            .with_env_variable("NEO4J_dbms_memory_heap_initial__size", "1G")
+            .with_env_variable("NEO4J_dbms_memory_heap_max__size", "1G")
+            .with_exposed_port(7474)  # HTTP interface
+            .with_exposed_port(7687)  # Bolt protocol
+            # Persist data
+            .with_mounted_cache("/data", dag.cache_volume("neo4j-data"))
+            .as_service(use_entrypoint=True)  # Use container's entrypoint
+        )
+
+    @function
+    async def run_neo_query(self, query: str) -> str:
+        """Run a query against the Neo4j service"""
+        neo4j_svc = self.neo_service()
+
+        return await (
+            dag.container()
+            .from_("neo4j:5.13.0")
+            .with_service_binding("neo4j_db", neo4j_svc)  # Bind to the service
+            .with_env_variable("NEO4J_AUTH", "neo4j/devpassword")
+            .with_exec([
+                "/bin/bash", "-c",
+                f'echo "{query}" | cypher-shell -a "bolt://neo4j_db:7687" -u neo4j -p devpassword'
+            ])
+            .stdout()
+        )
+
+    @function
     async def index_codebase(
         self,
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
@@ -677,7 +716,52 @@ class Index:
                 logger.info("Setting OpenAI API key...")
                 os.environ["OPENAI_API_KEY"] = await openai_api_key.plaintext()
 
-            # Setup repository and get files
+            # Start Neo4j service if needed
+            neo4j_svc = None
+            neo4j = None
+            if use_neo4j:
+                try:
+                    logger.info("Starting Neo4j service...")
+                    neo4j_svc = self.neo_service()
+
+                    # Test connection with a simple query
+                    try:
+                        test_result = await self.run_neo_query("RETURN 'Connected' AS result")
+                        logger.info(f"Neo4j connection test: {test_result}")
+
+                        # If we need to clear the database
+                        if clear_existing:
+                            logger.info("Clearing Neo4j database...")
+                            await self.run_neo_query("MATCH (n) DETACH DELETE n")
+
+                        # Now create a Neo4j container for batch operations
+                        neo4j_client = (
+                            dag.container()
+                            .from_("neo4j:5.13.0")
+                            .with_service_binding("neo4j_db", neo4j_svc)
+                        )
+
+                        # Create a custom Neo4j connector for batch operations
+                        neo4j = Neo4jConnector(
+                            uri="bolt://neo4j_db:7687",  # Use service binding hostname
+                            username="neo4j",
+                            password="devpassword",
+                            database="neo4j",
+                            client_container=neo4j_client  # Pass the container for operations
+                        )
+                    except Exception as test_error:
+                        logger.error(
+                            f"Neo4j service test failed: {test_error}")
+                        neo4j = None
+
+                except Exception as e:
+                    logger.error(f"Neo4j service setup failed: {e}")
+                    neo4j = None
+
+            # Set up Supabase client
+            supabase = create_client(supabase_url, await supabase_key.plaintext())
+
+            # Setup repository and get filtered file list
             container, files = await self._setup_repository(
                 github_access_token,
                 open_router_api_key,
@@ -765,18 +849,17 @@ class Index:
 
     async def _extract_relationships(self, filepath, code_file, neo4j):
         """Extract relationships between code symbols"""
-        if not neo4j or not code_file.symbols:
+        if not neo4j or not hasattr(code_file, 'symbols') or not code_file.symbols:
             return
 
         # Map symbols by name for quick lookup
         symbol_map = {}
         for symbol in code_file.symbols:
-            if not hasattr(symbol, 'name') or not symbol.name:
-                continue
-            symbol_map[symbol.name] = symbol
+            if hasattr(symbol, 'name') and symbol.name:
+                symbol_map[symbol.name] = symbol
 
         # Process for import relationships
-        if code_file.language in ('python', 'javascript', 'typescript'):
+        if hasattr(code_file, 'language') and code_file.language in ('python', 'javascript', 'typescript'):
             # Find import statements and create relationships
             import_pattern = r'import\s+(\w+)(?:\s*,\s*\{([^}]+)\})?\s+from\s+[\'"]([^\'"]+)[\'"]'
             for i, line in enumerate(code_file.content.split('\n')):
@@ -784,7 +867,7 @@ class Index:
                     module_name = match.group(3)
                     imported_name = match.group(1)
                     if imported_name in symbol_map:
-                        neo4j.add_relationship(
+                        await neo4j.add_relationship(
                             from_type='File',
                             from_name='',
                             from_filepath=filepath,
@@ -797,7 +880,7 @@ class Index:
                         )
 
         # Process function calls
-        if code_file.language in ('python', 'javascript', 'typescript'):
+        if hasattr(code_file, 'language') and code_file.language in ('python', 'javascript', 'typescript'):
             function_call_pattern = r'(\w+)\s*\('
             for symbol in code_file.symbols:
                 if not hasattr(symbol, 'line_number') or not symbol.name:
@@ -809,7 +892,7 @@ class Index:
                         called_func = match.group(1)
                         if called_func in symbol_map and called_func != symbol.name:
                             called_symbol = symbol_map[called_func]
-                            neo4j.add_relationship(
+                            await neo4j.add_relationship(
                                 from_type=symbol.type.capitalize(),
                                 from_name=symbol.name,
                                 from_filepath=filepath,
