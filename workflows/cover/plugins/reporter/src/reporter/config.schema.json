@@ -15,7 +15,7 @@
                 "report_directory": {
                     "type": "string"
                 },
-                "output_path": {
+                "output_file_path": {
                     "type": "string"
                 }
             },
@@ -23,7 +23,7 @@
                 "name",
                 "command",
                 "report_directory",
-                "output_path"
+                "output_file_path"
             ]
         }
     },

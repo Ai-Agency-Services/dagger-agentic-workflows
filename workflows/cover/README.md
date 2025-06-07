@@ -36,11 +36,11 @@ git:
 reporter:
     name: "jest"
     command: "npm run test:coverage"
-    output_path: "/app/coverage_reports/testResults.json"
+    output_file_path: "/app/coverage_reports/testResults.json"
     report_directory: "/app/coverage_reports"
 
 test_generation:
-    iterations: 1
+    limit: 1
     save_next_to_code_under_test: false
     test_directory: "tests"
     test_suffix: "test"
@@ -53,7 +53,7 @@ concurrency:
 indexing:
     max_semantic_chunk_lines: 200
     chunk_size: 50
-    max_file_size: 1_000_000
+    max_file_size: 1000000
     embedding_model: "openai/text-embedding-3-small"
     file_extensions: ["py", "js", "ts", "java", "c", "cpp", "go", "rs"]
     max_files: 50

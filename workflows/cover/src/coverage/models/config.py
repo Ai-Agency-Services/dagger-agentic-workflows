@@ -10,7 +10,7 @@ class ReporterConfig(BaseModel):
     report_directory: str = Field(
         ..., description="The directory where coverage reports are saved"
     )
-    output_path: str = Field(
+    output_file_path: str = Field(
         ..., description="The path to the JSON output file for test results"
     )
 
