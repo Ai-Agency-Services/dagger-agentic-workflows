@@ -683,11 +683,7 @@ class Index:
             .with_service_binding("neo4j_db", neo4j_svc)
             .with_new_file("/tmp/query.cypher", query)
             .with_exec([
-                "cypher-shell",
-                "-a", "neo4j_db:7687",
-                "-u", "neo4j",
-                "-p", "devpassword",
-                "-f", "/tmp/query.cypher"
+                ":sysinfo"
             ])
             .stdout()
         )
@@ -812,7 +808,7 @@ class Index:
                 files,
                 supabase,
                 container,
-                openai_key,
+                openai_api_key,
                 config,
                 logger,
                 neo4j=neo4j

@@ -1,0 +1,21 @@
+FROM openjdk:21-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy the cypher-shell directory
+COPY cypher-shell-2025.05.0 /app/cypher-shell-2025.05.0
+
+# Add cypher-shell to PATH
+ENV PATH="/app/cypher-shell-2025.05.0/bin:${PATH}"
+
+
+# Verify installation
+RUN cypher-shell --version
+
+# Create a directory for scripts
+RUN mkdir -p /scripts
+WORKDIR /scripts
+
+# Set entrypoint to cypher-shell
+ENTRYPOINT ["cypher-shell"]
