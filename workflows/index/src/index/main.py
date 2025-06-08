@@ -672,18 +672,25 @@ class Index:
         )
 
     @function
-    async def run_neo_query(self, query: str) -> str:
+    async def run_neo_query(
+        self,
+        query: str,
+        container: dagger.Container,
+    ) -> str:
         """Run a query against the Neo4j service"""
         neo4j_svc = self.neo_service()
 
         # Write the query to a file to avoid quoting issues
         return await (
-            dag.container()
-            .from_("neo4j:2025.05")
+            container
             .with_service_binding("neo4j_db", neo4j_svc)
             .with_new_file("/tmp/query.cypher", query)
             .with_exec([
-                ":sysinfo"
+                "cypher-shell",
+                "-a", "neo4j_db:7687",  # Host:port format without scheme
+                "-u", "neo4j",
+                "-p", "devpassword",
+                "-f", "/tmp/query.cypher"  # Use the file we created
             ])
             .stdout()
         )
@@ -699,6 +706,7 @@ class Index:
         open_router_api_key: dagger.Secret,
         neo_password: dagger.Secret,
         supabase_key: dagger.Secret,
+        cypher_shell_repo: Annotated[str, Doc("Path to the Cypher shell repository")],
         neo_uri: str = "bolt://host.docker.internal:7687",
         neo_user: str = "neo4j",
         clear_existing: bool = True,
@@ -722,15 +730,25 @@ class Index:
                     logger.info("Starting Neo4j service...")
                     neo4j_svc = self.neo_service()
 
+                    source = (
+                        await dag.git(url=cypher_shell_repo, keep_git_dir=True)
+                        .with_auth_token(github_access_token)
+                        .branch("main")
+                        .tree()
+                    )
+                    cypher_cli = dag.builder(self.config_file).build_cypher_shell(
+                        source=source,
+                    )
+
                     # Test connection with a simple query
                     try:
-                        test_result = await self.run_neo_query("RETURN 'Connected' AS result")
+                        test_result = await self.run_neo_query("RETURN 'Connected' AS result", cypher_cli)
                         logger.info(f"Neo4j connection test: {test_result}")
 
                         # If we need to clear the database
                         if clear_existing:
                             logger.info("Clearing Neo4j database...")
-                            await self.run_neo_query("MATCH (n) DETACH DELETE n")
+                            await self.run_neo_query("MATCH (n) DETACH DELETE n", cypher_cli)
 
                         # Now create a Neo4j container for batch operations
                         neo4j_client = (
