@@ -238,7 +238,7 @@ class Index:
         return Neo4jService.create_neo4j_service()
 
     @function
-    async def neo4j_client(
+    async def neo_client(
         self,
         cypher_shell_repo: str,
         github_access_token: dagger.Secret
@@ -266,7 +266,7 @@ class Index:
         )
 
     @function
-    async def test_neo4j_connection(
+    async def test_neo_connection(
         self,
         cypher_shell_repo: str,
         github_access_token: dagger.Secret
@@ -318,7 +318,7 @@ class Index:
                     logger.info(f"Neo4j connection test: {test_result}")
 
                     # Now create a Neo4j container for batch operations
-                    neo4j_client = await self.neo4j_client(
+                    neo4j_client = await self.neo_client(
                         cypher_shell_repo=cypher_shell_repo,
                         github_access_token=github_access_token
                     )
