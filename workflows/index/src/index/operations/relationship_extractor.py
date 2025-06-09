@@ -1,14 +1,13 @@
-import re
 from typing import Optional
-
-from index.utils.neo4j_connector import Neo4jConnector
+import re
+from index.services.neo4j_service import Neo4jService  # Updated import
 
 
 class RelationshipExtractor:
     """Extracts relationships between code elements."""
 
     @staticmethod
-    async def extract_relationships(filepath, code_file, neo4j: Optional[Neo4jConnector]):
+    async def extract_relationships(filepath, code_file, neo4j: Optional[Neo4jService]):
         """Extract relationships between code symbols"""
         if not neo4j or not hasattr(code_file, 'symbols') or not code_file.symbols:
             return

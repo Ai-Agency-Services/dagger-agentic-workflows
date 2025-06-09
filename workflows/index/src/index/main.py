@@ -15,7 +15,6 @@ from index.operations.relationship_extractor import RelationshipExtractor
 from index.services.neo4j_service import Neo4jService
 from index.utils.code_parser import parse_code_file
 from index.utils.file import get_file_size
-from index.utils.neo4j_connector import Neo4jConnector
 from supabase import Client, create_client
 
 
@@ -72,7 +71,7 @@ class Index:
         openai_key: dagger.Secret,
         config: ProcessingConfig,
         logger: logging.Logger,
-        neo4j: Optional[Neo4jConnector] = None
+        neo4j: Optional[Neo4jService] = None  # Updated type hint
     ) -> int:
         """Safely process a single file with comprehensive error handling."""
         try:
@@ -196,7 +195,6 @@ class Index:
         self,
         github_token: dagger.Secret,
         open_router_api_key: dagger.Secret,
-        openai_api_key: dagger.Secret,
         repo_url: str,
         branch: str
     ) -> Tuple[dagger.Container, List[str]]:
@@ -233,50 +231,26 @@ class Index:
             raise Exception(f"Failed to setup repository {repo_url}: {e}")
 
     @function
-    def neo_service(self) -> dagger.Service:
+    def neo_service(
+        self,
+        cypher_shell_repo: Annotated[str, Doc("Path to the Cypher shell repository")],
+        password: dagger.Secret,
+        github_access_token: dagger.Secret,
+        user: str = "neo4j",
+        database: str = "neo4j",
+
+    ) -> dagger.Service:
         """Create a Neo4j service as a Dagger service"""
-        return Neo4jService.create_neo4j_service()
-
-    @function
-    async def neo_client(
-        self,
-        cypher_shell_repo: str,
-        github_access_token: dagger.Secret
-    ) -> dagger.Container:
-        """Create a Neo4j client container with cypher-shell"""
-        return await Neo4jService.create_neo4j_client(
-            config_file=self.config_file,
+        neo_service = Neo4jService(
             cypher_shell_repo=cypher_shell_repo,
-            github_access_token=github_access_token
-        )
-
-    @function
-    async def run_neo_query(
-        self,
-        query: str,
-        cypher_shell_repo: str,
-        github_access_token: dagger.Secret
-    ) -> str:
-        """Run a query against the Neo4j service"""
-        return await Neo4jService.run_query(
+            password=password,
+            github_access_token=github_access_token,
             config_file=self.config_file,
-            query=query,
-            cypher_shell_repo=cypher_shell_repo,
-            github_access_token=github_access_token
+            user=user,
+            database=database,
+            uri="neo4j://neo:7687"
         )
-
-    @function
-    async def test_neo_connection(
-        self,
-        cypher_shell_repo: str,
-        github_access_token: dagger.Secret
-    ) -> str:
-        """Test connection to Neo4j service"""
-        return await Neo4jService.test_connection(
-            config_file=self.config_file,
-            cypher_shell_repo=cypher_shell_repo,
-            github_access_token=github_access_token
-        )
+        return neo_service.create_neo4j_service()
 
     @function
     async def index_codebase(
@@ -290,7 +264,6 @@ class Index:
         neo_password: dagger.Secret,
         supabase_key: dagger.Secret,
         cypher_shell_repo: Annotated[str, Doc("Path to the Cypher shell repository")],
-        neo_uri: str = "bolt://host.docker.internal:7687",
         neo_user: str = "neo4j",
         clear_existing: bool = True,
         use_neo4j: bool = True
@@ -310,53 +283,41 @@ class Index:
                 try:
                     logger.info("Starting Neo4j service...")
 
-                    # First run a simple query to test that the service is running
-                    test_result = await self.run_neo_query(
-                        "RETURN 'Connected' AS result",
+                    # Create the Neo4jService instance that will be used for everything
+                    neo4j_service = Neo4jService(
                         cypher_shell_repo=cypher_shell_repo,
-                        github_access_token=github_access_token)
+                        password=neo_password,
+                        github_access_token=github_access_token,
+                        config_file=self.config_file,
+                        uri="neo4j://neo:7687",
+                        user="neo4j",
+                        database="neo4j"
+                    )
+
+                    # Initialize the client container
+                    await neo4j_service.create_neo4j_client()
+
+                    # Test connection
+                    test_result = await neo4j_service.test_connection()
                     logger.info(f"Neo4j connection test: {test_result}")
 
-                    # Now create a Neo4j container for batch operations
-                    neo4j_client = await self.neo_client(
-                        cypher_shell_repo=cypher_shell_repo,
-                        github_access_token=github_access_token
-                    )
+                    # Test the connection explicitly
+                    is_connected = neo4j_service.connect()
+                    if is_connected:
+                        logger.info("Neo4j service successfully initialized")
 
-                    # Initialize the Neo4jConnector with the client container
-                    neo4j = Neo4jConnector(
-                        uri="neo4j://neo:7687",  # Match the service binding name in neo4j_client
-                        username="neo4j",
-                        password="devpassword",
-                        database="neo4j",
-                        client_container=neo4j_client  # Pass the container
-                    )
+                        # Clear database if requested
+                        if clear_existing:
+                            logger.info("Clearing Neo4j database...")
+                            success = await neo4j_service.clear_database()
+                            if success:
+                                logger.info(
+                                    "Neo4j database cleared successfully")
 
-                    # Test the Neo4j connector explicitly
-                    try:
-                        is_connected = neo4j.connect()
-                        if is_connected:
-                            logger.info(
-                                "Neo4j connector successfully initialized")
-
-                            # If we need to clear the database, now we can do it
-                            if clear_existing:
-                                logger.info("Clearing Neo4j database...")
-                                success = await neo4j.clear_database()  # Now this won't be None
-                                if success:
-                                    logger.info(
-                                        "Neo4j database cleared successfully")
-                        else:
-                            logger.error(
-                                "Neo4j connector failed to initialize")
-                            neo4j = None
-                    except Exception as conn_err:
-                        logger.error(
-                            f"Neo4j connector initialization error: {conn_err}")
+                        neo4j = neo4j_service
+                    else:
+                        logger.error("Neo4j service failed to initialize")
                         neo4j = None
-                except Exception as test_error:
-                    logger.error(f"Neo4j service test failed: {test_error}")
-                    neo4j = None
 
                 except Exception as e:
                     logger.error(f"Neo4j service setup failed: {e}")
@@ -369,7 +330,6 @@ class Index:
             container, files = await self._setup_repository(
                 github_access_token,
                 open_router_api_key,
-                openai_api_key,
                 repository_url,
                 branch
             )
