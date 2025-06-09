@@ -69,7 +69,7 @@ class Neo4jService:
 
         self.client_container = (
             cypher_cli
-            .with_service_binding("neo", Neo4jService.create_neo4j_service())
+            .with_service_binding("neo", self.create_neo4j_service())
         )
 
         return self.client_container

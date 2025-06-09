@@ -123,11 +123,49 @@ class CoreAPIConfig(BaseModel):
 
 class Neo4jConfig(BaseModel):
     """Neo4j connection configuration"""
-    uri: str = "bolt://localhost:7687"
-    username: str = "neo4j"
-    password: dagger.Secret
-    database: str = "code"
-    enabled: bool = True
+    # Connection details
+    uri: str = Field(default="neo4j://neo:7687",
+                     description="Neo4j connection URI")
+    username: str = Field(default="neo4j", description="Neo4j username")
+    password: dagger.Secret = Field(description="Neo4j password")
+    database: str = Field(default="code", description="Neo4j database name")
+    enabled: bool = Field(
+        default=True, description="Whether Neo4j integration is enabled")
+
+    # Repository settings
+    cypher_shell_repository: str = Field(
+        default="https://github.com/Ai-Agency-Services/cypher-shell.git",
+        description="Repository URL for Cypher shell"
+    )
+
+    # Service configuration
+    http_port: int = Field(default=7474, description="Neo4j HTTP port")
+    bolt_port: int = Field(
+        default=7687, description="Neo4j Bolt protocol port")
+    data_volume_path: str = Field(
+        default="/data", description="Path for Neo4j data volume")
+    cache_volume_name: str = Field(
+        default="neo4j-data", description="Name of cache volume for Neo4j data")
+
+    # Plugins and capabilities
+    plugins: List[str] = Field(
+        default=["apoc"], description="Neo4j plugins to enable")
+
+    # APOC settings
+    apoc_export_file_enabled: bool = Field(
+        default=True, description="Enable APOC file export")
+    apoc_import_file_enabled: bool = Field(
+        default=True, description="Enable APOC file import")
+    apoc_import_use_neo4j_config: bool = Field(
+        default=True, description="Use Neo4j config for APOC import")
+
+    # Memory settings
+    memory_pagecache_size: str = Field(
+        default="1G", description="Neo4j page cache size")
+    memory_heap_initial_size: str = Field(
+        default="1G", description="Neo4j initial heap size")
+    memory_heap_max_size: str = Field(
+        default="1G", description="Neo4j maximum heap size")
 
 
 class YAMLConfig(BaseModel):
