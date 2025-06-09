@@ -655,45 +655,84 @@ class Index:
     def neo_service(self) -> dagger.Service:
         """Create a Neo4j service as a Dagger service"""
         return (
-            dag.container()  # Changed from dag.container()
-            .from_("neo4j:2025.05")  # Changed to valid version
+            dag.container()
+            .from_("neo4j:2025.05")
             .with_env_variable("NEO4J_AUTH", "neo4j/devpassword")
             .with_env_variable("NEO4J_PLUGINS", '["apoc"]')
             .with_env_variable("NEO4J_apoc_export_file_enabled", "true")
             .with_env_variable("NEO4J_apoc_import_file_enabled", "true")
             .with_env_variable("NEO4J_apoc_import_file_use__neo4j__config", "true")
-            .with_env_variable("NEO4J_dbms_memory_pagecache_size", "1G")
-            .with_env_variable("NEO4J_dbms_memory_heap_initial__size", "1G")
-            .with_env_variable("NEO4J_dbms_memory_heap_max__size", "1G")
+            .with_env_variable("NEO4J_server_memory_pagecache_size", "1G")
+            .with_env_variable("NEO4J_server_memory_heap_initial__size", "1G")
+            .with_env_variable("NEO4J_server_memory_heap_max__size", "1G")
             .with_exposed_port(7474)  # HTTP interface
             .with_exposed_port(7687)  # Bolt protocol
             .with_mounted_cache("/data", dag.cache_volume("neo4j-data"))
-            .as_service(use_entrypoint=True)
+            .as_service()
+            .with_hostname("neo")
+        )
+
+    @function
+    async def neo4j_client(
+        self,
+        cypher_shell_repo: str,
+        github_access_token: dagger.Secret
+    ) -> dagger.Container:
+        """Create a Neo4j client container with cypher-shell"""
+
+        source = (
+            await dag.git(url=cypher_shell_repo, keep_git_dir=True)
+            .with_auth_token(github_access_token)
+            .branch("main")
+            .tree()
+        )
+        cypher_cli = dag.builder(self.config_file).build_cypher_shell(
+            source=source,
+        )
+
+        return (
+            cypher_cli
+            .with_service_binding("neo", self.neo_service())
         )
 
     @function
     async def run_neo_query(
         self,
         query: str,
-        container: dagger.Container,
+        cypher_shell_repo: str,
+        github_access_token: dagger.Secret
     ) -> str:
         """Run a query against the Neo4j service"""
-        neo4j_svc = self.neo_service()
-
-        # Write the query to a file to avoid quoting issues
-        return await (
-            container
-            .with_service_binding("neo4j_db", neo4j_svc)
-            .with_new_file("/tmp/query.cypher", query)
-            .with_exec([
-                "cypher-shell",
-                "-a", "neo4j_db:7687",  # Host:port format without scheme
-                "-u", "neo4j",
-                "-p", "devpassword",
-                "-f", "/tmp/query.cypher"  # Use the file we created
-            ])
-            .stdout()
+        # Create client with service binding
+        client = await self.neo4j_client(
+            cypher_shell_repo=cypher_shell_repo,
+            github_access_token=github_access_token
         )
+
+        # Write query to file
+        client = client.with_new_file("/tmp/query.cypher", query)
+
+        # Run query using cypher-shell
+        return await client.with_exec([
+            "cypher-shell",
+            "-a", "neo4j://neo:7687",
+            "-u", "neo4j",
+            "-p", "devpassword",
+            "--non-interactive",
+            "-f", "/tmp/query.cypher"
+        ]).stdout()
+
+    @function
+    async def test_neo4j_connection(
+        self,
+        cypher_shell_repo: str,
+        github_access_token: dagger.Secret
+    ) -> str:
+        """Test connection to Neo4j service"""
+        return await self.run_neo_query(
+            "RETURN 'Neo4j Connected Successfully' AS result",
+            cypher_shell_repo=cypher_shell_repo,
+            github_access_token=github_access_token)
 
     @function
     async def index_codebase(
@@ -730,31 +769,27 @@ class Index:
                     logger.info("Starting Neo4j service...")
                     neo4j_svc = self.neo_service()
 
-                    source = (
-                        await dag.git(url=cypher_shell_repo, keep_git_dir=True)
-                        .with_auth_token(github_access_token)
-                        .branch("main")
-                        .tree()
-                    )
-                    cypher_cli = dag.builder(self.config_file).build_cypher_shell(
-                        source=source,
-                    )
-
                     # Test connection with a simple query
                     try:
-                        test_result = await self.run_neo_query("RETURN 'Connected' AS result", cypher_cli)
+                        test_result = await self.run_neo_query(
+                            "RETURN 'Connected' AS result",
+                            cypher_shell_repo=cypher_shell_repo,
+                            github_access_token=github_access_token)
                         logger.info(f"Neo4j connection test: {test_result}")
 
                         # If we need to clear the database
                         if clear_existing:
                             logger.info("Clearing Neo4j database...")
-                            await self.run_neo_query("MATCH (n) DETACH DELETE n", cypher_cli)
+                            await self.run_neo_query(
+                                "MATCH (n) DETACH DELETE n",
+                                cypher_shell_repo=cypher_shell_repo,
+                                github_access_token=github_access_token
+                            )
 
                         # Now create a Neo4j container for batch operations
-                        neo4j_client = (
-                            dag.container()
-                            .from_("neo4j:5.13.0")
-                            .with_service_binding("neo4j_db", neo4j_svc)
+                        neo4j_client = await self.neo4j_client(
+                            cypher_shell_repo=cypher_shell_repo,
+                            github_access_token=github_access_token
                         )
 
                         # Create a custom Neo4j connector for batch operations
@@ -801,6 +836,7 @@ class Index:
 
             # Add Neo4j connector
             neo4j = None
+            neo4j_client = None
             if use_neo4j and neo_password:
                 try:
                     neo4j_password_text = await neo_password.plaintext()
@@ -808,7 +844,8 @@ class Index:
                         uri=neo_uri,
                         username=neo_user,
                         password=neo4j_password_text,
-                        database="neo4j"
+                        database="neo4j",
+                        client_container=neo4j_client
                     )
                     connected = neo4j.connect()
                     if connected and clear_existing:
