@@ -24,20 +24,30 @@ class Neo4jConnector:
         self.logger.error("Neo4j connector requires a client container")
         return False
 
-    def clear_database(self) -> bool:
+    async def clear_database(self) -> bool:
         """Clear all nodes and relationships from the database"""
         if not self.client_container:
             self.logger.error("Cannot clear database: No client container")
             return False
 
         try:
-            # Using cypher-shell to clear the database
-            cmd = [
-                "/bin/bash", "-c",
-                f'echo "MATCH (n) DETACH DELETE n" | cypher-shell -a "{self.uri}" -u {self.username} -p {self.password}'
-            ]
+            # Create query for clearing database
+            query = "MATCH (n) DETACH DELETE n"
 
-            # This will be executed async in the actual usage
+            # Write query to file
+            client = self.client_container.with_new_file(
+                "/tmp/query.cypher", query)
+
+            # Execute the query using cypher-shell
+            await client.with_exec([
+                "cypher-shell",
+                "-a", self.uri,
+                "-u", "neo4j",
+                "-p", "devpassword",
+                "--non-interactive",
+                "-f", "/tmp/query.cypher"
+            ]).stdout()
+
             return True
         except Exception as e:
             self.logger.error(f"Failed to clear Neo4j database: {e}")
@@ -53,10 +63,18 @@ class Neo4jConnector:
             # Create a Cypher query to add the file node
             query = f'MERGE (f:File {{filepath: "{filepath}"}}) SET f.language = "{language}"'
 
+            # Write query to file instead of using echo
+            client = self.client_container.with_new_file(
+                "/tmp/query.cypher", query)
+
             # Execute the query using cypher-shell
-            await self.client_container.with_exec([
-                "/bin/bash", "-c",
-                f'echo "{query}" | cypher-shell -a "{self.uri}" -u {self.username} -p {self.password}'
+            await client.with_exec([
+                "cypher-shell",
+                "-a", self.uri,  # Match the service binding
+                "-u", "neo4j",
+                "-p", "devpassword",
+                "--non-interactive",
+                "-f", "/tmp/query.cypher"
             ]).stdout()
 
         except Exception as e:

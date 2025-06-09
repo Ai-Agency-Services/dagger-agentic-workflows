@@ -471,7 +471,7 @@ class Index:
                         logger.info(f"Adding {filepath} to Neo4j graph")
 
                         # Add file node
-                        neo4j.add_file_node(filepath, getattr(
+                        await neo4j.add_file_node(filepath, getattr(
                             code_file, 'language', 'unknown'))
 
                         # Add symbol nodes
@@ -492,7 +492,7 @@ class Index:
                                     properties[attr] = getattr(symbol, attr)
 
                             # Add symbol to Neo4j
-                            neo4j.add_symbol(
+                            await neo4j.add_symbol(
                                 symbol_type=symbol_type,
                                 name=symbol.name,
                                 filepath=filepath,
@@ -761,49 +761,58 @@ class Index:
                 logger.info("Setting OpenAI API key...")
                 os.environ["OPENAI_API_KEY"] = await openai_api_key.plaintext()
 
-            # Start Neo4j service if needed
-            neo4j_svc = None
             neo4j = None
             if use_neo4j:
                 try:
                     logger.info("Starting Neo4j service...")
-                    neo4j_svc = self.neo_service()
 
-                    # Test connection with a simple query
+                    # First run a simple query to test that the service is running
+                    test_result = await self.run_neo_query(
+                        "RETURN 'Connected' AS result",
+                        cypher_shell_repo=cypher_shell_repo,
+                        github_access_token=github_access_token)
+                    logger.info(f"Neo4j connection test: {test_result}")
+
+                    # Now create a Neo4j container for batch operations
+                    neo4j_client = await self.neo4j_client(
+                        cypher_shell_repo=cypher_shell_repo,
+                        github_access_token=github_access_token
+                    )
+
+                    # Initialize the Neo4jConnector with the client container
+                    neo4j = Neo4jConnector(
+                        uri="neo4j://neo:7687",  # Match the service binding name in neo4j_client
+                        username="neo4j",
+                        password="devpassword",
+                        database="neo4j",
+                        client_container=neo4j_client  # Pass the container
+                    )
+
+                    # Test the Neo4j connector explicitly
                     try:
-                        test_result = await self.run_neo_query(
-                            "RETURN 'Connected' AS result",
-                            cypher_shell_repo=cypher_shell_repo,
-                            github_access_token=github_access_token)
-                        logger.info(f"Neo4j connection test: {test_result}")
+                        is_connected = neo4j.connect()
+                        if is_connected:
+                            logger.info(
+                                "Neo4j connector successfully initialized")
 
-                        # If we need to clear the database
-                        if clear_existing:
-                            logger.info("Clearing Neo4j database...")
-                            await self.run_neo_query(
-                                "MATCH (n) DETACH DELETE n",
-                                cypher_shell_repo=cypher_shell_repo,
-                                github_access_token=github_access_token
-                            )
-
-                        # Now create a Neo4j container for batch operations
-                        neo4j_client = await self.neo4j_client(
-                            cypher_shell_repo=cypher_shell_repo,
-                            github_access_token=github_access_token
-                        )
-
-                        # Create a custom Neo4j connector for batch operations
-                        neo4j = Neo4jConnector(
-                            uri="bolt://neo4j_db:7687",  # Use service binding hostname
-                            username="neo4j",
-                            password="devpassword",
-                            database="neo4j",
-                            client_container=neo4j_client  # Pass the container for operations
-                        )
-                    except Exception as test_error:
+                            # If we need to clear the database, now we can do it
+                            if clear_existing:
+                                logger.info("Clearing Neo4j database...")
+                                success = await neo4j.clear_database()  # Now this won't be None
+                                if success:
+                                    logger.info(
+                                        "Neo4j database cleared successfully")
+                        else:
+                            logger.error(
+                                "Neo4j connector failed to initialize")
+                            neo4j = None
+                    except Exception as conn_err:
                         logger.error(
-                            f"Neo4j service test failed: {test_error}")
+                            f"Neo4j connector initialization error: {conn_err}")
                         neo4j = None
+                except Exception as test_error:
+                    logger.error(f"Neo4j service test failed: {test_error}")
+                    neo4j = None
 
                 except Exception as e:
                     logger.error(f"Neo4j service setup failed: {e}")
@@ -833,30 +842,6 @@ class Index:
                 else:
                     logger.warning(f"⚠ {message}")
                     logger.warning("Continuing with indexing anyway...")
-
-            # Add Neo4j connector
-            neo4j = None
-            neo4j_client = None
-            if use_neo4j and neo_password:
-                try:
-                    neo4j_password_text = await neo_password.plaintext()
-                    neo4j = Neo4jConnector(
-                        uri=neo_uri,
-                        username=neo_user,
-                        password=neo4j_password_text,
-                        database="neo4j",
-                        client_container=neo4j_client
-                    )
-                    connected = neo4j.connect()
-                    if connected and clear_existing:
-                        neo4j.clear_database()
-                    if not connected:
-                        logger.warning(
-                            "Failed to connect to Neo4j, continuing with Supabase only")
-                        neo4j = None
-                except Exception as e:
-                    logger.error(f"Neo4j initialization failed: {e}")
-                    neo4j = None
 
             # Process files with semaphore-controlled concurrency
             total_chunks = await self._process_files_with_semaphore(
