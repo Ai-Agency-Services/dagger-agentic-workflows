@@ -95,15 +95,28 @@ class Neo4jConnector:
             name = name.replace('"', '\\"')
             filepath = filepath.replace('"', '\\"')
 
-            # Create properties string for Cypher
-            props = [
-                f's.{k} = "{str(v).replace("""", "\\""")}"' for k, v in properties.items()]
+            # Format end_line properly (None → null)
+            end_line_str = "null" if end_line is None else str(end_line)
+            start_line_str = "null" if start_line is None else str(start_line)
+
+            # Create properties string for Cypher - FIX THE QUOTE ESCAPING HERE
+            props = []
+            for k, v in properties.items():
+                if v is None:
+                    props.append(f's.{k} = null')
+                elif isinstance(v, (int, float, bool)):
+                    props.append(f's.{k} = {v}')
+                else:
+                    # Fix the string replacement here - properly escape quotes
+                    escaped_v = str(v).replace('"', '\\"')
+                    props.append(f's.{k} = "{escaped_v}"')
+
             properties_str = ", ".join(props) if props else ""
 
             # Build the query
             query = f'''
             MERGE (s:{symbol_type} {{name: "{name}", filepath: "{filepath}"}})
-            SET s.start_line = {start_line}, s.end_line = {end_line}
+            SET s.start_line = {start_line_str}, s.end_line = {end_line_str}
             '''
 
             if properties_str:
@@ -116,10 +129,18 @@ class Neo4jConnector:
             MERGE (s)-[:DEFINED_IN]->(f)
             '''
 
-            # Execute the query
-            await self.client_container.with_exec([
-                "/bin/bash", "-c",
-                f'echo "{query}" | cypher-shell -a "{self.uri}" -u {self.username} -p {self.password}'
+            # Write query to file
+            client = self.client_container.with_new_file(
+                "/tmp/query.cypher", query)
+
+            # Execute the query using cypher-shell
+            await client.with_exec([
+                "cypher-shell",
+                "-a", self.uri,
+                "-u", "neo4j",
+                "-p", "devpassword",
+                "--non-interactive",
+                "-f", "/tmp/query.cypher"
             ]).stdout()
 
         except Exception as e:
@@ -148,10 +169,18 @@ class Neo4jConnector:
             MERGE (from)-[:{rel_type}]->(to)
             '''
 
-            # Execute the query
-            await self.client_container.with_exec([
-                "/bin/bash", "-c",
-                f'echo "{query}" | cypher-shell -a "{self.uri}" -u {self.username} -p {self.password}'
+            # Write query to file instead of using echo
+            client = self.client_container.with_new_file(
+                "/tmp/query.cypher", query)
+
+            # Execute the query using cypher-shell
+            await client.with_exec([
+                "cypher-shell",
+                "-a", self.uri,
+                "-u", "neo4j",
+                "-p", "devpassword",
+                "--non-interactive",
+                "-f", "/tmp/query.cypher"
             ]).stdout()
 
         except Exception as e:
