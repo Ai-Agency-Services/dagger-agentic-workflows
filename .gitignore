@@ -40,7 +40,3 @@ Thumbs.db
 
 .nx/cache
 .nx/workspace-data
-
-
-# Bins
-/cypher-shell-2025.05.0
