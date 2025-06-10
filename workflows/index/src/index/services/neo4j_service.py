@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 
 import dagger
 from dagger import dag
@@ -20,7 +20,7 @@ class Neo4jService:
     ):
         """Initialize Neo4jService with user and password."""
         self.user = user
-        self.password = password or dag.secret
+        self.password = password
         self.cypher_shell_repo = cypher_shell_repo
         self.github_access_token = github_access_token
         self.config_file = config_file
@@ -35,12 +35,12 @@ class Neo4jService:
         )
         logging.debug(f"Initialized Neo4jService with user: {self.user}")
 
-    def create_neo4j_service(self) -> dagger.Service:
+    async def create_neo4j_service(self) -> dagger.Service:
         """Create a Neo4j service as a Dagger service"""
         return (
             dag.container()
             .from_("neo4j:2025.05")
-            .with_env_variable("NEO4J_AUTH", f"{self.user}/{self.password}")
+            .with_env_variable("NEO4J_AUTH", f"{self.user}/{await self.password.plaintext()}")
             .with_env_variable("NEO4J_PLUGINS", '["apoc"]')
             .with_env_variable("NEO4J_apoc_export_file_enabled", "true")
             .with_env_variable("NEO4J_apoc_import_file_enabled", "true")
@@ -69,7 +69,7 @@ class Neo4jService:
 
         self.client_container = (
             cypher_cli
-            .with_service_binding("neo", self.create_neo4j_service())
+            .with_service_binding("neo", await self.create_neo4j_service())
         )
 
         return self.client_container
@@ -210,3 +210,67 @@ class Neo4jService:
             self.logger.error(
                 f"Failed to add relationship {from_name}-[{rel_type}]->{to_name}: {e}")
             return False
+
+    async def execute_query(self, query: str, params: Dict = None) -> List[Dict[str, Any]]:
+        """Execute a parameterized Cypher query and return structured results.
+
+        This method is used by the CodeGraphInterface to provide a clean API
+        for LLMs to query the code graph.
+
+        Args:
+            query: Cypher query with parameter placeholders
+            params: Dictionary of parameters to inject into the query
+
+        Returns:
+            List of result records as dictionaries
+        """
+        try:
+            if params is None:
+                params = {}
+
+            # Format parameters into the query
+            # For simple parameters, use string replacement
+            formatted_query = query
+            for key, value in params.items():
+                if isinstance(value, str):
+                    formatted_query = formatted_query.replace(
+                        f"${key}", f'"{value}"')
+                elif value is None:
+                    formatted_query = formatted_query.replace(
+                        f"${key}", "null")
+                else:
+                    formatted_query = formatted_query.replace(
+                        f"${key}", str(value))
+
+            # Run query
+            result_text = await self.run_query(formatted_query)
+
+            # Parse the results - this depends on how cypher-shell formats output
+            # Basic parsing of tabular output with headers
+            lines = result_text.strip().split('\n')
+            if len(lines) < 2:  # No results or just headers
+                return []
+
+            # Extract column names from the header row
+            # Assuming format like: name | type | line
+            headers = [h.strip() for h in lines[0].split('|')]
+
+            # Parse result rows
+            results = []
+            for line in lines[2:]:  # Skip header row and separator row
+                if not line.strip():
+                    continue
+
+                values = [v.strip() for v in line.split('|')]
+                if len(values) != len(headers):
+                    continue
+
+                result_dict = {headers[i]: values[i]
+                               for i in range(len(headers))}
+                results.append(result_dict)
+
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Error executing query: {e}")
+            return []

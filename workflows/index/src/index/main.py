@@ -231,7 +231,7 @@ class Index:
             raise Exception(f"Failed to setup repository {repo_url}: {e}")
 
     @function
-    def neo_service(
+    async def neo_service(
         self,
         password: Annotated[dagger.Secret, Doc("Neo4j password")],
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
@@ -242,7 +242,7 @@ class Index:
             **self.config) if isinstance(self.config, dict) else self.config
 
         neo_service = Neo4jService(
-            cypher_shell_repo=self.config.neo4j.cypher_shell_repo,
+            cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
             password=password,
             github_access_token=github_access_token,
             config_file=self.config_file,
@@ -250,7 +250,7 @@ class Index:
             database=self.config.neo4j.database,
             uri="neo4j://neo:7687"
         )
-        return neo_service.create_neo4j_service()
+        return await neo_service.create_neo4j_service()
 
     @function
     async def index_codebase(
