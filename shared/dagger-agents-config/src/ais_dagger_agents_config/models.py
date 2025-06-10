@@ -37,6 +37,8 @@ class ConcurrencyConfig(BaseModel):
 
 class IndexingConfig(BaseModel):
     """Code indexing configuration."""
+    clear_on_start: bool = Field(
+        default=True, description="Clear existing index on start")
     max_semantic_chunk_lines: int = Field(
         default=200, description="Max lines per semantic chunk")
     chunk_size: int = Field(default=50, description="Fallback chunk size")
@@ -121,6 +123,54 @@ class CoreAPIConfig(BaseModel):
     )
 
 
+class Neo4jConfig(BaseModel):
+    """Neo4j connection configuration"""
+    # Connection details
+    uri: str = Field(default="neo4j://neo:7687",
+                     description="Neo4j connection URI")
+    username: str = Field(default="neo4j", description="Neo4j username")
+    database: str = Field(default="code", description="Neo4j database name")
+    clear_on_start: bool = Field(
+        default=True, description="Clear existing database on start")
+    enabled: bool = Field(
+        default=True, description="Whether Neo4j integration is enabled")
+
+    # Repository settings
+    cypher_shell_repository: str = Field(
+        default="https://github.com/Ai-Agency-Services/cypher-shell.git",
+        description="Repository URL for Cypher shell"
+    )
+
+    # Service configuration
+    http_port: int = Field(default=7474, description="Neo4j HTTP port")
+    bolt_port: int = Field(
+        default=7687, description="Neo4j Bolt protocol port")
+    data_volume_path: str = Field(
+        default="/data", description="Path for Neo4j data volume")
+    cache_volume_name: str = Field(
+        default="neo4j-data", description="Name of cache volume for Neo4j data")
+
+    # Plugins and capabilities
+    plugins: List[str] = Field(
+        default=["apoc"], description="Neo4j plugins to enable")
+
+    # APOC settings
+    apoc_export_file_enabled: bool = Field(
+        default=True, description="Enable APOC file export")
+    apoc_import_file_enabled: bool = Field(
+        default=True, description="Enable APOC file import")
+    apoc_import_use_neo4j_config: bool = Field(
+        default=True, description="Use Neo4j config for APOC import")
+
+    # Memory settings
+    memory_pagecache_size: str = Field(
+        default="1G", description="Neo4j page cache size")
+    memory_heap_initial_size: str = Field(
+        default="1G", description="Neo4j initial heap size")
+    memory_heap_max_size: str = Field(
+        default="1G", description="Neo4j maximum heap size")
+
+
 class YAMLConfig(BaseModel):
     """Main configuration model."""
     container: ContainerConfig
@@ -131,6 +181,7 @@ class YAMLConfig(BaseModel):
     test_generation: Optional[TestGenerationConfig] = Field(default=None)
     reporter: Optional[ReporterConfig] = Field(default=None)
     core_api: Optional[CoreAPIConfig] = Field(default=None)
+    neo4j: Optional[Neo4jConfig] = Field(default=None)
 
     class Config:
         """Pydantic configuration."""

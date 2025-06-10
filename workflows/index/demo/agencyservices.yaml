@@ -19,6 +19,7 @@ test_generation:
     test_suffix: "test"
 
 indexing:
+    clear_on_start: true
     skip_indexing: false
     chunk_size: 50
     max_semantic_chunk_lines: 200
@@ -28,3 +29,35 @@ indexing:
 
 agents:
     builder_model: "x-ai/grok-3-mini-beta"
+
+neo4j:
+    uri: "neo4j://neo:7687"
+    user: "neo4j"
+    database: "neo4j"
+    
+    http_port: 7474
+    bolt_port: 7687
+    
+    cypher_shell_repo: "https://github.com/Ai-Agency-Services/cypher-shell.git"
+    
+    image: "neo4j:2025.05"
+    container_name: "neo4j-db"
+    data_path: "/data"
+    cache_volume_name: "neo4j-data"
+    
+    enabled: true
+    clear_on_start: false
+    
+    # Plugin settings
+    plugins: ["apoc"]
+    plugins_string: '["apoc"]'
+    
+    # APOC settings
+    apoc_export_file_enabled: true
+    apoc_import_file_enabled: true
+    apoc_import_use_neo4j_config: true
+    
+    # Memory settings
+    memory_pagecache_size: "1G"
+    memory_heap_initial_size: "1G"
+    memory_heap_max_size: "1G"

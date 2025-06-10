@@ -10,10 +10,11 @@ from .models import (
     ReporterConfig,
     CoreAPIConfig,
     LLMCredentials,
+    Neo4jConfig,
 )
 
 
-__version__ = "0.1.8"
+__version__ = "0.1.14"
 
 __all__ = [
     "YAMLConfig",
@@ -25,4 +26,5 @@ __all__ = [
     "TestGenerationConfig",
     "ReporterConfig",
     "CoreAPIConfig",
+    "Neo4jConfig",
 ]
