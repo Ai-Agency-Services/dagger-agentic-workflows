@@ -233,8 +233,8 @@ class Index:
     @function
     def neo_service(
         self,
-        password: dagger.Secret,
-        github_access_token: dagger.Secret,
+        password: Annotated[dagger.Secret, Doc("Neo4j password")],
+        github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
 
     ) -> dagger.Service:
         """Create a Neo4j service as a Dagger service"""
@@ -258,11 +258,11 @@ class Index:
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
         repository_url: Annotated[str, Doc("Repository URL to index")],
         branch: Annotated[str, Doc("Branch to index")],
-        supabase_url: str,
-        openai_api_key: dagger.Secret,
-        open_router_api_key: dagger.Secret,
-        neo_password: dagger.Secret,
-        supabase_key: dagger.Secret,
+        supabase_url: Annotated[str, Doc("Supabase project URL")],
+        openai_api_key: Annotated[dagger.Secret, Doc("OpenAI API key")],
+        open_router_api_key: Annotated[dagger.Secret, Doc("OpenRouter API key")],
+        neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
+        supabase_key: Annotated[dagger.Secret, Doc("Supabase API key")],
     ) -> str:
         """Index all code files in a repository using anyio concurrency."""
         logger = self._setup_logging()
@@ -288,8 +288,8 @@ class Index:
                         github_access_token=github_access_token,
                         config_file=self.config_file,
                         uri="neo4j://neo:7687",
-                        user="neo4j",
-                        database="neo4j"
+                        user=self.config.neo4j.username,
+                        database=self.config.neo4j.database,
                     )
 
                     # Initialize the client container

@@ -76,7 +76,7 @@ wheels = [
 
 [[package]]
 name = "ais-dagger-agents-config"
-version = "0.1.13"
+version = "0.1.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dagger-io" },
@@ -84,9 +84,9 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b2/6d/ae750d5660af7e87f98aabb393a8f99cbee27217374c9fe86117d99f29fb/ais_dagger_agents_config-0.1.13.tar.gz", hash = "sha256:868a1aa00f321ce5bfb4b2e782a6987ea6015beaf0d435c5593d6994be8e5e96", size = 190988, upload-time = "2025-06-10T03:13:54.925Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/11/792ad303a60433f10fe1df6567d73aa661de923e800e8e4d35307a24ad68/ais_dagger_agents_config-0.1.14.tar.gz", hash = "sha256:552079d9b9cbb2922efa1420d2a6e33cd3f5022fcf7bf8740c7278b2ce4da8cc", size = 190965, upload-time = "2025-06-10T03:35:20.684Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/03/0bcd7f31e99acf65441e9ab2f03203846658dac162c331a7a24243320eaa/ais_dagger_agents_config-0.1.13-py3-none-any.whl", hash = "sha256:6900e38a3a46b3dfda806ac67dbe9d19a0202c0504734da3effc3b74850e8cc6", size = 4832, upload-time = "2025-06-10T03:13:53.478Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/f3/657006edae2e95a004720178a74b51dbce514ace1da1f374420bd40818e0/ais_dagger_agents_config-0.1.14-py3-none-any.whl", hash = "sha256:2caab4c555d41a815c44c78a498c2df0742f592f73fbefc7fbd27400d6e280fb", size = 4818, upload-time = "2025-06-10T03:35:19.303Z" },
 ]
 
 [[package]]

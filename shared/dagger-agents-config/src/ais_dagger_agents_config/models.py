@@ -129,7 +129,6 @@ class Neo4jConfig(BaseModel):
     uri: str = Field(default="neo4j://neo:7687",
                      description="Neo4j connection URI")
     username: str = Field(default="neo4j", description="Neo4j username")
-    password: dagger.Secret = Field(description="Neo4j password")
     database: str = Field(default="code", description="Neo4j database name")
     clear_on_start: bool = Field(
         default=True, description="Clear existing database on start")
