@@ -74,9 +74,9 @@ class Neo4jService:
         self.client_container = (
             cypher_cli
             .with_service_binding("neo", await self.create_neo4j_service())
-            .with_env_variable("CACHEBUSTER", str(datetime.now()))
             .with_secret_variable("NEO4J_PASSWORD", self.password)
             .with_env_variable("NEO4J_USERNAME", self.user)
+            # .with_env_variable("CACHEBUSTER", str(datetime.now()))
         )
 
         return self.client_container
