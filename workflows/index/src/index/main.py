@@ -233,21 +233,21 @@ class Index:
     @function
     def neo_service(
         self,
-        cypher_shell_repo: Annotated[str, Doc("Path to the Cypher shell repository")],
         password: dagger.Secret,
         github_access_token: dagger.Secret,
-        user: str = "neo4j",
-        database: str = "neo4j",
 
     ) -> dagger.Service:
         """Create a Neo4j service as a Dagger service"""
+        self.config: YAMLConfig = YAMLConfig(
+            **self.config) if isinstance(self.config, dict) else self.config
+
         neo_service = Neo4jService(
-            cypher_shell_repo=cypher_shell_repo,
+            cypher_shell_repo=self.config.neo4j.cypher_shell_repo,
             password=password,
             github_access_token=github_access_token,
             config_file=self.config_file,
-            user=user,
-            database=database,
+            user=self.config.neo4j.user,
+            database=self.config.neo4j.database,
             uri="neo4j://neo:7687"
         )
         return neo_service.create_neo4j_service()
@@ -263,14 +263,12 @@ class Index:
         open_router_api_key: dagger.Secret,
         neo_password: dagger.Secret,
         supabase_key: dagger.Secret,
-        cypher_shell_repo: Annotated[str, Doc("Path to the Cypher shell repository")],
-        neo_user: str = "neo4j",
-        clear_existing: bool = True,
-        use_neo4j: bool = True
     ) -> str:
         """Index all code files in a repository using anyio concurrency."""
         logger = self._setup_logging()
-        config = self._get_processing_config()
+        processing_config = self._get_processing_config()
+        self.config: YAMLConfig = YAMLConfig(
+            **self.config) if isinstance(self.config, dict) else self.config
 
         try:
             # Setup environment
@@ -279,13 +277,13 @@ class Index:
                 os.environ["OPENAI_API_KEY"] = await openai_api_key.plaintext()
 
             neo4j = None
-            if use_neo4j:
+            if self.config.neo4j.enabled:
                 try:
                     logger.info("Starting Neo4j service...")
 
                     # Create the Neo4jService instance that will be used for everything
                     neo4j_service = Neo4jService(
-                        cypher_shell_repo=cypher_shell_repo,
+                        cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
                         password=neo_password,
                         github_access_token=github_access_token,
                         config_file=self.config_file,
@@ -307,7 +305,7 @@ class Index:
                         logger.info("Neo4j service successfully initialized")
 
                         # Clear database if requested
-                        if clear_existing:
+                        if self.config.neo4j.clear_on_start:
                             logger.info("Clearing Neo4j database...")
                             success = await neo4j_service.clear_database()
                             if success:
@@ -339,7 +337,7 @@ class Index:
             supabase = create_client(supabase_url, await supabase_key.plaintext())
 
             # Clear existing data if requested
-            if clear_existing:
+            if self.config.indexing.clear_on_start:
                 success, message = await EmbeddingHandler.clear_embeddings_safe(supabase, logger)
                 if success:
                     logger.info(f"✓ {message}")
@@ -353,7 +351,7 @@ class Index:
                 supabase,
                 container,
                 openai_api_key,
-                config,
+                processing_config,
                 logger,
                 neo4j=neo4j
             )

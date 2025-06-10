@@ -37,6 +37,8 @@ class ConcurrencyConfig(BaseModel):
 
 class IndexingConfig(BaseModel):
     """Code indexing configuration."""
+    clear_on_start: bool = Field(
+        default=True, description="Clear existing index on start")
     max_semantic_chunk_lines: int = Field(
         default=200, description="Max lines per semantic chunk")
     chunk_size: int = Field(default=50, description="Fallback chunk size")
@@ -129,6 +131,8 @@ class Neo4jConfig(BaseModel):
     username: str = Field(default="neo4j", description="Neo4j username")
     password: dagger.Secret = Field(description="Neo4j password")
     database: str = Field(default="code", description="Neo4j database name")
+    clear_on_start: bool = Field(
+        default=True, description="Clear existing database on start")
     enabled: bool = Field(
         default=True, description="Whether Neo4j integration is enabled")
 
@@ -178,7 +182,7 @@ class YAMLConfig(BaseModel):
     test_generation: Optional[TestGenerationConfig] = Field(default=None)
     reporter: Optional[ReporterConfig] = Field(default=None)
     core_api: Optional[CoreAPIConfig] = Field(default=None)
-    neo4j: Optional['Neo4jConfig'] = None
+    neo4j: Optional[Neo4jConfig] = Field(default=None)
 
     class Config:
         """Pydantic configuration."""
