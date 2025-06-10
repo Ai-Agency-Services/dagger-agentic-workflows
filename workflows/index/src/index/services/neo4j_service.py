@@ -1,5 +1,6 @@
+from datetime import datetime
 import logging
-from typing import Dict, Optional, List, Any
+from typing import Any, Dict, List
 
 import dagger
 from dagger import dag
@@ -13,6 +14,7 @@ class Neo4jService:
         cypher_shell_repo: str,
         password: dagger.Secret,
         github_access_token: dagger.Secret,
+        neo_auth: dagger.Secret,
         user: str = "neo4j",
         config_file: dagger.File = None,
         database: str = "neo4j",
@@ -25,12 +27,13 @@ class Neo4jService:
         self.github_access_token = github_access_token
         self.config_file = config_file
         self.database = database
+        self.neo_auth = neo_auth
         self.uri = uri
         self.client_container = None
         self.logger = logging.getLogger(__name__)
 
         logging.basicConfig(
-            level=logging.DEBUG,
+            level=logging.INFO,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         )
         logging.debug(f"Initialized Neo4jService with user: {self.user}")
@@ -40,7 +43,7 @@ class Neo4jService:
         return (
             dag.container()
             .from_("neo4j:2025.05")
-            .with_env_variable("NEO4J_AUTH", f"{self.user}/{await self.password.plaintext()}")
+            .with_secret_variable("NEO4J_AUTH", self.neo_auth)
             .with_env_variable("NEO4J_PLUGINS", '["apoc"]')
             .with_env_variable("NEO4J_apoc_export_file_enabled", "true")
             .with_env_variable("NEO4J_apoc_import_file_enabled", "true")
@@ -50,6 +53,7 @@ class Neo4jService:
             .with_env_variable("NEO4J_server_memory_heap_max__size", "1G")
             .with_exposed_port(7474)  # HTTP interface
             .with_exposed_port(7687)  # Bolt protocol
+            .with_env_variable("CACHEBUSTER", str(datetime.now()))
             .with_mounted_cache("/data", dag.cache_volume("neo4j-data"))
             .as_service()
             .with_hostname("neo")
@@ -70,6 +74,9 @@ class Neo4jService:
         self.client_container = (
             cypher_cli
             .with_service_binding("neo", await self.create_neo4j_service())
+            .with_env_variable("CACHEBUSTER", str(datetime.now()))
+            .with_secret_variable("NEO4J_PASSWORD", self.password)
+            .with_env_variable("NEO4J_USERNAME", self.user)
         )
 
         return self.client_container
@@ -81,15 +88,14 @@ class Neo4jService:
             self.client_container = await self.create_neo4j_client()
 
         # Write query to file
-        client = self.client_container.with_new_file(
-            "/tmp/query.cypher", query)
+        client = (
+            self.client_container.with_new_file(
+                "/tmp/query.cypher", query)
+        )
 
-        # Run query using cypher-shell
         return await client.with_exec([
             "cypher-shell",
             "-a", self.uri,
-            "-u", self.user,
-            "-p", await self.password.plaintext(),
             "--non-interactive",
             "-f", "/tmp/query.cypher"
         ]).stdout()

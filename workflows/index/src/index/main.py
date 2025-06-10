@@ -234,6 +234,7 @@ class Index:
     async def neo_service(
         self,
         password: Annotated[dagger.Secret, Doc("Neo4j password")],
+        neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
 
     ) -> dagger.Service:
@@ -244,9 +245,10 @@ class Index:
         neo_service = Neo4jService(
             cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
             password=password,
+            neo_auth=neo_auth,
             github_access_token=github_access_token,
             config_file=self.config_file,
-            user=self.config.neo4j.user,
+            user=self.config.neo4j.username,
             database=self.config.neo4j.database,
             uri="neo4j://neo:7687"
         )
@@ -262,6 +264,7 @@ class Index:
         openai_api_key: Annotated[dagger.Secret, Doc("OpenAI API key")],
         open_router_api_key: Annotated[dagger.Secret, Doc("OpenRouter API key")],
         neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
+        neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
         supabase_key: Annotated[dagger.Secret, Doc("Supabase API key")],
     ) -> str:
         """Index all code files in a repository using anyio concurrency."""
@@ -285,6 +288,7 @@ class Index:
                     neo4j_service = Neo4jService(
                         cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
                         password=neo_password,
+                        neo_auth=neo_auth,
                         github_access_token=github_access_token,
                         config_file=self.config_file,
                         uri="neo4j://neo:7687",

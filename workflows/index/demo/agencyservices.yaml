@@ -38,7 +38,7 @@ neo4j:
     http_port: 7474
     bolt_port: 7687
     
-    cypher_shell_repo: "https://github.com/neo4j/cypher-shell.git"
+    cypher_shell_repo: "https://github.com/Ai-Agency-Services/cypher-shell.git"
     
     image: "neo4j:2025.05"
     container_name: "neo4j-db"
