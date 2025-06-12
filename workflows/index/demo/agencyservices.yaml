@@ -26,6 +26,29 @@ indexing:
     batch_size: 5  # For concurrent processing (if you want to override the default)
     similarity_threshold: 0.80  # For RAG agent queries
     results_limit: 10  # Maximum results to return from vector searches
+    file_extensions:
+        # Code files
+        - py
+        - js
+        - ts
+        - tsx
+        - jsx
+        - java
+        - c
+        - cpp
+        - h
+        - go
+        - rs
+        # Config files
+        - yaml
+        - yml
+        - json
+        - toml
+        - xml
+        # Documentation
+        - md
+        # Scripts
+        - sh
 
 agents:
     builder_model: "x-ai/grok-3-mini-beta"
@@ -55,9 +78,3 @@ neo4j:
     # APOC settings
     apoc_export_file_enabled: true
     apoc_import_file_enabled: true
-    apoc_import_use_neo4j_config: true
-    
-    # Memory settings
-    memory_pagecache_size: "1G"
-    memory_heap_initial_size: "1G"
-    memory_heap_max_size: "1G"

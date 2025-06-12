@@ -249,21 +249,95 @@ class FileProcessor:
         return []
 
     @staticmethod
-    async def get_filtered_files(container: dagger.Container, extensions: List[str]) -> List[str]:
-        """Get filtered list of files to process."""
-        file_list_cmd = ["find", ".", "-type", "f"]
-        exclude_dirs = [".git", "node_modules", "venv", ".venv", "build",
-                        "dist", "__pycache__", "target", "docs", "examples", "tests", "test"]
+    async def get_filtered_files(container: dagger.Container, extensions: Optional[List[str]] = None) -> List[str]:
+        """Get all source files in the container, filtering out build artifacts and binaries."""
 
-        for dir_name in exclude_dirs:
-            file_list_cmd.extend(["-not", "-path", f"./{dir_name}/*"])
+        # Comprehensive list of source-related extensions if none provided
+        if not extensions:
+            extensions = [
+                # Code files
+                "py", "js", "ts", "tsx", "jsx", "java", "c", "cpp", "h", "hpp", "go", "rs", "rb", "php", "cs", "scala", "kt",
+                # Config files
+                "yaml", "yml", "json", "toml", "ini", "cfg", "conf", "properties", "xml", "env", "Dockerfile",
+                # Documentation
+                "md", "rst", "txt",
+                # Shell scripts
+                "sh", "bash", "zsh", "bat", "ps1",
+                # Web files
+                "html", "css", "scss", "sass", "less", "svg", "graphql"
+            ]
 
-        file_list_output = await container.with_exec(file_list_cmd).stdout()
-        all_files = [f.strip()
-                     for f in file_list_output.strip().split("\n") if f.strip()]
-
-        return [
-            f[2:] if f.startswith("./") else f
-            for f in all_files
-            if any(f.endswith(f".{ext}") for ext in extensions) and "/." not in f
+        # Build directory patterns to exclude - just directory names for cleaner matching
+        exclude_dirs = [
+            "node_modules",
+            "build",
+            "dist",
+            "target",
+            ".git",
+            "bin",
+            "obj",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "vendor",
+            "out",
+            ".idea",
+            ".vscode",
+            "coverage"
         ]
+
+        # File patterns to exclude
+        exclude_files = [
+            ".min.js", ".min.css", ".map", ".bundle.",
+            # Binary files
+            ".so", ".dll", ".exe", ".bin", ".o", ".a", ".lib", ".pyc", ".pyo",
+            # Large data files
+            ".zip", ".tar", ".gz", ".rar", ".jar", ".war", ".ear"
+        ]
+
+        # Get all files
+        all_files = await container.with_exec(["find", ".", "-type", "f"]).stdout()
+        file_list = all_files.strip().split("\n")
+
+        # Filter files
+        filtered_files = []
+        excluded_count = 0
+
+        for file_path in file_list:
+            # Skip empty paths
+            if not file_path or file_path == ".":
+                continue
+
+            # Normalize path (remove "./" prefix if exists)
+            if file_path.startswith("./"):
+                file_path = file_path[2:]
+
+            # Check if path contains any excluded directory
+            if any(f"/{exclude_dir}/" in f"/{file_path}/" for exclude_dir in exclude_dirs):
+                excluded_count += 1
+                continue
+
+            # Check if the file matches any excluded pattern
+            if any(exclude_pattern in file_path for exclude_pattern in exclude_files):
+                excluded_count += 1
+                continue
+
+            # Include if extension matches or if it's a special file
+            file_ext = file_path.split(".")[-1] if "." in file_path else ""
+            is_special_file = (
+                file_path.endswith("Makefile") or
+                file_path.endswith("README") or
+                file_path.endswith("Jenkinsfile") or
+                "requirements" in file_path or
+                "setup.py" in file_path or
+                "package.json" in file_path
+            )
+
+            if file_ext in extensions or is_special_file:
+                filtered_files.append(file_path)
+
+        # Log statistics about filtering
+        print(
+            f"Found {len(file_list)} files, excluded {excluded_count}, kept {len(filtered_files)}")
+
+        return filtered_files

@@ -221,8 +221,8 @@ class Index:
             )
 
             # Get file list
-            file_extensions = getattr(config_obj.test_generation, 'file_extensions', [
-                                      "py", "js", "ts", "java", "c", "cpp", "go", "rs"])
+            file_extensions = getattr(
+                config_obj.indexing, 'file_extensions')
             files = await FileProcessor.get_filtered_files(container, file_extensions)
 
             return container, files
