@@ -219,14 +219,14 @@ class Neo4jService:
 
     async def execute_query(self, query: str, params: Dict = None) -> List[Dict[str, Any]]:
         """Execute a parameterized Cypher query and return structured results.
-
+        
         This method is used by the CodeGraphInterface to provide a clean API
         for LLMs to query the code graph.
-
+        
         Args:
             query: Cypher query with parameter placeholders
             params: Dictionary of parameters to inject into the query
-
+        
         Returns:
             List of result records as dictionaries
         """

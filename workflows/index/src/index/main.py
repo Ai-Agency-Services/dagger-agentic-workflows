@@ -16,6 +16,7 @@ from index.services.neo4j_service import Neo4jService
 from index.utils.code_parser import parse_code_file
 from index.utils.file import get_file_size
 from supabase import Client, create_client
+from index.operations.import_analyzer import ImportAnalyzer
 
 
 @object_type
@@ -150,6 +151,22 @@ class Index:
                     logger.error(
                         f"Failed to add {filepath} to Neo4j: {neo4j_err}")
                     # Continue processing - don't let Neo4j errors stop the vector indexing
+
+                try:
+                    # Now analyze imports using the direct method
+                    logger.info(f"Analyzing imports in {filepath}")
+                    imported_files = await ImportAnalyzer.analyze_file_imports(
+                        filepath=filepath,
+                        content=content,  # Pass the raw content directly
+                        neo4j=neo4j
+                    )
+                    if imported_files:
+                        logger.info(
+                            f"Found {len(imported_files)} imports in {filepath}")
+
+                except Exception as neo4j_err:
+                    logger.error(
+                        f"Failed to add {filepath} to Neo4j: {neo4j_err}")
 
             logger.info(f"File {filepath} processed: {result} chunks indexed")
             return result
