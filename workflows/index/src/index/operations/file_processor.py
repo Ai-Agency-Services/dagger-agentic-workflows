@@ -268,6 +268,7 @@ class FileProcessor:
             ]
 
         # Build directory patterns to exclude - just directory names for cleaner matching
+        # TODO: Make this configurable
         exclude_dirs = [
             "node_modules",
             "build",

@@ -77,7 +77,11 @@ def detect_language(filepath: str) -> str:
         '.php': 'php',
         '.swift': 'swift',
         '.kt': 'kotlin',
-        '.cs': 'csharp'
+        '.cs': 'csharp',
+        '.xml': 'xml',
+        'xsl': 'xml',
+        'xslt': 'xml',
+        '.json': 'json',
     }
     return language_map.get(ext, 'unknown')
 
