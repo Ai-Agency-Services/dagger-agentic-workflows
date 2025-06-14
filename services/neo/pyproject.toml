@@ -1,0 +1,21 @@
+[project]
+name = "neo"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "dagger-io",
+    "ais-dagger-agents-config>=0.1.0,<0.2.0",
+    "neo4j>=5.28.1",
+    "py2neo>=2021.2.4",
+    "tree-sitter>=0.24.0",
+    "simple-chalk>=0.1.0",
+    "pydantic[email]>=2.11.7",
+    "pyyaml>=6.0.2",
+]
+
+[build-system]
+requires = ["hatchling==1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+dagger-io = { path = "sdk", editable = true }

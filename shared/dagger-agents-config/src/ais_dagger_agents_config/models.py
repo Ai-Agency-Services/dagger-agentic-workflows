@@ -126,6 +126,8 @@ class CoreAPIConfig(BaseModel):
 class Neo4jConfig(BaseModel):
     """Neo4j connection configuration"""
     # Connection details
+    image: str = Field(
+        default="neo4j:2025.05", description="Docker image for Neo4j")
     uri: str = Field(default="neo4j://neo:7687",
                      description="Neo4j connection URI")
     username: str = Field(default="neo4j", description="Neo4j username")

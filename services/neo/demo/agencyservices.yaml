@@ -1,0 +1,80 @@
+$schema: http://json-schema.org/draft-07/schema#
+
+container:
+    work_dir: "/app"
+    docker_file_path: "./dockerfile"
+
+core_api:
+    provider: "openrouter"
+    model: "x-ai/grok-3-mini-beta"
+
+git:
+    user_email: "AiTestGen@users.noreply.github.com"
+    user_name: "Ai-TestGen[bot]"
+
+test_generation:
+    limit: 5
+    save_next_to_code_under_test: false
+    test_directory: "tests"
+    test_suffix: "test"
+
+indexing:
+    clear_on_start: true
+    skip_indexing: false
+    chunk_size: 50
+    max_semantic_chunk_lines: 200
+    batch_size: 5  # For concurrent processing (if you want to override the default)
+    similarity_threshold: 0.80  # For RAG agent queries
+    results_limit: 10  # Maximum results to return from vector searches
+    file_extensions:
+        # Code files
+        - py
+        - js
+        - ts
+        - tsx
+        - jsx
+        - java
+        - c
+        - cpp
+        - h
+        - go
+        - rs
+        # Config files
+        - yaml
+        - yml
+        - json
+        - toml
+        - xml
+        # Documentation
+        - md
+        # Scripts
+        - sh
+
+agents:
+    builder_model: "x-ai/grok-3-mini-beta"
+
+neo4j:
+    uri: "neo4j://neo:7687"
+    user: "neo4j"
+    database: "neo4j"
+    
+    http_port: 7474
+    bolt_port: 7687
+    
+    cypher_shell_repo: "https://github.com/Ai-Agency-Services/cypher-shell.git"
+    
+    image: "neo4j:2025.05"
+    container_name: "neo4j-db"
+    data_path: "/data"
+    cache_volume_name: "neo4j-data"
+    
+    enabled: true
+    clear_on_start: false
+    
+    # Plugin settings
+    plugins: ["apoc"]
+    plugins_string: '["apoc"]'
+    
+    # APOC settings
+    apoc_export_file_enabled: true
+    apoc_import_file_enabled: true
