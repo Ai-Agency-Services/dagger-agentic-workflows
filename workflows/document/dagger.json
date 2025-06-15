@@ -1,0 +1,25 @@
+{
+  "name": "document",
+  "engineVersion": "v0.18.5",
+  "sdk": {
+    "source": "python"
+  },
+  "dependencies": [
+    {
+      "name": "builder",
+      "source": "../../agents/builder"
+    },
+    {
+      "name": "documenter",
+      "source": "../../agents/documenter"
+    },
+    {
+      "name": "documenter_pull_request_agent",
+      "source": "../../agents/documenter_pull_request"
+    },
+    {
+      "name": "pull_request_agent",
+      "source": "../../agents/pull_request"
+    }
+  ]
+}

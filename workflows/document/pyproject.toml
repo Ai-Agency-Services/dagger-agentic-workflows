@@ -1,0 +1,34 @@
+[project]
+name = "document"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "dagger-io",
+    "documenter>=0.1.0",
+    "ais-dagger-agents-config>=0.1.0,<0.2.0",
+    "pydantic-ai>=0.2.10",
+    "pydantic[email]>=2.11.5",
+    "pyyaml>=6.0.2",
+    "simple-chalk>=0.1.0", # Add toml dependency
+    "toml>=0.10.2",
+    "pip>=25.1.1",
+]
+
+[build-system]
+requires = ["hatchling==1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/document"]
+
+[tool.hatch.build]
+artifacts = ["src/document"]
+include = [
+    "/src/document"
+]
+
+[tool.uv.sources]
+dagger-io = { path = "sdk", editable = true }
+
+[project.entry-points."dagger.mod"]
+main = "document:Document"
