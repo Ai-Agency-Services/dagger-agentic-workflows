@@ -138,7 +138,6 @@ class Document:
             print(green("Documentation generation complete"))
             print(result)
 
-            current_container = await deps.container.sync()
             # Handle result
             if result is None or (hasattr(result, 'error') and result.error):
                 # Documentation generation failed
