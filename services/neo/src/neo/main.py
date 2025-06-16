@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime
 from typing import Annotated, Any, Dict, List
@@ -6,6 +7,7 @@ import dagger
 import yaml
 from ais_dagger_agents_config import YAMLConfig
 from dagger import Doc, dag, function, object_type
+from simple_chalk import green
 
 
 @object_type
@@ -48,21 +50,25 @@ class NeoService:
         self._setup_logging()
         self.config: YAMLConfig = YAMLConfig(
             **self.config) if isinstance(self.config, dict) else self.config
+        plugin_string = json.dumps(
+            self.config.neo4j.plugins) if self.config.neo4j.plugins else '[]'
+
+        print(green(f"Using Neo4j plugins: {plugin_string}"))
         return (
             dag.container()
             .from_(self.config.neo4j.image)
             .with_secret_variable("NEO4J_AUTH", self.neo_auth)
-            .with_env_variable("NEO4J_PLUGINS", self.config.neo4j.plugins)
-            .with_env_variable("NEO4J_apoc_export_file_enabled", "true")
-            .with_env_variable("NEO4J_apoc_import_file_enabled", "true")
-            .with_env_variable("NEO4J_apoc_import_file_use__neo4j__config", "true")
-            .with_env_variable("NEO4J_server_memory_pagecache_size", "1G")
-            .with_env_variable("NEO4J_server_memory_heap_initial__size", "1G")
-            .with_env_variable("NEO4J_server_memory_heap_max__size", "1G")
-            .with_exposed_port(7474)  # HTTP interface
-            .with_exposed_port(7687)  # Bolt protocol
+            .with_env_variable("NEO4J_PLUGINS",  plugin_string)
+            .with_env_variable("NEO4J_apoc_export_file_enabled", self.config.neo4j.apoc_export_file_enabled)
+            .with_env_variable("NEO4J_apoc_import_file_enabled", self.config.neo4j.apoc_import_file_enabled)
+            .with_env_variable("NEO4J_apoc_import_file_use__neo4j__config", self.config.neo4j.apoc_import_use_neo4j_config)
+            .with_env_variable("NEO4J_server_memory_pagecache_size",  self.config.neo4j.memory_pagecache_size)
+            .with_env_variable("NEO4J_server_memory_heap_initial__size", self.config.neo4j.memory_heap_initial_size)
+            .with_env_variable("NEO4J_server_memory_heap_max__size",  self.config.neo4j.memory_heap_max_size)
+            .with_exposed_port(self.config.neo4j.http_port)  # HTTP interface
+            .with_exposed_port(self.config.neo4j.bolt_port)  # Bolt protocol
             .with_env_variable("CACHEBUSTER", str(datetime.now()))
-            .with_mounted_cache("/data", dag.cache_volume("neo4j-data"))
+            .with_mounted_cache(self.config.neo4j.data_volume_path, dag.cache_volume(self.config.neo4j.cache_volume_name))
             .as_service()
             .with_hostname("neo")
         )

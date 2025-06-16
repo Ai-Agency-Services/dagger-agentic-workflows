@@ -3,7 +3,7 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "ais-dagger-agents-config"
-version = "0.1.14"
+version = "0.1.16"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dagger-io" },
@@ -11,9 +11,9 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/98/11/792ad303a60433f10fe1df6567d73aa661de923e800e8e4d35307a24ad68/ais_dagger_agents_config-0.1.14.tar.gz", hash = "sha256:552079d9b9cbb2922efa1420d2a6e33cd3f5022fcf7bf8740c7278b2ce4da8cc", size = 190965 }
+sdist = { url = "https://files.pythonhosted.org/packages/ab/c1/88263db5ec0bc254b291a22a662d700f599f6c4c01c86855bfcfd88e184b/ais_dagger_agents_config-0.1.16.tar.gz", hash = "sha256:9a1e5e6e485b6cdc2e8a8d332896bcf936fe9672de690f9179aa7395cb590c98", size = 191007 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/f3/657006edae2e95a004720178a74b51dbce514ace1da1f374420bd40818e0/ais_dagger_agents_config-0.1.14-py3-none-any.whl", hash = "sha256:2caab4c555d41a815c44c78a498c2df0742f592f73fbefc7fbd27400d6e280fb", size = 4818 },
+    { url = "https://files.pythonhosted.org/packages/a4/87/b7c267b5bea3b04ea8212e59fe18cf7282258433c7bd7f2496984d0ecdd0/ais_dagger_agents_config-0.1.16-py3-none-any.whl", hash = "sha256:d396127cd4e3c0601bc03a9dccf8dbdc7cec3953b311b2f3d527f2bf4fc63420", size = 4874 },
 ]
 
 [[package]]
@@ -81,11 +81,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2025.4.26"
+version = "2025.6.15"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e8/9e/c05b3920a3b7d20d3d3310465f50348e5b3694f4f88c6daf736eef3024c4/certifi-2025.4.26.tar.gz", hash = "sha256:0a816057ea3cdefcef70270d2c515e4506bbc954f417fa5ade2021213bb8f0c6", size = 160705 }
+sdist = { url = "https://files.pythonhosted.org/packages/73/f7/f14b46d4bcd21092d7d3ccef689615220d8a08fb25e564b65d20738e672e/certifi-2025.6.15.tar.gz", hash = "sha256:d747aa5a8b9bbbb1bb8c22bb13e22bd1f18e9796defa16bab421f7f7a317323b", size = 158753 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/7e/3db2bd1b1f9e95f7cddca6d6e75e2f2bd9f51b1246e546d88addca0106bd/certifi-2025.4.26-py3-none-any.whl", hash = "sha256:30350364dfe371162649852c63336a15c70c6510c2ad5015b21c2345311805f3", size = 159618 },
+    { url = "https://files.pythonhosted.org/packages/84/ae/320161bd181fc06471eed047ecce67b693fd7515b16d495d8932db763426/certifi-2025.6.15-py3-none-any.whl", hash = "sha256:2e0c7ce7cb5d8f8634ca55d2ba7e6ec2689a2fd6537d8dec1296a477a4910057", size = 157650 },
 ]
 
 [[package]]

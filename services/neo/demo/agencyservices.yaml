@@ -65,16 +65,22 @@ neo4j:
     
     image: "neo4j:2025.05"
     container_name: "neo4j-db"
-    data_path: "/data"
+    data_volume_path: "/data"
     cache_volume_name: "neo4j-data"
     
     enabled: true
     clear_on_start: false
     
     # Plugin settings
-    plugins: ["apoc"]
-    plugins_string: '["apoc"]'
+    plugins: 
+        - "apoc"
     
     # APOC settings
-    apoc_export_file_enabled: true
-    apoc_import_file_enabled: true
+    apoc_export_file_enabled: "true"
+    apoc_import_file_enabled: "true"
+    apoc_import_file_use_neo4j_config: "true"
+
+    # Server memory settings
+    memory_pagecache_size: "1G"
+    memory_heap_initial_size: "1G"
+    memory_heap_max_size: "1G"

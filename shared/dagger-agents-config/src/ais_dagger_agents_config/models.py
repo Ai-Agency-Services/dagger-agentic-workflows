@@ -156,13 +156,13 @@ class Neo4jConfig(BaseModel):
     plugins: List[str] = Field(
         default=["apoc"], description="Neo4j plugins to enable")
 
-    # APOC settings
-    apoc_export_file_enabled: bool = Field(
-        default=True, description="Enable APOC file export")
-    apoc_import_file_enabled: bool = Field(
-        default=True, description="Enable APOC file import")
-    apoc_import_use_neo4j_config: bool = Field(
-        default=True, description="Use Neo4j config for APOC import")
+    # APOC settings environment variables must be strings
+    apoc_export_file_enabled: str = Field(
+        default="true", description="Enable APOC file export")
+    apoc_import_file_enabled: str = Field(
+        default="true", description="Enable APOC file import")
+    apoc_import_use_neo4j_config: str = Field(
+        default="true", description="Use Neo4j config for APOC import")
 
     # Memory settings
     memory_pagecache_size: str = Field(
