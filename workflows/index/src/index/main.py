@@ -302,19 +302,22 @@ class Index:
                     logger.info("Starting Neo4j service...")
 
                     # Create the Neo4jService instance that will be used for everything
-                    neo4j_service = Neo4jService(
-                        cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
-                        password=neo_password,
-                        neo_auth=neo_auth,
-                        github_access_token=github_access_token,
-                        config_file=self.config_file,
-                        uri="neo4j://neo:7687",
-                        user=self.config.neo4j.username,
-                        database=self.config.neo4j.database,
-                    )
+                    # neo4j_service = Neo4jService(
+                    #     cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
+                    #     password=neo_password,
+                    #     neo_auth=neo_auth,
+                    #     github_access_token=github_access_token,
+                    #     config_file=self.config_file,
+                    #     uri="neo4j://neo:7687",
+                    #     user=self.config.neo4j.username,
+                    #     database=self.config.neo4j.database,
+                    # )
 
                     # Initialize the client container
-                    await neo4j_service.create_neo4j_client()
+                    # await neo4j_service.create_neo4j_client()
+                    neo4j_service = dag.neo_service(self.config_file, neo_password,
+                                                    github_access_token=github_access_token, neo_auth=neo_auth)
+                    neo4j_service.create_neo_client()
 
                     # Test connection
                     test_result = await neo4j_service.test_connection()

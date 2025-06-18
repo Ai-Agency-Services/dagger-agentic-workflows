@@ -17,6 +17,7 @@ class NeoService:
     password: dagger.Secret
     github_access_token: dagger.Secret
     neo_auth: dagger.Secret
+    client_container: dagger.Container
 
     @classmethod
     async def create(
@@ -32,7 +33,8 @@ class NeoService:
         return cls(
             config=config_dict, password=password,
             github_access_token=github_access_token,
-            neo_auth=neo_auth
+            neo_auth=neo_auth,
+            client_container=dag.container(),
         )
 
     def _setup_logging(self):
@@ -113,13 +115,17 @@ class NeoService:
 
         return await client.with_exec([
             "cypher-shell",
-            "-a", self.uri,
+            "-a", self.config.neo4j.uri,
             "--non-interactive",
             "-f", "/tmp/query.cypher"
         ]).stdout()
 
+    @function
     async def test_connection(self) -> str:
         """Test connection to Neo4j service"""
+        self._setup_logging()
+        self.config: YAMLConfig = YAMLConfig(
+            **self.config) if isinstance(self.config, dict) else self.config
         return await self.run_query("RETURN 'Connected' AS result")
 
     def connect(self) -> bool:
