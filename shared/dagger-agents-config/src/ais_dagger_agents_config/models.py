@@ -1,7 +1,8 @@
+import json
 from typing import List, NamedTuple, Optional
 
 import dagger
-from dagger import object_type
+from dagger import field, object_type
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -10,6 +11,36 @@ class LLMCredentials(NamedTuple):
     """Holds the base URL and API key for an LLM provider."""
     base_url: Optional[str]
     api_key: dagger.Secret
+
+
+@object_type
+class SymbolProperties:
+    """Properties for a code symbol"""
+    # Common properties you might need
+    docstring: Optional[str] = field(default=None)
+    signature: Optional[str] = field(default=None)
+    scope: Optional[str] = field(default=None)
+    parent: Optional[str] = field(default=None)
+
+    # You can add more fields as needed
+    # Or use JSON for arbitrary properties
+    json_data: Optional[str] = field(default=None)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SymbolProperties":
+        """Create a SymbolProperties from a dictionary"""
+        # Extract known fields
+        props = {}
+        if data:
+            for field_name in ["docstring", "signature", "scope", "parent"]:
+                if field_name in data:
+                    props[field_name] = data.pop(field_name)
+
+            # Store remaining properties as JSON
+            if data:
+                props["json_data"] = json.dumps(data)
+
+        return cls(**props)
 
 
 class ContainerConfig(BaseModel):

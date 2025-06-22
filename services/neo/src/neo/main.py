@@ -1,19 +1,50 @@
 import json
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Dict, List
+from typing import Annotated, Any, Dict, List, Optional
 
 import dagger
+from dagger import Doc, dag, field, function, object_type
+from simple_chalk import green
 import yaml
 from ais_dagger_agents_config import YAMLConfig
-from dagger import Doc, dag, function, object_type
-from simple_chalk import green
+
+
+@object_type
+class SymbolProperties:
+    """Properties for a code symbol"""
+    # Common properties you might need
+    docstring: Optional[str] = field(default=None)
+    signature: Optional[str] = field(default=None)
+    scope: Optional[str] = field(default=None)
+    parent: Optional[str] = field(default=None)
+
+    # You can add more fields as needed
+    # Or use JSON for arbitrary properties
+    json_data: Optional[str] = field(default=None)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SymbolProperties":
+        """Create a SymbolProperties from a dictionary"""
+        # Extract known fields
+        props = {}
+        if data:
+            for field_name in ["docstring", "signature", "scope", "parent"]:
+                if field_name in data:
+                    props[field_name] = data.pop(field_name)
+
+            # Store remaining properties as JSON
+            if data:
+                props["json_data"] = json.dumps(data)
+
+        return cls(**props)
 
 
 @object_type
 class NeoService:
     """Neo4j service management and operations."""
     config: dict
+    config_file: dagger.File
     password: dagger.Secret
     github_access_token: dagger.Secret
     neo_auth: dagger.Secret
@@ -35,26 +66,20 @@ class NeoService:
             github_access_token=github_access_token,
             neo_auth=neo_auth,
             client_container=dag.container(),
+            config_file=config_file
         )
-
-    def _setup_logging(self):
-        """Setup logging configuration."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        self.logger = logging.getLogger(__name__)
-        logging.debug(f"Initialized Neo4jService with config: {self.config}")
 
     @function
     async def create_neo_service(self) -> dagger.Service:
         """Create a Neo4j service as a Dagger service"""
-        self._setup_logging()
         self.config: YAMLConfig = YAMLConfig(
             **self.config) if isinstance(self.config, dict) else self.config
         plugin_string = json.dumps(
             self.config.neo4j.plugins) if self.config.neo4j.plugins else '[]'
 
+        # Generate unique cache name to avoid lock conflicts
+        unique_cache_name = f"{self.config.neo4j.cache_volume_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
         print(green(f"Using Neo4j plugins: {plugin_string}"))
         return (
             dag.container()
@@ -67,10 +92,11 @@ class NeoService:
             .with_env_variable("NEO4J_server_memory_pagecache_size",  self.config.neo4j.memory_pagecache_size)
             .with_env_variable("NEO4J_server_memory_heap_initial__size", self.config.neo4j.memory_heap_initial_size)
             .with_env_variable("NEO4J_server_memory_heap_max__size",  self.config.neo4j.memory_heap_max_size)
+            .with_env_variable("NEO4J_dbms_allow__upgrade", "true")  # Allow upgrade of database
+            .with_env_variable("NEO4J_dbms_tx_log_fail__on__corrupted__log__files", "false")  # Be more forgiving with corrupted files
             .with_exposed_port(self.config.neo4j.http_port)  # HTTP interface
             .with_exposed_port(self.config.neo4j.bolt_port)  # Bolt protocol
-            .with_env_variable("CACHEBUSTER", str(datetime.now()))
-            .with_mounted_cache(self.config.neo4j.data_volume_path, dag.cache_volume(self.config.neo4j.cache_volume_name))
+            .with_mounted_cache(self.config.neo4j.data_volume_path, dag.cache_volume(unique_cache_name))
             .as_service()
             .with_hostname("neo")
         )
@@ -78,7 +104,6 @@ class NeoService:
     @function
     async def create_neo_client(self) -> dagger.Container:
         """Create a Neo4j client container with cypher-shell"""
-        self._setup_logging()
         self.config: YAMLConfig = YAMLConfig(
             **self.config) if isinstance(self.config, dict) else self.config
         source = (
@@ -87,20 +112,20 @@ class NeoService:
             .branch("main")
             .tree()
         )
-        cypher_cli = dag.builder(self.config_file).build_cypher_shell(
+        self.client_container = dag.builder(self.config_file).build_cypher_shell(
             source=source,
         )
 
         self.client_container = (
-            cypher_cli
+            self.client_container
             .with_service_binding("neo", await self.create_neo_service())
             .with_secret_variable("NEO4J_PASSWORD", self.password)
-            .with_env_variable("NEO4J_USERNAME", self.user)
-            # .with_env_variable("CACHEBUSTER", str(datetime.now()))
+            .with_env_variable("NEO4J_USERNAME", self.config.neo4j.username)
         )
 
         return self.client_container
 
+    @function
     async def run_query(self, query: str) -> str:
         """Run a query against the Neo4j service"""
         # Create client with service binding if not already created
@@ -123,11 +148,12 @@ class NeoService:
     @function
     async def test_connection(self) -> str:
         """Test connection to Neo4j service"""
-        self._setup_logging()
         self.config: YAMLConfig = YAMLConfig(
             **self.config) if isinstance(self.config, dict) else self.config
+        await self.create_neo_client()
         return await self.run_query("RETURN 'Connected' AS result")
 
+    @function
     def connect(self) -> bool:
         """Verify connection to Neo4j"""
         # If we have a client container, connection is already verified
@@ -135,9 +161,11 @@ class NeoService:
             return True
 
         # Otherwise return False as we need a container for operations
-        self.logger.error("Neo4j service requires a client container")
+        logger = self._get_logger()
+        logger.error("Neo4j service requires a client container")
         return False
 
+    @function
     async def clear_database(self) -> bool:
         """Clear all nodes and relationships from the database"""
         try:
@@ -146,9 +174,11 @@ class NeoService:
             await self.run_query(query)
             return True
         except Exception as e:
-            self.logger.error(f"Failed to clear Neo4j database: {e}")
+            logger = self._get_logger()
+            logger.error(f"Failed to clear Neo4j database: {e}")
             return False
 
+    @function
     async def add_file_node(self, filepath: str, language: str) -> bool:
         """Add a file node to the graph"""
         try:
@@ -161,16 +191,25 @@ class NeoService:
             await self.run_query(query)
             return True
         except Exception as e:
-            self.logger.error(f"Failed to add file node {filepath}: {e}")
+            logger = self._get_logger()
+            logger.error(f"Failed to add file node {filepath}: {e}")
             return False
 
-    async def add_symbol(self, symbol_type: str, name: str, filepath: str,
-                         start_line: int, end_line: int, properties: Dict = None) -> bool:
+    @function
+    async def add_symbol(
+        self,
+        symbol_type: str,
+        name: str,
+        filepath: str,
+        start_line: int,
+        end_line: int,
+        properties: Optional[SymbolProperties] = None
+    ) -> bool:
         """Add a symbol node to the graph with connection to its file"""
-        if properties is None:
-            properties = {}
-
         try:
+            # Get logger when needed
+            logger = self._get_logger()
+
             # Escape quotes in strings
             name = name.replace('"', '\\"')
             filepath = filepath.replace('"', '\\"')
@@ -181,15 +220,43 @@ class NeoService:
 
             # Create properties string for Cypher
             props = []
-            for k, v in properties.items():
-                if v is None:
-                    props.append(f's.{k} = null')
-                elif isinstance(v, (int, float, bool)):
-                    props.append(f's.{k} = {v}')
-                else:
-                    # Properly escape quotes
-                    escaped_v = str(v).replace('"', '\\"')
-                    props.append(f's.{k} = "{escaped_v}"')
+
+            # Handle known properties
+            if properties:
+                if properties.docstring:
+                    escaped_docstring = properties.docstring.replace(
+                        '"', '\\"')
+                    props.append(f's.docstring = "{escaped_docstring}"')
+
+                if properties.signature:
+                    escaped_signature = properties.signature.replace(
+                        '"', '\\"')
+                    props.append(f's.signature = "{escaped_signature}"')
+
+                if properties.scope:
+                    props.append(f's.scope = "{properties.scope}"')
+
+                if properties.parent:
+                    props.append(f's.parent = "{properties.parent}"')
+
+                # Handle JSON data if present
+                if properties.json_data:
+                    # Parse the JSON to add individual properties
+                    try:
+                        extra_props = json.loads(properties.json_data)
+                        for k, v in extra_props.items():
+                            if v is None:
+                                props.append(f's.{k} = null')
+                            elif isinstance(v, (int, float, bool)):
+                                props.append(f's.{k} = {v}')
+                            else:
+                                # Properly escape quotes
+                                escaped_v = str(v).replace('"', '\\"')
+                                props.append(f's.{k} = "{escaped_v}"')
+                    except:
+                        # If JSON parsing fails, add as raw text
+                        escaped_json = properties.json_data.replace('"', '\\"')
+                        props.append(f's.extra_data = "{escaped_json}"')
 
             properties_str = ", ".join(props) if props else ""
 
@@ -212,95 +279,15 @@ class NeoService:
             await self.run_query(query)
             return True
         except Exception as e:
-            self.logger.error(
-                f"Failed to add symbol {name} in {filepath}: {e}")
+            # Get logger again for error
+            logger = self._get_logger()
+            logger.error(f"Failed to add symbol {name} in {filepath}: {e}")
             return False
 
-    async def add_relationship(self, from_type: str, from_name: str, from_filepath: str,
-                               from_line: int, to_type: str, to_name: str, to_filepath: str,
-                               to_line: int, rel_type: str) -> bool:
-        """Add a relationship between two code elements"""
-        try:
-            # Escape quotes in strings
-            from_name = from_name.replace('"', '\\"')
-            from_filepath = from_filepath.replace('"', '\\"')
-            to_name = to_name.replace('"', '\\"')
-            to_filepath = to_filepath.replace('"', '\\"')
-
-            # Build the query with relationship
-            query = f'''
-            MATCH (from:{from_type} {{name: "{from_name}", filepath: "{from_filepath}"}}),
-                  (to:{to_type} {{name: "{to_name}", filepath: "{to_filepath}"}})
-            MERGE (from)-[:{rel_type}]->(to)
-            '''
-
-            await self.run_query(query)
-            return True
-        except Exception as e:
-            self.logger.error(
-                f"Failed to add relationship {from_name}-[{rel_type}]->{to_name}: {e}")
-            return False
-
-    async def execute_query(self, query: str, params: Dict = None) -> List[Dict[str, Any]]:
-        """Execute a parameterized Cypher query and return structured results.
-
-        This method is used by the CodeGraphInterface to provide a clean API
-        for LLMs to query the code graph.
-
-        Args:
-            query: Cypher query with parameter placeholders
-            params: Dictionary of parameters to inject into the query
-
-        Returns:
-            List of result records as dictionaries
-        """
-        try:
-            if params is None:
-                params = {}
-
-            # Format parameters into the query
-            # For simple parameters, use string replacement
-            formatted_query = query
-            for key, value in params.items():
-                if isinstance(value, str):
-                    formatted_query = formatted_query.replace(
-                        f"${key}", f'"{value}"')
-                elif value is None:
-                    formatted_query = formatted_query.replace(
-                        f"${key}", "null")
-                else:
-                    formatted_query = formatted_query.replace(
-                        f"${key}", str(value))
-
-            # Run query
-            result_text = await self.run_query(formatted_query)
-
-            # Parse the results - this depends on how cypher-shell formats output
-            # Basic parsing of tabular output with headers
-            lines = result_text.strip().split('\n')
-            if len(lines) < 2:  # No results or just headers
-                return []
-
-            # Extract column names from the header row
-            # Assuming format like: name | type | line
-            headers = [h.strip() for h in lines[0].split('|')]
-
-            # Parse result rows
-            results = []
-            for line in lines[2:]:  # Skip header row and separator row
-                if not line.strip():
-                    continue
-
-                values = [v.strip() for v in line.split('|')]
-                if len(values) != len(headers):
-                    continue
-
-                result_dict = {headers[i]: values[i]
-                               for i in range(len(headers))}
-                results.append(result_dict)
-
-            return results
-
-        except Exception as e:
-            self.logger.error(f"Error executing query: {e}")
-            return []
+    def _get_logger(self):
+        """Get a logger for this service"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        return logging.getLogger("neo4j.service")

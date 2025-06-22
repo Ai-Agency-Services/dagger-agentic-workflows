@@ -3,7 +3,7 @@ import os
 import logging
 from typing import Dict, List, Set, Optional
 
-from index.services.neo4j_service import Neo4jService
+from dagger.client.gen import NeoService
 
 
 class ImportAnalyzer:
@@ -13,7 +13,7 @@ class ImportAnalyzer:
     async def analyze_file_imports(
         filepath: str,
         content: str,
-        neo4j: Optional[Neo4jService] = None
+        neo4j: Optional[NeoService] = None
     ) -> Set[str]:
         """
         Analyze a file for imports without using AST parsing.
@@ -258,7 +258,7 @@ class ImportAnalyzer:
     async def _create_import_relationships(
         filepath: str,
         imported_files: Set[str],
-        neo4j: Neo4jService,
+        neo4j: NeoService,
         logger: logging.Logger
     ) -> None:
         """Create import relationships in Neo4j."""

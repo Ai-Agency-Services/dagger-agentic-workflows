@@ -6,17 +6,17 @@ import anyio
 import dagger
 import yaml
 from ais_dagger_agents_config import ConcurrencyConfig, IndexingConfig
-from ais_dagger_agents_config.models import YAMLConfig
+from ais_dagger_agents_config.models import SymbolProperties, YAMLConfig
 from dagger import Doc, dag, function, object_type
+from dagger.client.gen import NeoService
 from index.models import ProcessingConfig
 from index.operations.embedding_handler import EmbeddingHandler
 from index.operations.file_processor import FileProcessor
+from index.operations.import_analyzer import ImportAnalyzer
 from index.operations.relationship_extractor import RelationshipExtractor
-from index.services.neo4j_service import Neo4jService
 from index.utils.code_parser import parse_code_file
 from index.utils.file import get_file_size
 from supabase import Client, create_client
-from index.operations.import_analyzer import ImportAnalyzer
 
 
 @object_type
@@ -72,7 +72,7 @@ class Index:
         openai_key: dagger.Secret,
         config: ProcessingConfig,
         logger: logging.Logger,
-        neo4j: Optional[Neo4jService] = None  # Updated type hint
+        neo4j: Optional[NeoService] = None  # Updated type hint
     ) -> int:
         """Safely process a single file with comprehensive error handling."""
         try:
@@ -132,14 +132,29 @@ class Index:
                                 if hasattr(symbol, attr) and getattr(symbol, attr):
                                     properties[attr] = getattr(symbol, attr)
 
+                            # Get line numbers, ensuring they are integers
+                            start_line = getattr(symbol, 'start_line', 0)
+                            if start_line is None:
+                                start_line = 0
+
+                            # Fix for end_line=None error
+                            end_line = getattr(symbol, 'end_line', 0)
+                            if end_line is None:
+                                end_line = -1  # Use -1 for unknown end line
+
                             # Add symbol to Neo4j
+                            if properties:
+                                symbol_props = SymbolProperties(**properties)
+                            else:
+                                symbol_props = None
+
                             await neo4j.add_symbol(
                                 symbol_type=symbol_type,
                                 name=symbol.name,
                                 filepath=filepath,
-                                start_line=line_number,
+                                start_line=start_line,
                                 end_line=end_line,
-                                properties=properties
+                                properties=symbol_props
                             )
 
                         # Extract relationships between symbols
@@ -247,29 +262,29 @@ class Index:
         except Exception as e:
             raise Exception(f"Failed to setup repository {repo_url}: {e}")
 
-    @function
-    async def neo_service(
-        self,
-        password: Annotated[dagger.Secret, Doc("Neo4j password")],
-        neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
-        github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
+    # @function
+    # async def neo_service(
+    #     self,
+    #     password: Annotated[dagger.Secret, Doc("Neo4j password")],
+    #     neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
+    #     github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
 
-    ) -> dagger.Service:
-        """Create a Neo4j service as a Dagger service"""
-        self.config: YAMLConfig = YAMLConfig(
-            **self.config) if isinstance(self.config, dict) else self.config
+    # ) -> dagger.Service:
+    #     """Create a Neo4j service as a Dagger service"""
+    #     self.config: YAMLConfig = YAMLConfig(
+    #         **self.config) if isinstance(self.config, dict) else self.config
 
-        neo_service = Neo4jService(
-            cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
-            password=password,
-            neo_auth=neo_auth,
-            github_access_token=github_access_token,
-            config_file=self.config_file,
-            user=self.config.neo4j.username,
-            database=self.config.neo4j.database,
-            uri="neo4j://neo:7687"
-        )
-        return await neo_service.create_neo4j_service()
+    #     neo_service = Neo4jService(
+    #         cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
+    #         password=password,
+    #         neo_auth=neo_auth,
+    #         github_access_token=github_access_token,
+    #         config_file=self.config_file,
+    #         user=self.config.neo4j.username,
+    #         database=self.config.neo4j.database,
+    #         uri="neo4j://neo:7687"
+    #     )
+    #     return await neo_service.create_neo4j_service()
 
     @function
     async def index_codebase(
@@ -315,9 +330,11 @@ class Index:
 
                     # Initialize the client container
                     # await neo4j_service.create_neo4j_client()
-                    neo4j_service = dag.neo_service(self.config_file, neo_password,
-                                                    github_access_token=github_access_token, neo_auth=neo_auth)
-                    neo4j_service.create_neo_client()
+                    neo4j_service = dag.neo_service(
+                        self.config_file, neo_password,
+                        github_access_token=github_access_token,
+                        neo_auth=neo_auth
+                    )
 
                     # Test connection
                     test_result = await neo4j_service.test_connection()
