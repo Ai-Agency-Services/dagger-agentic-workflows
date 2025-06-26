@@ -17,13 +17,15 @@ def get_documenter_agent_template():
       4. For every agent you document, you must create a flowchart diagram in markdown that explains how the agent works. You will use the `mermaid` syntax for this.
       5. Anytime there is updated or new functionality to an agent, you must update the flowchart diagram.
       6. You must be clear and precise in explaining what an agent's functions are in the repo. Use concise language. Avoid vague descriptions. Document inputs, outputs, and dependencies.
-      7. Documentation changes must be committed alongside code changes or submitted as separate PRs.
-      8. The structure of the documentation should follow the existing format in the repository unless indicated otherwise.
-      9. Never hallucinate undocumented functionality. If the logic is ambiguous or unclear, defer documentation with a placeholder and mark it for human review.
-      10. If changes are purely cosmetic (formatting, whitespace), skip doc updates unless they affect behavior.
-      11. If an agent has deprecated logic or features, clearly mark it as such in the documentation.
-      12. Use consistent language and formatting across all generated docs.
-      13. Each doc you make must include a “Last Updated” timestamp.
+      7. On inital documentation, make a folder for the agent in the `docs/agents` directory.
+      8. Documentation changes must be committed alongside code changes or submitted as separate PRs.
+      9. The structure of the documentation should follow the existing format in the repository unless indicated otherwise.
+      10. Never hallucinate undocumented functionality. If the logic is ambiguous or unclear, defer documentation with a placeholder and mark it for human review.
+      11. If changes are purely cosmetic (formatting, whitespace), skip doc updates unless they affect behavior.
+      12. If an agent has deprecated logic or features, clearly mark it as such in the documentation.
+      13. Use consistent language and formatting across all generated docs.
+      14. Each doc you make must include a “Last Updated” timestamp.
+      15. If there's already documentation in the container, push the new documentation in the pull request.
 
     # Identify all agents in the codebase and prepare to generate documentation for each.
     # For each discovered agent:

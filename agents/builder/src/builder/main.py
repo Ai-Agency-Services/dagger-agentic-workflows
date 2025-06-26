@@ -397,3 +397,29 @@ class Builder:
         )
         print(green("Pull request container setup complete."))
         return container
+    
+    @function
+    def setup_documenter_pull_request_container(
+        self, base_container: dagger.Container, token: dagger.Secret
+    ) -> dagger.Container:
+        """
+        Sets up the container for managing documentation pull requests, starting from a base container.
+
+        Args:
+            base_container: The container already built with user and agent dependencies.
+            token: The GitHub token secret.
+
+        Returns:
+            A container configured for PR operations.
+        """
+        print("Configuring container for documentation pull requests...")
+        self._setup_logging()
+        container = (
+            base_container
+            .with_secret_variable("GITHUB_TOKEN", token)
+            .with_exec(["gh", "auth", "setup-git"])
+            .with_exec(["gh", "auth", "status"])
+            .with_exec(["git", "add", "."])
+        )
+        print(green("Documenter Pull request container setup complete."))
+        return container

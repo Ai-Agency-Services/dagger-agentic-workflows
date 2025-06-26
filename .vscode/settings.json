@@ -9,5 +9,6 @@
         "openrouter",
         "pytest",
         "supabase"
-    ]
+    ],
+    "python-envs.pythonProjects": []
 }

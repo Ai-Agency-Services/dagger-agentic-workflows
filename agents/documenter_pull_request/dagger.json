@@ -1,0 +1,7 @@
+{
+  "name": "documenter_pull_request_agent",
+  "engineVersion": "v0.18.5",
+  "sdk": {
+    "source": "python"
+  }
+}

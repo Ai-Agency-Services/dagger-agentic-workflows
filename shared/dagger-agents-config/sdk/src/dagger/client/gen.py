@@ -716,6 +716,34 @@ class Builder(Type):
         ]
         _ctx = self._select("setupPullRequestContainer", _args)
         return Container(_ctx)
+    
+    def setup_documenter_pull_request_container(self, base_container: "Container", token: "Secret",) -> "Container":
+        """
+        Sets up the container for managing pull requests for documentation, starting from a base
+        container.
+
+        Args:
+            base_container: The container already built with user and agent
+        dependencies.
+            token: The GitHub token secret.
+
+        Returns:
+            A container configured for PR operations.
+
+        Parameters
+        ----------
+        base_container:
+            An OCI-compatible container, also known as a Docker container.
+        token:
+            A reference to a secret value, which can be handled more safely
+            than the value itself.
+        """
+        _args = [
+            Arg("baseContainer", base_container),
+            Arg("token", token),
+        ]
+        _ctx = self._select("setupPullRequestContainer", _args)
+        return Container(_ctx)
 
 
 @typecheck

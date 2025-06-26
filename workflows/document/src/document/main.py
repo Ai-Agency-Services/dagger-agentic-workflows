@@ -89,7 +89,8 @@ class Document:
         openai_api_key: Annotated[Optional[dagger.Secret], Doc("OpenAI API key")] = None
     ) -> dagger.Container:
         """Generate documentation for agents in the repo."""
-        setup_environment = await self.setup_environment(
+       # Set up environment first
+        current_container = await self.setup_environment(
             github_access_token=github_access_token,
             repository_url=repository_url,
             branch=branch,
@@ -98,6 +99,7 @@ class Document:
             open_router_api_key=open_router_api_key,
             openai_api_key=openai_api_key
         )
+
 
         error_message = f"Unknown error processing documentation for {repository_url} on branch {branch}. Please check the logs for more details."
 
@@ -111,14 +113,14 @@ class Document:
             )
 
             # Create model
-            model = await create_llm_model(
+            documenter_ai_model = await create_llm_model(
                 api_key=llm_credentials.api_key,
                 base_url=llm_credentials.base_url,
                 model_name=model_name
             )
 
             # Create documenter agent
-            documenter_agent = create_documenter_agent(pydantic_ai_model=model)
+            documenter_agent = create_documenter_agent(pydantic_ai_model=documenter_ai_model)
             documenter_agent.instrument_all()
             
             # Create agent dependencies
@@ -133,17 +135,17 @@ class Document:
                 deps=deps
             )
 
-            current_container = await deps.container.sync()
+            self.container = await deps.container.sync()
 
             print(green("Documentation generation complete"))
             print(result)
+            print(yellow(f"THE CONTAINER IS: {self.container}"))
 
-            # Handle result
             if result is None or (hasattr(result, 'error') and result.error):
-                # Documentation generation failed
+                # Test generation failed
                 error_message = ""
                 if result is None:
-                    error_message = f"Agent returned None for {repository_url} at {branch}."
+                    error_message = f"Agent returned None for {branch}."
                 else:
                     error_message = f"Agent encountered an error: {result.error}"
 
@@ -151,41 +153,12 @@ class Document:
 
                 # Create PR with insights
                 documenter_pull_request_container = dag.builder(self.config_file).setup_documenter_pull_request_container(
-                    base_container=current_container,
-                    token=github_access_token
-                )
-
-                pull_request_result = dag.documenter_pull_request_agent(self.config_file).run(
-                    provider=self.config.core_api.provider,
-                    open_router_api_key=self.open_router_api_key,
-                    error_context=result.error if hasattr(
-                        result, 'error') else error_message,
-                    container=documenter_pull_request_container,
-                    insight_context=result.strategy if hasattr(
-                        result, 'strategy') else None,
-                )
-
-                if pull_request_result:
-                    print(
-                        green(f"PR created successfully for {repository_url} at {branch}"))
-                else:
-                    print(
-                        yellow(f"PR creation may have failed for {repository_url} at {branch}"))
-
-                return await pull_request_result.sync()
-            else:
-                # Documentation generated successfully
-                print(
-                    green(f"Successfully generated docs for {repository_url} at {branch}"))
-
-                # Create PR with the new tests
-                documenter_pull_request_container = dag.builder(self.config_file).setup_documenter_pull_request_container(
-                    base_container=current_container,
+                    base_container=self.container,
                     token=github_access_token
                 )
 
                 documenter_pull_request_result = dag.documenter_pull_request_agent(self.config_file).run(
-                    provider=provider,
+                    provider=self.config.core_api.provider,
                     open_router_api_key=self.open_router_api_key,
                     error_context=result.error if hasattr(
                         result, 'error') else error_message,
@@ -196,12 +169,44 @@ class Document:
 
                 if documenter_pull_request_result:
                     print(
-                        green(f"PR created successfully for {repository_url} on {branch}"))
+                        green(f"PR created successfully for {branch}"))
                 else:
                     print(
-                        yellow(f"PR creation may have failed for {repository_url} on {branch}"))
+                        yellow(f"PR creation may have failed for {branch}"))
 
                 return await documenter_pull_request_result.sync()
+            else:
+    # Documentation generated successfully
+                print(green(f"Successfully generated documentation for {branch}"))
+
+    # 📄 1. Ensure docs/agents/ exists
+                self.container = await self.container.with_exec(["mkdir", "-p", "docs/agents"])
+
+    # 📝 2. Write the markdown file into the container
+                markdown_path = "docs/agents/documenter_agent.md"
+                markdown_contents = result.output  # This assumes it's a string
+
+                self.container = await self.container.with_new_file(markdown_path, contents=markdown_contents)
+
+    # ✅ Optional: Confirm it's written
+                self.container = await self.container.with_exec(["cat", markdown_path])
+
+    # 🤝 3. Set up the PR container
+                documenter_pull_request_container = dag.builder(self.config_file).setup_documenter_pull_request_container(
+                    base_container=self.container,
+                    token=github_access_token
+         )
+
+    # 🚀 4. Run PR agent
+                documenter_pull_request_result = dag.documenter_pull_request_agent(self.config_file).run(
+                    provider=provider,
+                    open_router_api_key=self.open_router_api_key,
+                    error_context=result.error if hasattr(result, 'error') else error_message,
+                    container=documenter_pull_request_container,
+                    insight_context=result.strategy if hasattr(result, 'strategy') else None,
+                )
+
+            return await documenter_pull_request_result.sync()
 
         except UnexpectedModelBehavior as agent_err:
             print(red(f"Model error processing {branch}: {agent_err}"))
@@ -211,7 +216,3 @@ class Document:
             print(red(f"Unexpected error processing {branch}: {e.stderr}"))
             traceback.print_exc()
             return self.container
-
-        except Exception as e:
-            print(red(f"Error generating documentation: {e}"))
-            raise
