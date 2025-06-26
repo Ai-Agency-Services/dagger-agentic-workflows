@@ -139,7 +139,6 @@ class Document:
 
             print(green("Documentation generation complete"))
             print(result)
-            print(yellow(f"THE CONTAINER IS: {self.container}"))
 
             if result is None or (hasattr(result, 'error') and result.error):
                 # Test generation failed
