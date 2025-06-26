@@ -179,25 +179,24 @@ class Document:
     # Documentation generated successfully
                 print(green(f"Successfully generated documentation for {branch}"))
 
-    # 📄 1. Ensure docs/agents/ exists
+    # Make a separate folder for the agent documentation
+                print(green("Creating docs/agents directory in the container..."))
                 self.container = await self.container.with_exec(["mkdir", "-p", "docs/agents"])
 
-    # 📝 2. Write the markdown file into the container
+    # Define a path for the markdown file and take the output from the agent as markdown contents
                 markdown_path = "docs/agents/documenter_agent.md"
                 markdown_contents = result.output  # This assumes it's a string
 
+    # Create the markdown file in the container
                 self.container = await self.container.with_new_file(markdown_path, contents=markdown_contents)
 
-    # ✅ Optional: Confirm it's written
-                self.container = await self.container.with_exec(["cat", markdown_path])
-
-    # 🤝 3. Set up the PR container
+    # Now we can set up the pull request container and pass in self.container with the new documentation and a Github access token
                 documenter_pull_request_container = dag.builder(self.config_file).setup_documenter_pull_request_container(
                     base_container=self.container,
                     token=github_access_token
          )
 
-    # 🚀 4. Run PR agent
+    # Now we can run the documenter pull request agent to create a PR with the new documentation
                 documenter_pull_request_result = dag.documenter_pull_request_agent(self.config_file).run(
                     provider=provider,
                     open_router_api_key=self.open_router_api_key,
