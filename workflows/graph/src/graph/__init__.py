@@ -1,4 +1,4 @@
-"""A generated module for DaggerAgentsUtils functions
+"""A generated module for Graph functions
 
 This module has been generated via dagger init and serves as a reference to
 basic module structure as you get started with Dagger.
@@ -13,4 +13,4 @@ rest is a long description with more detail on the module's purpose or usage,
 if appropriate. All modules should have a short description.
 """
 
-from .main import DaggerAgentsUtils as DaggerAgentsUtils
+from .main import Graph as Graph

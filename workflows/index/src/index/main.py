@@ -4,6 +4,7 @@ from typing import Annotated, List, Optional, Tuple
 
 import anyio
 import dagger
+# from index.services.neo4j_service import Neo4jService
 import yaml
 from ais_dagger_agents_config import ConcurrencyConfig, IndexingConfig
 from ais_dagger_agents_config.models import SymbolProperties, YAMLConfig
@@ -23,6 +24,7 @@ from supabase import Client, create_client
 class Index:
     config: dict
     config_file: dagger.File
+    neo_client: Optional[dagger.Container] = None
 
     @classmethod
     async def create(cls, config_file: Annotated[dagger.File, Doc("Path to the YAML config file")]) -> "Index":
@@ -72,7 +74,7 @@ class Index:
         openai_key: dagger.Secret,
         config: ProcessingConfig,
         logger: logging.Logger,
-        neo4j: Optional[NeoService] = None  # Updated type hint
+        neo4j: NeoService
     ) -> int:
         """Safely process a single file with comprehensive error handling."""
         try:
@@ -198,7 +200,7 @@ class Index:
         openai_key,
         config,
         logger,
-        neo4j=None
+        neo4j: Optional[NeoService] = None
     ) -> int:
         """Process files with semaphore-controlled concurrency using anyio."""
         if not files:
@@ -311,7 +313,6 @@ class Index:
                 logger.info("Setting OpenAI API key...")
                 os.environ["OPENAI_API_KEY"] = await openai_api_key.plaintext()
 
-            neo4j = None
             if self.config.neo4j.enabled:
                 try:
                     logger.info("Starting Neo4j service...")
@@ -327,40 +328,22 @@ class Index:
                     #     user=self.config.neo4j.username,
                     #     database=self.config.neo4j.database,
                     # )
-
-                    # Initialize the client container
-                    # await neo4j_service.create_neo4j_client()
-                    neo4j_service = dag.neo_service(
-                        self.config_file, neo_password,
+                    neo4j_service: NeoService = dag.neo_service(
+                        self.config_file,
+                        password=neo_password,
                         github_access_token=github_access_token,
                         neo_auth=neo_auth
                     )
+
+                    # Initialize the client container
+                    self.neo_client = await neo4j_service.create_neo_client()
 
                     # Test connection
                     test_result = await neo4j_service.test_connection()
                     logger.info(f"Neo4j connection test: {test_result}")
 
-                    # Test the connection explicitly
-                    is_connected = neo4j_service.connect()
-                    if is_connected:
-                        logger.info("Neo4j service successfully initialized")
-
-                        # Clear database if requested
-                        if self.config.neo4j.clear_on_start:
-                            logger.info("Clearing Neo4j database...")
-                            success = await neo4j_service.clear_database()
-                            if success:
-                                logger.info(
-                                    "Neo4j database cleared successfully")
-
-                        neo4j = neo4j_service
-                    else:
-                        logger.error("Neo4j service failed to initialize")
-                        neo4j = None
-
                 except Exception as e:
                     logger.error(f"Neo4j service setup failed: {e}")
-                    neo4j = None
 
             # Set up Supabase client
             supabase = create_client(supabase_url, await supabase_key.plaintext())
@@ -394,7 +377,7 @@ class Index:
                 openai_api_key,
                 processing_config,
                 logger,
-                neo4j=neo4j
+                neo4j=neo4j_service
             )
 
             logger.info(f"Successfully indexed {total_chunks} code chunks")

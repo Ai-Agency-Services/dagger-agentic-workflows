@@ -11,10 +11,11 @@ from coverage.models.code_module import CodeModule
 from coverage.models.coverage_report import CoverageReport
 from coverage.template import get_system_template
 from coverage.utils import get_code_under_test_directory
+from dagger import dag
 from opentelemetry import trace
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
-from simple_chalk import blue, red, yellow
+from simple_chalk import blue, red, yellow, green
 
 # Initialize tracer for OpenTelemetry
 tracer = trace.get_tracer(__name__)
@@ -32,6 +33,7 @@ class CoverAgentDependencies:
     report: CoverageReport
     reporter: 'Reporter'
     current_code_module: Optional[CodeModule] = field(default=None)
+    neo4j_client: Optional[dagger.Container] = field(default=None)
 
 
 async def add_coverage_report_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
@@ -586,6 +588,202 @@ async def run_test_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
             print("")  # Extra newline for better separation in logs
 
 
+async def run_cypher_query_tool(ctx: RunContext[CoverAgentDependencies], query: str) -> str:
+    """Tool: Run a Cypher query against the Neo4j database."""
+    # Add full query logging (not truncated)
+    print(yellow(f"=== FULL QUERY ===\n{query}\n=== END QUERY ==="))
+
+    print(
+        blue(f"🔍 Running Neo4j query: {query[:100]}{'...' if len(query) > 100 else ''}"))
+
+    if not ctx.deps.neo4j_client:
+        error_msg = "Neo4j client is not available. Cannot run Cypher query."
+        print(red(f"❌ {error_msg}"))
+        return error_msg
+
+    try:
+        # Create the query file
+        client = ctx.deps.neo4j_client.with_new_file(
+            "/tmp/query.cypher", query
+        )
+        print(blue(f"📝 Created query file in container"))
+
+        # Execute query
+        print(blue(f"⚙️ Executing query with cypher-shell..."))
+        result = await client.with_exec([
+            "cypher-shell",
+            "-a", ctx.deps.config.neo4j.uri,
+            "--non-interactive",
+            "-f", "/tmp/query.cypher"
+        ]).stdout()
+
+        # Log results
+        print(
+            green(f"✅ Query executed successfully! Result length: {len(result)}"))
+        print(blue(f"📊 First 200 chars of result: {result[:200]}"))
+        return result
+    except Exception as e:
+        error_msg = f"Error executing Neo4j query: {e}"
+        print(red(f"❌ {error_msg}"))
+        return error_msg
+
+
+async def analyze_imports_tool(ctx: RunContext[CoverAgentDependencies], filepath: str) -> str:
+    """Tool: Analyze the imports for a specific file.
+    
+    Args:
+        filepath: The path to the file to analyze.
+    """
+    print(yellow(f"=== START: analyze_imports_tool for {filepath} ==="))
+
+    if not ctx.deps.neo4j_client:
+        error_msg = "Neo4j client is not available. Cannot analyze imports."
+        print(red(f"❌ {error_msg}"))
+        return error_msg
+
+    try:
+        print(blue(f"📊 Analyzing imports for file: {filepath}"))
+
+        # Query 1: Direct imports
+        print(blue(f"🔍 Finding files imported by {filepath}..."))
+        imports_query = f"""
+        MATCH (f:File {{filepath: "{filepath}"}})-[:IMPORTS]->(imported:File)
+        RETURN imported.filepath as imported_file, imported.language as language
+        """
+        imports_result = await run_cypher_query_tool(ctx, imports_query)
+        print(green(f"✅ Imports query complete"))
+
+        # Query 2: Files that import this file
+        print(blue(f"🔍 Finding files that import {filepath}..."))
+        dependents_query = f"""
+        MATCH (f:File)-[:IMPORTS]->(target:File {{filepath: "{filepath}"}})
+        RETURN f.filepath as dependent_file, f.language as language
+        """
+        dependents_result = await run_cypher_query_tool(ctx, dependents_query)
+        print(green(f"✅ Dependents query complete"))
+
+        # Format output
+        result = f"""
+        === Imports Analysis for {filepath} ===
+        
+        Files imported by {filepath}:
+        {imports_result}
+        
+        Files that import {filepath}:
+        {dependents_result}
+        """
+        print(green(f"✅ Analysis complete for {filepath}"))
+        return result
+
+    except Exception as e:
+        error_msg = f"Error analyzing imports: {e}"
+        print(red(f"❌ {error_msg}"))
+        import traceback
+        traceback.print_exc()
+        return error_msg
+    finally:
+        print(yellow(f"=== END: analyze_imports_tool for {filepath} ==="))
+        print("")  # Extra newline for better separation in logs
+
+
+async def add_neo4j_usage_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
+    return """
+    \n ------- \n
+    <neo4j_usage>
+    IMPORTANT: Before writing tests, analyze imports to understand dependencies!
+    
+    The codebase has been indexed in a Neo4j graph database. To write effective tests, 
+    you should first understand what modules the code depends on and what other modules 
+    depend on it.
+    
+    For example, if you're testing module X that imports module Y, you'll need to mock Y's behavior.
+    Similarly, if module Z imports X, you'll need test cases covering X's public API.
+    
+    Follow these steps:
+    
+    1. First run this query to see what the file you're testing imports:
+    ```
+    MATCH (f:File {filepath: "path/to/your/file.js"})-[:IMPORTS]->(imported:File)
+    RETURN imported.filepath
+    ```
+    
+    2. Then check what files depend on the one you're testing:
+    ```
+    MATCH (f:File)-[:IMPORTS]->(target:File {filepath: "path/to/your/file.js"})
+    RETURN f.filepath
+    ```
+    
+    3. Finally, check for internal dependencies between functions/classes:
+    ```
+    MATCH (s1:Symbol)-[:CALLS|REFERENCES]->(s2:Symbol)
+    WHERE s1.filepath = "path/to/your/file.js" AND s2.filepath = "path/to/your/file.js"
+    RETURN s1.name, s2.name, type((s1)-[r]->(s2))
+    ```
+    
+    You can use analyze_imports_tool(filepath) for a quick overview or run_cypher_query_tool(query) for custom queries.
+    </neo4j_usage>
+    \n ------- \n
+    """
+
+
+async def analyze_imports_tool(ctx: RunContext[CoverAgentDependencies], filepath: str) -> str:
+    """Tool: Analyze the imports for a specific file.
+    
+    Args:
+        filepath: The path to the file to analyze.
+    """
+    print(yellow(f"=== START: analyze_imports_tool for {filepath} ==="))
+
+    if not ctx.deps.neo4j_client:
+        error_msg = "Neo4j client is not available. Cannot analyze imports."
+        print(red(f"❌ {error_msg}"))
+        return error_msg
+
+    try:
+        print(blue(f"📊 Analyzing imports for file: {filepath}"))
+
+        # Query 1: Direct imports
+        print(blue(f"🔍 Finding files imported by {filepath}..."))
+        imports_query = f"""
+        MATCH (f:File {{filepath: "{filepath}"}})-[:IMPORTS]->(imported:File)
+        RETURN imported.filepath as imported_file, imported.language as language
+        """
+        imports_result = await run_cypher_query_tool(ctx, imports_query)
+        print(green(f"✅ Imports query complete"))
+
+        # Query 2: Files that import this file
+        print(blue(f"🔍 Finding files that import {filepath}..."))
+        dependents_query = f"""
+        MATCH (f:File)-[:IMPORTS]->(target:File {{filepath: "{filepath}"}})
+        RETURN f.filepath as dependent_file, f.language as language
+        """
+        dependents_result = await run_cypher_query_tool(ctx, dependents_query)
+        print(green(f"✅ Dependents query complete"))
+
+        # Format output
+        result = f"""
+        === Imports Analysis for {filepath} ===
+        
+        Files imported by {filepath}:
+        {imports_result}
+        
+        Files that import {filepath}:
+        {dependents_result}
+        """
+        print(green(f"✅ Analysis complete for {filepath}"))
+        return result
+
+    except Exception as e:
+        error_msg = f"Error analyzing imports: {e}"
+        print(red(f"❌ {error_msg}"))
+        import traceback
+        traceback.print_exc()
+        return error_msg
+    finally:
+        print(yellow(f"=== END: analyze_imports_tool for {filepath} ==="))
+        print("")  # Extra newline for better separation in logs
+
+
 def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     """
     Creates and configures the CoverAI agent instance.
@@ -616,10 +814,13 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     agent.system_prompt(add_directories_prompt)
     agent.system_prompt(add_current_code_module_prompt)
     agent.system_prompt(add_dependency_files_prompt)
+    agent.system_prompt(add_neo4j_usage_prompt)
 
     agent.tool(read_file_tool)
     agent.tool(run_test_tool)
     agent.tool(write_test_file_tool)
+    agent.tool(run_cypher_query_tool)
+    agent.tool(analyze_imports_tool)
 
     print(f"CoverAI Agent created with model: {pydantic_ai_model.model_name}")
     return agent

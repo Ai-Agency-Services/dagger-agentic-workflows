@@ -7,36 +7,25 @@ import dagger
 from dagger import Doc, dag, field, function, object_type
 from simple_chalk import green
 import yaml
-from ais_dagger_agents_config import YAMLConfig
+from ais_dagger_agents_config import YAMLConfig, SymbolProperties
 
 
 @object_type
-class SymbolProperties:
-    """Properties for a code symbol"""
-    # Common properties you might need
-    docstring: Optional[str] = field(default=None)
-    signature: Optional[str] = field(default=None)
-    scope: Optional[str] = field(default=None)
-    parent: Optional[str] = field(default=None)
-
-    # You can add more fields as needed
-    # Or use JSON for arbitrary properties
-    json_data: Optional[str] = field(default=None)
+class RelationshipProperties:
+    """Properties for a relationship between nodes in the graph"""
+    type: Optional[str] = field(default=None)
+    name: Optional[str] = field(default=None)
+    value: Optional[str] = field(default=None)
+    weight: Optional[int] = field(default=None)
 
     @classmethod
-    def from_dict(cls, data: dict) -> "SymbolProperties":
-        """Create a SymbolProperties from a dictionary"""
-        # Extract known fields
+    def from_dict(cls, data: dict) -> "RelationshipProperties":
+        """Create a RelationshipProperties from a dictionary"""
         props = {}
         if data:
-            for field_name in ["docstring", "signature", "scope", "parent"]:
+            for field_name in ["type", "name", "value", "weight"]:
                 if field_name in data:
                     props[field_name] = data.pop(field_name)
-
-            # Store remaining properties as JSON
-            if data:
-                props["json_data"] = json.dumps(data)
-
         return cls(**props)
 
 
@@ -48,7 +37,8 @@ class NeoService:
     password: dagger.Secret
     github_access_token: dagger.Secret
     neo_auth: dagger.Secret
-    client_container: dagger.Container
+    neo_service: Optional[dagger.Service] = None  # Store the service instance
+    cypher_shell_client: Optional[dagger.Container] = None
 
     @classmethod
     async def create(
@@ -65,23 +55,27 @@ class NeoService:
             config=config_dict, password=password,
             github_access_token=github_access_token,
             neo_auth=neo_auth,
-            client_container=dag.container(),
             config_file=config_file
         )
 
     @function
     async def create_neo_service(self) -> dagger.Service:
         """Create a Neo4j service as a Dagger service"""
-        self.config: YAMLConfig = YAMLConfig(
+        # Return existing service if we have one
+        if self.neo_service:
+            return self.neo_service
+
+        self.config = YAMLConfig(
             **self.config) if isinstance(self.config, dict) else self.config
         plugin_string = json.dumps(
             self.config.neo4j.plugins) if self.config.neo4j.plugins else '[]'
 
-        # Generate unique cache name to avoid lock conflicts
-        unique_cache_name = f"{self.config.neo4j.cache_volume_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        
-        print(green(f"Using Neo4j plugins: {plugin_string}"))
-        return (
+        # Generate unique cache name - but only once per instance
+        # unique_cache_name = f"{self.config.neo4j.cache_volume_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+        print(
+            green(f"Creating new Neo4j service with plugins: {plugin_string}"))
+        self.neo_service = (
             dag.container()
             .from_(self.config.neo4j.image)
             .with_secret_variable("NEO4J_AUTH", self.neo_auth)
@@ -92,49 +86,70 @@ class NeoService:
             .with_env_variable("NEO4J_server_memory_pagecache_size",  self.config.neo4j.memory_pagecache_size)
             .with_env_variable("NEO4J_server_memory_heap_initial__size", self.config.neo4j.memory_heap_initial_size)
             .with_env_variable("NEO4J_server_memory_heap_max__size",  self.config.neo4j.memory_heap_max_size)
-            .with_env_variable("NEO4J_dbms_allow__upgrade", "true")  # Allow upgrade of database
-            .with_env_variable("NEO4J_dbms_tx_log_fail__on__corrupted__log__files", "false")  # Be more forgiving with corrupted files
             .with_exposed_port(self.config.neo4j.http_port)  # HTTP interface
             .with_exposed_port(self.config.neo4j.bolt_port)  # Bolt protocol
-            .with_mounted_cache(self.config.neo4j.data_volume_path, dag.cache_volume(unique_cache_name))
+            .with_mounted_cache(self.config.neo4j.data_volume_path, dag.cache_volume(self.config.neo4j.cache_volume_name))
             .as_service()
             .with_hostname("neo")
         )
 
+        return self.neo_service
+
     @function
     async def create_neo_client(self) -> dagger.Container:
         """Create a Neo4j client container with cypher-shell"""
-        self.config: YAMLConfig = YAMLConfig(
+        # Return existing client if we have one
+        if self.cypher_shell_client:
+            return self.cypher_shell_client
+
+        self.config = YAMLConfig(
             **self.config) if isinstance(self.config, dict) else self.config
+
+        # Get service first (reusing if available)
+        neo_service = await self.create_neo_service()
+
+        # Clone repository only once
         source = (
             await dag.git(url=self.config.neo4j.cypher_shell_repository, keep_git_dir=True)
             .with_auth_token(self.github_access_token)
             .branch("main")
             .tree()
         )
-        self.client_container = dag.builder(self.config_file).build_cypher_shell(
+
+        # Build and configure client
+        self.cypher_shell_client = dag.builder(self.config_file).build_cypher_shell(
             source=source,
         )
 
-        self.client_container = (
-            self.client_container
-            .with_service_binding("neo", await self.create_neo_service())
+        self.cypher_shell_client = (
+            self.cypher_shell_client
+            .with_service_binding("neo", neo_service)
             .with_secret_variable("NEO4J_PASSWORD", self.password)
             .with_env_variable("NEO4J_USERNAME", self.config.neo4j.username)
         )
 
-        return self.client_container
+        return self.cypher_shell_client
+
+    @function
+    async def ensure_client(self) -> dagger.Container:
+        """Ensure we have a client container, creating it if needed"""
+        if not self.cypher_shell_client:
+            self.cypher_shell_client = await self.create_neo_client()
+        return self.cypher_shell_client
 
     @function
     async def run_query(self, query: str) -> str:
         """Run a query against the Neo4j service"""
-        # Create client with service binding if not already created
-        if not self.client_container:
-            self.client_container = await self.create_neo_client()
+        # Convert config dict to YAMLConfig object
+        self.config: YAMLConfig = YAMLConfig(
+            **self.config) if isinstance(self.config, dict) else self.config
+
+        # Ensure client exists
+        await self.ensure_client()
 
         # Write query to file
         client = (
-            self.client_container.with_new_file(
+            self.cypher_shell_client.with_new_file(
                 "/tmp/query.cypher", query)
         )
 
@@ -146,18 +161,83 @@ class NeoService:
         ]).stdout()
 
     @function
+    async def run_batch_queries(self, queries: List[str]) -> str:
+        """Run multiple queries in a single transaction for better performance"""
+        if not queries:
+            return ""
+
+        # Join queries with semicolons
+        combined = ";\n".join(queries) + ";"
+
+        # Run as a single operation
+        return await self.run_query(combined)
+
+    @function
     async def test_connection(self) -> str:
         """Test connection to Neo4j service"""
+        logger = self._get_logger()
+
         self.config: YAMLConfig = YAMLConfig(
             **self.config) if isinstance(self.config, dict) else self.config
-        await self.create_neo_client()
-        return await self.run_query("RETURN 'Connected' AS result")
+
+        # Use ensure_client instead of creating directly
+        await self.ensure_client()
+
+        try:
+            # Simple connection test
+            connection_result = await self.run_query("RETURN 'Connected' as status")
+
+            # Get node statistics
+            node_stats = await self.run_query("""
+            MATCH (n)
+            WITH labels(n) AS node_type, count(n) AS count
+            RETURN node_type, count
+            ORDER BY count DESC
+            """)
+
+            # Get relationship statistics
+            rel_stats = await self.run_query("""
+            MATCH ()-[r]->()
+            WITH type(r) AS rel_type, count(r) AS count
+            RETURN rel_type, count
+            ORDER BY count DESC
+            """)
+
+            # Get sample relationships (limited to 15 examples)
+            sample_rels = await self.run_query("""
+            MATCH (a)-[r]->(b) 
+            WITH type(r) as rel_type, a, b, r
+            LIMIT 100
+            RETURN rel_type, 
+                   labels(a)[0] + ': ' + coalesce(a.name, a.filepath, toString(id(a))) AS from, 
+                   labels(b)[0] + ': ' + coalesce(b.name, b.filepath, toString(id(b))) AS to
+            LIMIT 15
+            """)
+
+            # Format into a nice report
+            return f"""
+                    === Neo4j Connection Test ===
+                    {connection_result}
+
+                    === Node Types ===
+                    {node_stats}
+
+                    === Relationship Types ===
+                    {rel_stats}
+
+                    === Sample Relationships (max 15) ===
+                    {sample_rels}
+                    """
+        except Exception as e:
+            # Use the logger instance
+            logger.error(f"Connection test failed: {e}")
+            return f"Connection failed: {str(e)}"
 
     @function
     def connect(self) -> bool:
         """Verify connection to Neo4j"""
         # If we have a client container, connection is already verified
-        if self.client_container:
+        if self.cypher_shell_client:
             return True
 
         # Otherwise return False as we need a container for operations
@@ -182,6 +262,10 @@ class NeoService:
     async def add_file_node(self, filepath: str, language: str) -> bool:
         """Add a file node to the graph"""
         try:
+            # Convert config dict to YAMLConfig object
+            self.config: YAMLConfig = YAMLConfig(
+                **self.config) if isinstance(self.config, dict) else self.config
+
             # Escape quotes in strings
             filepath = filepath.replace('"', '\\"')
             language = language.replace('"', '\\"')
@@ -282,6 +366,60 @@ class NeoService:
             # Get logger again for error
             logger = self._get_logger()
             logger.error(f"Failed to add symbol {name} in {filepath}: {e}")
+            return False
+
+    @function
+    async def add_relationship(
+        self,
+        start_filepath: str,
+        relationship_type: str,
+        end_filepath: str,
+        properties: Optional[RelationshipProperties] = None
+    ) -> bool:
+        """Add a relationship between two files in the graph"""
+        try:
+            self.config = YAMLConfig(
+                **self.config) if isinstance(self.config, dict) else self.config
+
+            # Escape strings
+            start_filepath = start_filepath.replace('"', '\\"')
+            end_filepath = end_filepath.replace('"', '\\"')
+            relationship_type = relationship_type.upper()
+
+            # Build properties string if provided
+            props_str = ""
+            if properties:
+                props_parts = []
+
+                # Handle each property directly
+                if properties.type:
+                    props_parts.append(
+                        f'type: "{properties.type.replace('"', '\\"')}"')
+                if properties.name:
+                    props_parts.append(
+                        f'name: "{properties.name.replace('"', '\\"')}"')
+                if properties.value:
+                    props_parts.append(
+                        f'value: "{properties.value.replace('"', '\\"')}"')
+                if properties.weight:
+                    props_parts.append(f'weight: {properties.weight}')
+
+                if props_parts:
+                    props_str = f" {{{', '.join(props_parts)}}}"
+
+            # Build and execute query
+            query = f'''
+            MATCH (a:File {{filepath: "{start_filepath}"}}), (b:File {{filepath: "{end_filepath}"}})
+            MERGE (a)-[r:{relationship_type}{props_str}]->(b)
+            RETURN type(r) as relationship
+            '''
+
+            await self.run_query(query)
+            return True
+        except Exception as e:
+            logger = self._get_logger()
+            logger.error(
+                f"Failed to add relationship from {start_filepath} to {end_filepath}: {e}")
             return False
 
     def _get_logger(self):

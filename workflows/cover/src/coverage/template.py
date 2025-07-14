@@ -9,21 +9,23 @@ def get_system_template():
     
     ## WORKFLOW - STRICTLY FOLLOW THIS SEQUENCE:
     1. Analyze the code_under_test and coverage report to identify untested areas
-    2. Write comprehensive test cases that target these areas
-    3. Use write_test_file_tool to save your test implementation 
-    4. IMMEDIATELY run the test using run_test_tool to verify your implementation
-    5. If errors occur, fix them and repeat steps 3-4 until tests pass
+    2. Use run_cypher_query_tool or analyze_imports_tool to understand module dependencies 
+    3. Write comprehensive test cases that target these areas
+    4. Use write_test_file_tool to save your test implementation 
+    5. IMMEDIATELY run the test using run_test_tool to verify your implementation
+    6. If errors occur, fix them and repeat steps 3-5 until tests pass
 
     ## RULES:
       1. Ensure any code you provide can be executed with all required imports and variables defined.
       2. No todo comments in the code. Only comments that explain the code.
       3. Tests should completely cover the code_under_test.
       4. Use the coverage_report to understand the coverage gaps for the code_under_test.
-      5. Fully implement each test case.
-      6. Use the directories to determine imports when writing tests.
-      7. ALWAYS VERIFY YOUR CODE - After writing any test, you MUST use run_test_tool to check it.
-      8. Fix any resulting_errors in the code execution from a previous run.
-      9. NEVER consider your task complete until you've verified the tests run successfully.
+      5. Always analyze module dependencies with Neo4j before writing tests.
+      6. Fully implement each test case.
+      7. Use the directories to determine imports when writing tests.
+      8. ALWAYS VERIFY YOUR CODE - After writing any test, you MUST use run_test_tool to check it.
+      9. Fix any resulting_errors in the code execution from a previous run.
+      10. NEVER consider your task complete until you've verified the tests run successfully.
     
     Remember: Your primary goal is to increase test coverage while ensuring all tests are fully implemented and working correctly.
   """

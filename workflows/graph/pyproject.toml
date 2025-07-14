@@ -1,8 +1,13 @@
 [project]
-name = "dagger-agents-utils"
+name = "graph"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["dagger-io"]
+dependencies = [
+    "dagger-io",
+    "pyyaml>=6.0.2",
+    "ais-dagger-agents-config>=0.1.0,<0.2.0",
+    "pydantic[email]>=2.11.7",
+]
 
 [build-system]
 requires = ["hatchling==1.25.0"]

@@ -1,13 +1,13 @@
 {
-  "name": "Cover",
+  "name": "graph",
   "engineVersion": "v0.18.5",
   "sdk": {
     "source": "python"
   },
   "dependencies": [
     {
-      "name": "Reporter",
-      "source": "plugins/reporter"
+      "name": "agent-utils",
+      "source": "../../shared/agent-utils"
     },
     {
       "name": "builder",
@@ -16,10 +16,6 @@
     {
       "name": "neo_service",
       "source": "../../services/neo"
-    },
-    {
-      "name": "pull_request_agent",
-      "source": "../../agents/pull_request"
     }
   ]
 }

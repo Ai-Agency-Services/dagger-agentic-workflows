@@ -3,6 +3,7 @@ import traceback
 from typing import Annotated, List, Optional
 
 import anyio
+from coverage.services.neo4j_service import Neo4jService
 import dagger
 import yaml
 from ais_dagger_agents_config import YAMLConfig
@@ -16,6 +17,8 @@ from dagger import DaggerError, Doc, dag, field, function, object_type
 from dagger.client.gen import Reporter
 from pydantic_ai import UnexpectedModelBehavior
 from simple_chalk import green, red, yellow
+from dagger.client.gen import NeoService
+
 
 
 @object_type
@@ -29,6 +32,7 @@ class Cover:
     open_router_api_key: Optional[dagger.Secret] = None
     openai_api_key: Optional[dagger.Secret] = None
     model: str = "x-ai/grok-3-mini-beta"
+    neo_client: Optional[dagger.Container] = None
 
     @classmethod
     async def create(
@@ -63,6 +67,7 @@ class Cover:
     async def setup_environment(
         self,
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
+        neo_auth: Annotated[Optional[dagger.Secret], Doc("Neo4j auth token")],
         repository_url: Annotated[str, Doc("Repository URL to generate tests for")],
         branch: Annotated[str, Doc("Branch to generate tests for")],
         model_name: Annotated[str, Doc(
@@ -72,7 +77,10 @@ class Cover:
         open_router_api_key: Annotated[Optional[dagger.Secret], Doc(
             "OpenRouter API key (required if provider is 'openrouter')")] = None,
         openai_api_key: Annotated[Optional[dagger.Secret], Doc(
-            "OpenAI API key (required if provider is 'openai')")] = None
+            "OpenAI API key (required if provider is 'openai')")] = None,
+        neo4j_password: Annotated[Optional[dagger.Secret], Doc(
+            "Neo4j password")] = None,
+
     ) -> dagger.Container:
         """Set up the test environment and return a ready-to-use container."""
         try:
@@ -81,7 +89,25 @@ class Cover:
             self.openai_api_key = openai_api_key
             self.config: YAMLConfig = YAMLConfig(**self.config)
             self.model = model_name
-            # We no longer store github_token as a member variable
+            # neo_service = Neo4jService(
+            #     cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
+            #     password=neo4j_password,
+            #     neo_auth=neo_auth,
+            #     github_access_token=github_access_token,
+            #     config_file=self.config_file,
+            #     user=self.config.neo4j.username,
+            #     database=self.config.neo4j.database,
+            #     uri="neo4j://neo:7687")
+            neo_service: NeoService = dag.neo_service(
+                self.config_file,
+                password=neo4j_password,
+                github_access_token=github_access_token,
+                neo_auth=neo_auth
+            )
+
+            self.neo_client = await neo_service.create_neo_client()
+            test_result = await neo_service.test_connection()
+            print(green(f"Neo4j connection test result: {test_result}"))
 
             # Setup repository
             source = (
@@ -169,7 +195,8 @@ class Cover:
                 config=self.config,
                 container=current_container,
                 report=report,
-                reporter=self.reporter
+                reporter=self.reporter,
+                neo4j_client=self.neo_client,
             )
 
             # Run test generation
@@ -341,7 +368,13 @@ class Cover:
         open_router_api_key: Annotated[Optional[dagger.Secret], Doc(
             "OpenRouter API key (required if provider is 'openrouter')")] = None,
         openai_api_key: Annotated[Optional[dagger.Secret], Doc(
-            "OpenAI API key (required if provider is 'openai')")] = None
+            "OpenAI API key (required if provider is 'openai')")] = None,
+        neo_auth: Annotated[Optional[dagger.Secret], Doc(
+            "Neo4j auth token"
+        )] = None,
+        neo_password: Annotated[Optional[dagger.Secret], Doc(
+            "Neo4j password for authentication"
+        )] = None
     ) -> dagger.Container:
         """Generate unit tests for a given repository using the CoverAI agent."""
         # Set up environment first
@@ -352,7 +385,9 @@ class Cover:
             model_name=model_name,
             provider=provider,
             open_router_api_key=open_router_api_key,
-            openai_api_key=openai_api_key
+            openai_api_key=openai_api_key,
+            neo4j_password=neo_password,
+            neo_auth=neo_auth
         )
 
         try:
