@@ -7,7 +7,37 @@ import dagger
 from dagger import Doc, dag, field, function, object_type
 from simple_chalk import green
 import yaml
-from ais_dagger_agents_config import YAMLConfig, SymbolProperties
+from ais_dagger_agents_config import YAMLConfig
+
+
+@object_type
+class SymbolProperties:
+    """Properties for a code symbol"""
+    # Common properties you might need
+    docstring: Optional[str] = field(default=None)
+    signature: Optional[str] = field(default=None)
+    scope: Optional[str] = field(default=None)
+    parent: Optional[str] = field(default=None)
+
+    # You can add more fields as needed
+    # Or use JSON for arbitrary properties
+    json_data: Optional[str] = field(default=None)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SymbolProperties":
+        """Create a SymbolProperties from a dictionary"""
+        # Extract known fields
+        props = {}
+        if data:
+            for field_name in ["docstring", "signature", "scope", "parent"]:
+                if field_name in data:
+                    props[field_name] = data.pop(field_name)
+
+            # Store remaining properties as JSON
+            if data:
+                props["json_data"] = json.dumps(data)
+
+        return cls(**props)
 
 
 @object_type
@@ -190,46 +220,48 @@ class NeoService:
             # Simple connection test
             connection_result = await self.run_query("RETURN 'Connected' as status")
 
-            # Get node statistics
+            # Get node statistics with better formatting
             node_stats = await self.run_query("""
             MATCH (n)
-            WITH labels(n) AS node_type, count(n) AS count
-            RETURN node_type, count
+            WITH labels(n) AS node_labels, count(n) AS count
+            UNWIND node_labels AS label
+            RETURN label as node_type, count
             ORDER BY count DESC
             """)
 
             # Get relationship statistics
             rel_stats = await self.run_query("""
             MATCH ()-[r]->()
-            WITH type(r) AS rel_type, count(r) AS count
-            RETURN rel_type, count
+            RETURN type(r) AS rel_type, count(r) AS count
             ORDER BY count DESC
             """)
 
-            # Get sample relationships (limited to 15 examples)
+            # Get sample relationships with better null handling
             sample_rels = await self.run_query("""
             MATCH (a)-[r]->(b) 
-            WITH type(r) as rel_type, a, b, r
-            LIMIT 100
-            RETURN rel_type, 
-                   labels(a)[0] + ': ' + coalesce(a.name, a.filepath, toString(id(a))) AS from, 
-                   labels(b)[0] + ': ' + coalesce(b.name, b.filepath, toString(id(b))) AS to
+            RETURN type(r) as rel_type, 
+                   labels(a)[0] + ': ' + coalesce(a.name, a.filepath, toString(id(a))) AS from_node, 
+                   labels(b)[0] + ': ' + coalesce(b.name, b.filepath, toString(id(b))) AS to_node
             LIMIT 15
             """)
 
+            # Also get total counts for debugging
+            total_nodes = await self.run_query("MATCH (n) RETURN count(n) as total_nodes")
+            total_rels = await self.run_query("MATCH ()-[r]->() RETURN count(r) as total_rels")
+
             # Format into a nice report
             return f"""
-                    === Neo4j Connection Test ===
-                    {connection_result}
-
-                    === Node Types ===
-                    {node_stats}
-
-                    === Relationship Types ===
-                    {rel_stats}
-
-                    === Sample Relationships (max 15) ===
-                    {sample_rels}
+                        === Neo4j Connection Test ===
+                        {connection_result}
+                        === Total Counts ===
+                        Nodes: {total_nodes}
+                        Relationships: {total_rels}
+                        === Node Types ===
+                        {node_stats if node_stats.strip() else "No nodes found"}
+                        === Relationship Types ===
+                        {rel_stats if rel_stats.strip() else "No relationships found"}
+                        === Sample Relationships (max 15) ===
+                        {sample_rels if sample_rels.strip() else "No relationships found"}
                     """
         except Exception as e:
             # Use the logger instance

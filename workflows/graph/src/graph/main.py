@@ -61,17 +61,12 @@ class Graph:
                 neo_auth=neo_auth,
                 neo_data=self.neo_data
             )
-            # self.neo_service = Neo4jService(
-            #     config_file=self.config_file,
-            #     cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
-            #     password=neo_password,
-            #     github_access_token=github_access_token,
-            #     neo_auth=neo_auth
-            # )
-
             # Test connection
             test_result = await self.neo_service.test_connection()
             logger.info(f"Neo4j connection established")
+            clear = await self.neo_service.clear_database()
+            if clear:
+                logger.info("Neo4j database cleared successfully")
 
             return f"Neo4j connection successful: {test_result}"
         except Exception as e:
@@ -259,8 +254,7 @@ class Graph:
                     try:
                         # Add EXPORTS relationship for config files
                         if "module.exports" in content or "export default" in content:
-                            from dagger.client.gen import \
-                                NeoServiceRelationshipProperties
+                            from dagger.client.gen import NeoServiceRelationshipProperties
 
                             # Try different approaches to create the relationship
                             try:
@@ -271,10 +265,11 @@ class Graph:
                                 # Fall back to no properties
                                 export_props = None
 
+                            # Fix: Use the correct parameter names
                             await self.neo_service.add_relationship(
-                                from_filepath=filepath,
-                                rel_type="EXPORTS",
-                                to_filepath=os.path.dirname(filepath),
+                                start_filepath=filepath,
+                                relationship_type="EXPORTS",
+                                end_filepath=os.path.dirname(filepath),
                                 properties=export_props
                             )
                             logger.info(
