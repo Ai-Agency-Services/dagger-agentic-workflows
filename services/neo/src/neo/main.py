@@ -39,6 +39,7 @@ class NeoService:
     neo_auth: dagger.Secret
     neo_service: Optional[dagger.Service] = None  # Store the service instance
     cypher_shell_client: Optional[dagger.Container] = None
+    neo_data: dagger.CacheVolume
 
     @classmethod
     async def create(
@@ -47,6 +48,7 @@ class NeoService:
         password: Annotated[dagger.Secret, Doc("Neo4j password")],
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token for cypher-shell repository")],
         neo_auth: Annotated[dagger.Secret, Doc("Neo4j authentication string in the format 'username/password'")],
+        neo_data: Annotated[dagger.CacheVolume, Doc("Neo4j data cache volume")],
     ):
         """ Create """
         config_str = await config_file.contents()
@@ -55,7 +57,8 @@ class NeoService:
             config=config_dict, password=password,
             github_access_token=github_access_token,
             neo_auth=neo_auth,
-            config_file=config_file
+            config_file=config_file,
+            neo_data=neo_data
         )
 
     @function
@@ -88,7 +91,7 @@ class NeoService:
             .with_env_variable("NEO4J_server_memory_heap_max__size",  self.config.neo4j.memory_heap_max_size)
             .with_exposed_port(self.config.neo4j.http_port)  # HTTP interface
             .with_exposed_port(self.config.neo4j.bolt_port)  # Bolt protocol
-            .with_mounted_cache(self.config.neo4j.data_volume_path, dag.cache_volume(self.config.neo4j.cache_volume_name))
+            .with_mounted_cache(self.config.neo4j.data_volume_path, self.neo_data)
             .as_service()
             .with_hostname("neo")
         )

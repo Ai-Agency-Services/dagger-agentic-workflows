@@ -33,10 +33,13 @@ class Cover:
     openai_api_key: Optional[dagger.Secret] = None
     model: str = "x-ai/grok-3-mini-beta"
     neo_client: Optional[dagger.Container] = None
+    neo_data: Optional[dagger.CacheVolume] = None
 
     @classmethod
     async def create(
-        cls, config_file: Annotated[dagger.File, "Path to the configuration file"]
+        cls,
+        config_file: Annotated[dagger.File, "Path to the configuration file"],
+        neo_data: Annotated[dagger.CacheVolume, "Neo4j data cache volume"]
     ):
         config_str = await config_file.contents()
         config_dict = yaml.safe_load(config_str)
@@ -48,6 +51,7 @@ class Cover:
             config=config_dict,
             reporter=reporter,
             config_file=config_file,
+            neo_data=neo_data,
             github_token=None,
             open_router_api_key=None,
             openai_api_key=None,
@@ -98,16 +102,18 @@ class Cover:
             #     user=self.config.neo4j.username,
             #     database=self.config.neo4j.database,
             #     uri="neo4j://neo:7687")
-            neo_service: NeoService = dag.neo_service(
-                self.config_file,
-                password=neo4j_password,
-                github_access_token=github_access_token,
-                neo_auth=neo_auth
-            )
+            if not self.neo_client:
+                neo_service: NeoService = dag.neo_service(
+                    self.config_file,
+                    password=neo4j_password,
+                    github_access_token=github_access_token,
+                    neo_auth=neo_auth,
+                    neo_data=self.neo_data
+                )
 
-            self.neo_client = await neo_service.create_neo_client()
-            test_result = await neo_service.test_connection()
-            print(green(f"Neo4j connection test result: {test_result}"))
+                self.neo_client = await neo_service.create_neo_client()
+                test_result = await neo_service.test_connection()
+                print(green(f"Neo4j connection test result: {test_result}"))
 
             # Setup repository
             source = (

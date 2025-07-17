@@ -12,20 +12,24 @@ from graph.models.code_file import CodeFile, CodeSymbol
 from graph.operations.import_analyzer import ImportAnalyzer
 from graph.operations.relationship_extractor import RelationshipExtractor
 from graph.utils import dagger_json_file_to_pydantic
+from graph.services.neo4j_service import Neo4jService
 
 
 @object_type
 class Graph:
     config: dict
     config_file: dagger.File
-    neo_service: Optional[NeoService] = None
+    neo_service: Optional[Neo4jService] = None
+    neo_data: Optional[dagger.CacheVolume] = None
 
     @classmethod
-    async def create(cls, config_file: Annotated[dagger.File, Doc("Path to the YAML config file")]) -> "Graph":
+    async def create(cls,
+                     config_file: Annotated[dagger.File, Doc("Path to the YAML config file")],
+                     neo_data: Annotated[dagger.CacheVolume, Doc("Neo4j data cache volume")]) -> "Graph":
         """Create a Graph object from a YAML config file."""
         config_str = await config_file.contents()
         config_dict = yaml.safe_load(config_str)
-        return cls(config=config_dict, config_file=config_file)
+        return cls(config=config_dict, config_file=config_file, neo_data=neo_data)
 
     def _setup_logging(self) -> logging.Logger:
         """Setup structured logging."""
@@ -54,8 +58,16 @@ class Graph:
                 self.config_file,
                 password=neo_password,
                 github_access_token=github_access_token,
-                neo_auth=neo_auth
+                neo_auth=neo_auth,
+                neo_data=self.neo_data
             )
+            # self.neo_service = Neo4jService(
+            #     config_file=self.config_file,
+            #     cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
+            #     password=neo_password,
+            #     github_access_token=github_access_token,
+            #     neo_auth=neo_auth
+            # )
 
             # Test connection
             test_result = await self.neo_service.test_connection()
@@ -260,9 +272,9 @@ class Graph:
                                 export_props = None
 
                             await self.neo_service.add_relationship(
-                                start_filepath=filepath,
-                                relationship_type="EXPORTS",
-                                end_filepath=os.path.dirname(filepath),
+                                from_filepath=filepath,
+                                rel_type="EXPORTS",
+                                to_filepath=os.path.dirname(filepath),
                                 properties=export_props
                             )
                             logger.info(
