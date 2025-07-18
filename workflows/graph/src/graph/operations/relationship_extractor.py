@@ -159,16 +159,12 @@ class RelationshipExtractor:
                     for path in possible_paths:
                         if path not in imported_files:
                             imported_files.add(path)
+                            # Fix: Use correct method signature
                             await neo4j.add_relationship(
-                                from_type='File',
-                                from_name='',
-                                from_filepath=filepath,
-                                from_line=i + 1,
-                                to_type='File',
-                                to_name='',
-                                to_filepath=path,
-                                to_line=0,
-                                rel_type='IMPORTS'
+                                start_filepath=filepath,
+                                relationship_type='IMPORTS',
+                                end_filepath=path,
+                                properties=None
                             )
 
     @staticmethod
@@ -207,30 +203,21 @@ class RelationshipExtractor:
                         for path in possible_paths:
                             if path not in imported_files:
                                 imported_files.add(path)
+                                # Fix: Use correct method signature
                                 await neo4j.add_relationship(
-                                    from_type='File',
-                                    from_name='',
-                                    from_filepath=filepath,
-                                    from_line=i + 1,
-                                    to_type='File',
-                                    to_name='',
-                                    to_filepath=path,
-                                    to_line=0,
-                                    rel_type='IMPORTS'
+                                    start_filepath=filepath,
+                                    relationship_type='IMPORTS',
+                                    end_filepath=path,
+                                    properties=None
                                 )
                     else:
                         if abs_path not in imported_files:
                             imported_files.add(abs_path)
                             await neo4j.add_relationship(
-                                from_type='File',
-                                from_name='',
-                                from_filepath=filepath,
-                                from_line=i + 1,
-                                to_type='File',
-                                to_name='',
-                                to_filepath=abs_path,
-                                to_line=0,
-                                rel_type='IMPORTS'
+                                start_filepath=filepath,
+                                relationship_type='IMPORTS',
+                                end_filepath=abs_path,
+                                properties=None
                             )
 
     @staticmethod
@@ -245,15 +232,10 @@ class RelationshipExtractor:
                 if package_path not in imported_files:
                     imported_files.add(package_path)
                     await neo4j.add_relationship(
-                        from_type='File',
-                        from_name='',
-                        from_filepath=filepath,
-                        from_line=i + 1,
-                        to_type='File',
-                        to_name='',
-                        to_filepath=package_path,
-                        to_line=0,
-                        rel_type='IMPORTS'
+                        start_filepath=filepath,
+                        relationship_type='IMPORTS',
+                        end_filepath=package_path,
+                        properties=None
                     )
 
     @staticmethod
@@ -270,15 +252,10 @@ class RelationshipExtractor:
                 if package_path not in imported_files:
                     imported_files.add(package_path)
                     await neo4j.add_relationship(
-                        from_type='File',
-                        from_name='',
-                        from_filepath=filepath,
-                        from_line=i + 1,
-                        to_type='File',
-                        to_name='',
-                        to_filepath=package_path + '.go',
-                        to_line=0,
-                        rel_type='IMPORTS'
+                        start_filepath=filepath,
+                        relationship_type='IMPORTS',
+                        end_filepath=package_path + '.go',
+                        properties=None
                     )
                 continue
 
@@ -299,15 +276,10 @@ class RelationshipExtractor:
                     if package_path not in imported_files:
                         imported_files.add(package_path)
                         await neo4j.add_relationship(
-                            from_type='File',
-                            from_name='',
-                            from_filepath=filepath,
-                            from_line=import_line + 1,
-                            to_type='File',
-                            to_name='',
-                            to_filepath=package_path + '.go',
-                            to_line=0,
-                            rel_type='IMPORTS'
+                            start_filepath=filepath,
+                            relationship_type='IMPORTS',
+                            end_filepath=package_path + '.go',
+                            properties=None
                         )
 
     @staticmethod
@@ -326,13 +298,8 @@ class RelationshipExtractor:
                     if module_path not in imported_files:
                         imported_files.add(module_path)
                         await neo4j.add_relationship(
-                            from_type='File',
-                            from_name='',
-                            from_filepath=filepath,
-                            from_line=i + 1,
-                            to_type='File',
-                            to_name='',
-                            to_filepath=module_path,
-                            to_line=0,
-                            rel_type='IMPORTS'
+                            start_filepath=filepath,
+                            relationship_type='IMPORTS',
+                            end_filepath=module_path,
+                            properties=None
                         )

@@ -264,14 +264,15 @@ class ImportAnalyzer:
         """Create import relationships in Neo4j."""
         for imported_file in imported_files:
             try:
-                # First ensure both file nodes exist
-                await neo4j.run_query(f"""
-                    MERGE (source:File {{filepath: "{filepath}"}})
-                    MERGE (target:File {{filepath: "{imported_file}"}})
-                    MERGE (source)-[:IMPORTS]->(target)
-                """)
+                # Use the correct method signature
+                await neo4j.add_relationship(
+                    start_filepath=filepath,
+                    relationship_type='IMPORTS',
+                    end_filepath=imported_file,
+                    properties=None
+                )
 
                 logger.info(
                     f"Created import relationship: {filepath} -> {imported_file}")
             except Exception as e:
-                logger.error(f"Error: {e}")
+                logger.error(f"Error creating import relationship: {e}")
