@@ -1,3 +1,4 @@
+# TODO: Remove the neo import tool
 import logging
 import traceback
 from typing import Annotated, List, Optional
@@ -112,7 +113,7 @@ class Cover:
                 )
 
                 self.neo_client = await neo_service.create_neo_client()
-                test_result = await neo_service.test_connection()
+                test_result = await neo_service.simple_test()
                 print(green(f"Neo4j connection test result: {test_result}"))
 
             # Setup repository

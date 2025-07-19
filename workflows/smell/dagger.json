@@ -8,6 +8,11 @@
     {
       "name": "builder",
       "source": "../../agents/builder"
+    },
+    {
+      "name": "neo_service",
+      "source": "../../services/neo"
     }
-  ]
+  ],
+  "description": "Code smell detection using Clean Code principles and Neo4j graph analysis"
 }

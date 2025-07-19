@@ -2,16 +2,18 @@
 name = "smell"
 version = "0.1.0"
 requires-python = ">=3.12"
-
+dependencies = [
+    "ais-dagger-agents-config>=0.1.0,<0.2.0",
+    "pyyaml>=6.0.2",
+    "dagger-io",
+    "pydantic[email]>=2.11.7",
+]
 
 [project.optional-dependencies]
-dev = [
-    "dagger-io",
-]
 
 [build-system]
 requires = ["hatchling==1.25.0"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-dagger-io = { path = "../../sdk", editable = true }
+dagger-io = { path = "sdk", editable = true }
