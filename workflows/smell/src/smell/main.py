@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Dict, List, Optional
 
+import anyio  # Added for concurrency
 import dagger
 import yaml
 from ais_dagger_agents_config.models import YAMLConfig
@@ -307,6 +308,18 @@ class Smell:
         )
         return logging.getLogger("smell.main")
 
+    def _get_concurrency_config(self) -> dict:
+        """Extract concurrency configuration from YAML config."""
+        config_obj = YAMLConfig(
+            **self.config) if isinstance(self.config, dict) else self.config
+
+        # Check for concurrency config first, fall back to defaults
+        concurrency_config = getattr(config_obj, 'concurrency', None)
+
+        return {
+            'max_concurrent': getattr(concurrency_config, 'max_concurrent', 3) if concurrency_config else 3,
+        }
+
     def _get_all_detectors(self) -> List[CodeSmellDetector]:
         """Get all available code smell detectors"""
         return [
@@ -316,6 +329,47 @@ class Smell:
             DeadCodeDetector(),
             ShotgunSurgeryDetector(),
         ]
+
+    async def _run_detectors_concurrently(
+        self,
+        detectors: List[CodeSmellDetector],
+        neo_service: NeoService,
+        logger: logging.Logger,
+        max_concurrent: int = 3
+    ) -> Dict[str, List[CodeSmell]]:
+        """Run all detectors concurrently with controlled concurrency."""
+        if not detectors:
+            return {}
+
+        semaphore = anyio.Semaphore(max_concurrent)
+        results = {}
+
+        async def run_detector_with_limit(detector: CodeSmellDetector):
+            async with semaphore:
+                detector_name = detector.get_name()
+                try:
+                    logger.info(f"🔍 Running {detector_name} detector...")
+                    smells = await detector.detect(neo_service)
+                    logger.info(
+                        f"✅ {detector_name}: {len(smells)} smells detected")
+                    return detector_name, smells
+                except Exception as e:
+                    logger.error(f"❌ {detector_name} failed: {e}")
+                    return detector_name, []
+
+        # Use anyio task group for concurrent execution
+        async with anyio.create_task_group() as tg:
+            detector_tasks = []
+
+            async def collect_result(detector: CodeSmellDetector):
+                result = await run_detector_with_limit(detector)
+                results[result[0]] = result[1]
+
+            for detector in detectors:
+                tg.start_soon(collect_result, detector)
+
+        logger.info(f"Completed all {len(detectors)} detectors concurrently")
+        return results
 
     def _generate_report(self, results: Dict[str, List[CodeSmell]]) -> str:
         """Generate a clean, actionable report"""
@@ -393,9 +447,10 @@ Your codebase follows Clean Code principles well.
         neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
         neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
     ) -> str:
-        """Analyze codebase for code smells using Clean Code principles."""
+        """Analyze codebase for code smells using Clean Code principles with concurrent execution."""
         logger = self._setup_logging()
-        logger.info("Starting code smell analysis")
+        concurrency_config = self._get_concurrency_config()
+        logger.info("Starting concurrent code smell analysis")
 
         try:
             # Create Neo4j service
@@ -411,24 +466,22 @@ Your codebase follows Clean Code principles well.
             connection_test = await neo_service.simple_test()
             logger.info(f"Neo4j connection: {connection_test}")
 
-            # Run all detectors
+            # Get all detectors
             detectors = self._get_all_detectors()
-            results = {}
+            logger.info(
+                f"Running {len(detectors)} detectors concurrently with max_concurrent={concurrency_config['max_concurrent']}")
 
-            for detector in detectors:
-                logger.info(f"🔍 Running {detector.get_name()} detector...")
-                try:
-                    smells = await detector.detect(neo_service)
-                    results[detector.get_name()] = smells
-                    logger.info(
-                        f"✅ {detector.get_name()}: {len(smells)} smells detected")
-                except Exception as e:
-                    logger.error(f"❌ {detector.get_name()} failed: {e}")
-                    results[detector.get_name()] = []
+            # Run all detectors concurrently
+            results = await self._run_detectors_concurrently(
+                detectors=detectors,
+                neo_service=neo_service,
+                logger=logger,
+                max_concurrent=concurrency_config['max_concurrent']
+            )
 
             # Generate report
             report = self._generate_report(results)
-            logger.info("✅ Code smell analysis complete")
+            logger.info("✅ Concurrent code smell analysis complete")
 
             return report
 
@@ -497,5 +550,91 @@ Your codebase follows Clean Code principles well.
 
         except Exception as e:
             error_msg = f"❌ Error running {detector_name} detector: {e}"
+            logger.error(error_msg)
+            return error_msg
+
+    @function
+    async def analyze_multiple_detectors(
+        self,
+        detector_names: Annotated[List[str], Doc("List of detectors to run: 'circular', 'large', 'envy', 'dead', 'shotgun'")],
+        github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
+        neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
+        neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
+    ) -> str:
+        """Run multiple specific detectors concurrently."""
+        logger = self._setup_logging()
+        concurrency_config = self._get_concurrency_config()
+
+        # Map detector names to classes
+        detector_map = {
+            'circular': CircularDependencyDetector(),
+            'large': LargeClassDetector(),
+            'envy': FeatureEnvyDetector(),
+            'dead': DeadCodeDetector(),
+            'shotgun': ShotgunSurgeryDetector(),
+        }
+
+        # Validate detector names
+        invalid_detectors = [
+            name for name in detector_names if name not in detector_map]
+        if invalid_detectors:
+            return f"❌ Unknown detectors: {invalid_detectors}. Available: {list(detector_map.keys())}"
+
+        try:
+            # Create Neo4j service
+            neo_service: NeoService = dag.neo_service(
+                self.config_file,
+                password=neo_password,
+                github_access_token=github_access_token,
+                neo_auth=neo_auth,
+                neo_data=self.neo_data
+            )
+
+            # Get selected detectors
+            selected_detectors = [detector_map[name]
+                                  for name in detector_names]
+            logger.info(
+                f"Running {len(selected_detectors)} selected detectors concurrently")
+
+            # Run detectors concurrently
+            results = await self._run_detectors_concurrently(
+                detectors=selected_detectors,
+                neo_service=neo_service,
+                logger=logger,
+                max_concurrent=concurrency_config['max_concurrent']
+            )
+
+            # Generate focused report
+            total_smells = sum(len(smells) for smells in results.values())
+
+            if total_smells == 0:
+                return f"✅ No code smells detected by selected detectors: {', '.join(detector_names)}"
+
+            result_lines = [
+                f"🔍 === SELECTED DETECTORS ANALYSIS ===",
+                f"📊 Detectors: {', '.join(detector_names)}",
+                f"📊 Total Issues Found: {total_smells}",
+                ""
+            ]
+
+            for category, smells in results.items():
+                if smells:
+                    result_lines.extend([
+                        f"=== {category.upper()} ===",
+                        f"Found {len(smells)} issues:",
+                        ""
+                    ])
+
+                    for smell in smells:
+                        result_lines.extend([
+                            f"⚠️  {smell}",
+                            f"   💡 Recommendation: {smell.recommendation}",
+                            ""
+                        ])
+
+            return "\n".join(result_lines)
+
+        except Exception as e:
+            error_msg = f"❌ Error running selected detectors: {e}"
             logger.error(error_msg)
             return error_msg
