@@ -94,15 +94,6 @@ class Cover:
             self.openai_api_key = openai_api_key
             self.config: YAMLConfig = YAMLConfig(**self.config)
             self.model = model_name
-            # neo_service = Neo4jService(
-            #     cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
-            #     password=neo4j_password,
-            #     neo_auth=neo_auth,
-            #     github_access_token=github_access_token,
-            #     config_file=self.config_file,
-            #     user=self.config.neo4j.username,
-            #     database=self.config.neo4j.database,
-            #     uri="neo4j://neo:7687")
             if not self.neo_client:
                 neo_service: NeoService = dag.neo_service(
                     self.config_file,
