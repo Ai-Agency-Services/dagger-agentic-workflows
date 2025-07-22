@@ -644,34 +644,70 @@ async def analyze_imports_tool(ctx: RunContext[CoverAgentDependencies], filepath
     try:
         print(blue(f"📊 Analyzing imports for file: {filepath}"))
 
+        # Get working directory from config
+        config = ctx.deps.config
+        work_dir = getattr(config.container, 'work_dir', '/app')
+        print(blue(f"🔧 Using work directory from config: {work_dir}"))
+
+        # FIXED: Convert relative paths to absolute container paths using config work_dir
+        def normalize_filepath(path: str) -> str:
+            """Convert relative paths to absolute container paths using config work_dir"""
+            if path.startswith(work_dir + '/'):
+                return path  # Already absolute with work_dir
+            elif path.startswith('./'):
+                return f"{work_dir}/{path[2:]}"  # Remove ./ and add work_dir/
+            elif path.startswith('/'):
+                # If it's absolute but not in work_dir, assume it's meant to be
+                if not path.startswith(work_dir):
+                    return f"{work_dir}{path}"
+                return path
+            else:
+                return f"{work_dir}/{path}"  # Add work_dir/ prefix
+
+        normalized_filepath = normalize_filepath(filepath)
+        print(blue(f"🔧 Normalized filepath: {normalized_filepath}"))
+
         # Query 1: Direct imports
-        print(blue(f"🔍 Finding files imported by {filepath}..."))
+        print(blue(f"🔍 Finding files imported by {normalized_filepath}..."))
         imports_query = f"""
-        MATCH (f:File {{filepath: "{filepath}"}})-[:IMPORTS]->(imported:File)
+        MATCH (f:File {{filepath: "{normalized_filepath}"}})-[:IMPORTS]->(imported:File)
         RETURN imported.filepath as imported_file, imported.language as language
         """
         imports_result = await run_cypher_query_tool(ctx, imports_query)
         print(green(f"✅ Imports query complete"))
 
         # Query 2: Files that import this file
-        print(blue(f"🔍 Finding files that import {filepath}..."))
+        print(blue(f"🔍 Finding files that import {normalized_filepath}..."))
         dependents_query = f"""
-        MATCH (f:File)-[:IMPORTS]->(target:File {{filepath: "{filepath}"}})
+        MATCH (f:File)-[:IMPORTS]->(target:File {{filepath: "{normalized_filepath}"}})
         RETURN f.filepath as dependent_file, f.language as language
         """
         dependents_result = await run_cypher_query_tool(ctx, dependents_query)
         print(green(f"✅ Dependents query complete"))
 
+        # Query 3: Check if file exists in database
+        print(blue(f"🔍 Verifying file exists in database..."))
+        exists_query = f"""
+        MATCH (f:File {{filepath: "{normalized_filepath}"}})
+        RETURN f.filepath, f.language
+        """
+        exists_result = await run_cypher_query_tool(ctx, exists_query)
+
         # Format output
         result = f"""
-        === Imports Analysis for {filepath} ===
-        
-        Files imported by {filepath}:
-        {imports_result}
-        
-        Files that import {filepath}:
-        {dependents_result}
-        """
+=== Imports Analysis for {filepath} ===
+Work directory from config: {work_dir}
+Normalized path: {normalized_filepath}
+
+File exists in database:
+{exists_result}
+
+Files imported by {filepath}:
+{imports_result}
+
+Files that import {filepath}:
+{dependents_result}
+"""
         print(green(f"✅ Analysis complete for {filepath}"))
         return result
 
@@ -687,101 +723,53 @@ async def analyze_imports_tool(ctx: RunContext[CoverAgentDependencies], filepath
 
 
 async def add_neo4j_usage_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
-    return """
-    \n ------- \n
-    <neo4j_usage>
-    IMPORTANT: Before writing tests, analyze imports to understand dependencies!
+    # Get working directory from config
+    config = ctx.deps.config
+    work_dir = getattr(config.container, 'work_dir', '/app')
+
+    return f"""
+\n ------- \n
+<neo4j_usage>
+IMPORTANT: Before writing tests, analyze imports to understand dependencies!
+
+The codebase has been indexed in a Neo4j graph database. To write effective tests, 
+you should first understand what modules the code depends on and what other modules 
+depend on it.
+
+IMPORTANT PATH FORMAT: All file paths in the database use absolute container paths starting with "{work_dir}/".
+- Correct: "{work_dir}/src/hooks/use-toast.ts"
+- Incorrect: "./src/hooks/use-toast.ts" or "src/hooks/use-toast.ts"
+
+Working directory from config: {work_dir}
+
+For example, if you're testing module X that imports module Y, you'll need to mock Y's behavior.
+Similarly, if module Z imports X, you'll need test cases covering X's public API.
+
+Follow these steps:
+
+1. First run this query to see what the file you're testing imports:
+```
+MATCH (f:File {{filepath: "path/to/your/file.js"}})-[:IMPORTS]->(imported:File)
+RETURN imported.filepath
+```
     
-    The codebase has been indexed in a Neo4j graph database. To write effective tests, 
-    you should first understand what modules the code depends on and what other modules 
-    depend on it.
+2. Then check what files depend on the one you're testing:
+```
+MATCH (f:File)-[:IMPORTS]->(target:File {{filepath: "path/to/your/file.js"}})
+RETURN f.filepath
+```
     
-    For example, if you're testing module X that imports module Y, you'll need to mock Y's behavior.
-    Similarly, if module Z imports X, you'll need test cases covering X's public API.
+3. Finally, check for internal dependencies between functions/classes:
+```
+MATCH (s1:Symbol)-[:CALLS|REFERENCES]->(s2:Symbol)
+WHERE s1.filepath = "path/to/your/file.js" AND s2.filepath = "path/to/your/file.js"
+RETURN s1.name, s2.name, type((s1)-[r]->(s2))
+```
     
-    Follow these steps:
-    
-    1. First run this query to see what the file you're testing imports:
-    ```
-    MATCH (f:File {filepath: "path/to/your/file.js"})-[:IMPORTS]->(imported:File)
-    RETURN imported.filepath
-    ```
-    
-    2. Then check what files depend on the one you're testing:
-    ```
-    MATCH (f:File)-[:IMPORTS]->(target:File {filepath: "path/to/your/file.js"})
-    RETURN f.filepath
-    ```
-    
-    3. Finally, check for internal dependencies between functions/classes:
-    ```
-    MATCH (s1:Symbol)-[:CALLS|REFERENCES]->(s2:Symbol)
-    WHERE s1.filepath = "path/to/your/file.js" AND s2.filepath = "path/to/your/file.js"
-    RETURN s1.name, s2.name, type((s1)-[r]->(s2))
-    ```
-    
-    You can use analyze_imports_tool(filepath) for a quick overview or run_cypher_query_tool(query) for custom queries.
-    </neo4j_usage>
-    \n ------- \n
+You can use analyze_imports_tool(filepath) for a quick overview or run_cypher_query_tool(query) for custom queries.
+</neo4j_usage>
+\n ------- \n
     """
-
-
-async def analyze_imports_tool(ctx: RunContext[CoverAgentDependencies], filepath: str) -> str:
-    """Tool: Analyze the imports for a specific file.
-    
-    Args:
-        filepath: The path to the file to analyze.
-    """
-    print(yellow(f"=== START: analyze_imports_tool for {filepath} ==="))
-
-    if not ctx.deps.neo4j_client:
-        error_msg = "Neo4j client is not available. Cannot analyze imports."
-        print(red(f"❌ {error_msg}"))
-        return error_msg
-
-    try:
-        print(blue(f"📊 Analyzing imports for file: {filepath}"))
-
-        # Query 1: Direct imports
-        print(blue(f"🔍 Finding files imported by {filepath}..."))
-        imports_query = f"""
-        MATCH (f:File {{filepath: "{filepath}"}})-[:IMPORTS]->(imported:File)
-        RETURN imported.filepath as imported_file, imported.language as language
-        """
-        imports_result = await run_cypher_query_tool(ctx, imports_query)
-        print(green(f"✅ Imports query complete"))
-
-        # Query 2: Files that import this file
-        print(blue(f"🔍 Finding files that import {filepath}..."))
-        dependents_query = f"""
-        MATCH (f:File)-[:IMPORTS]->(target:File {{filepath: "{filepath}"}})
-        RETURN f.filepath as dependent_file, f.language as language
-        """
-        dependents_result = await run_cypher_query_tool(ctx, dependents_query)
-        print(green(f"✅ Dependents query complete"))
-
-        # Format output
-        result = f"""
-        === Imports Analysis for {filepath} ===
-        
-        Files imported by {filepath}:
-        {imports_result}
-        
-        Files that import {filepath}:
-        {dependents_result}
-        """
-        print(green(f"✅ Analysis complete for {filepath}"))
-        return result
-
-    except Exception as e:
-        error_msg = f"Error analyzing imports: {e}"
-        print(red(f"❌ {error_msg}"))
-        import traceback
-        traceback.print_exc()
-        return error_msg
-    finally:
-        print(yellow(f"=== END: analyze_imports_tool for {filepath} ==="))
-        print("")  # Extra newline for better separation in logs
 
 
 def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
