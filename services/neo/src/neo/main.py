@@ -173,22 +173,20 @@ class NeoService:
     @function
     async def run_query(self, query: str) -> str:
         """Run a query against the Neo4j service"""
-        # Convert config dict to YAMLConfig object
         self.config: YAMLConfig = YAMLConfig(
             **self.config) if isinstance(self.config, dict) else self.config
 
-        # Ensure client exists
         await self.ensure_client()
 
         # Write query to file
-        client = (
-            self.cypher_shell_client.with_new_file(
-                "/tmp/query.cypher", query)
-        )
+        client = self.cypher_shell_client.with_new_file(
+            "/tmp/query.cypher", query)
 
         return await client.with_exec([
             "cypher-shell",
             "-a", self.config.neo4j.uri,
+            "-d", "neo4j",  # Explicitly specify the database
+            "-u", self.config.neo4j.username,
             "--non-interactive",
             "-f", "/tmp/query.cypher"
         ]).stdout()
@@ -207,135 +205,83 @@ class NeoService:
 
     @function
     async def test_connection(self) -> str:
-        """Test connection to Neo4j service using simple working queries"""
-        logger = self._get_logger()
-
-        self.config: YAMLConfig = YAMLConfig(
-            **self.config) if isinstance(self.config, dict) else self.config
-
-        await self.ensure_client()
-
+        """Test connection to Neo4j service using improved parsing"""
         try:
-            # Use the same simple queries that work in simple_test
+            await self.ensure_client()
+
+            # Use the same queries and parsing as simple_test
             connection_result = await self.run_query("RETURN 'Connected' as status")
             total_nodes_raw = await self.run_query("MATCH (n) RETURN count(n)")
             total_rels_raw = await self.run_query("MATCH ()-[r]->() RETURN count(r)")
-
-            # Get node type counts using simpler approach
             node_stats_raw = await self.run_query("CALL db.labels()")
             rel_stats_raw = await self.run_query("CALL db.relationshipTypes()")
 
-            # Get sample relationships using a simpler query
+            # Get sample relationships
             sample_rels_raw = await self.run_query("""
             MATCH (a)-[r]->(b) 
-            RETURN type(r), labels(a)[0], labels(b)[0]
+            RETURN type(r) as rel_type, 
+                   labels(a)[0] + ': ' + coalesce(a.name, a.filepath, toString(id(a))) AS from_node, 
+                   labels(b)[0] + ': ' + coalesce(b.name, b.filepath, toString(id(b))) AS to_node
             LIMIT 15
             """)
 
-            # Simple parsing functions that we know work
-            def simple_parse(raw_output: str) -> str:
-                lines = [line.strip()
-                         for line in raw_output.strip().split('\n') if line.strip()]
-                return lines[1] if len(lines) >= 2 else "0"
+            # Use the improved parsing functions
+            def improved_simple_parse(raw_output: str) -> str:
+                if not raw_output:
+                    return "0"
+                lines = [line.strip() for line in raw_output.strip().split('\n') if line.strip()]
+                for line in lines:
+                    clean_line = line.strip('"').strip("'")
+                    if clean_line.isdigit():
+                        return clean_line
+                return lines[-1] if lines else "0"
 
-            def parse_list(raw_output: str) -> str:
-                lines = [line.strip()
-                         for line in raw_output.strip().split('\n') if line.strip()]
-                if len(lines) > 1:
-                    # Remove quotes and format nicely
-                    items = [line.strip('"') for line in lines[1:]]
-                    return '\n'.join(items)
-                return "None found"
+            def improved_parse_list(raw_output: str) -> str:
+                if not raw_output:
+                    return "None found"
+                lines = [line.strip() for line in raw_output.strip().split('\n') if line.strip()]
+                data_lines = []
+                for line in lines:
+                    if (line.lower().startswith('label') or 
+                        line.lower().startswith('relationshiptype') or
+                        all(c in '-=+|' for c in line)):
+                        continue
+                    if line and line not in data_lines:
+                        clean_line = line.strip('"').strip("'")
+                        if clean_line:
+                            data_lines.append(clean_line)
+                return '\n'.join(data_lines) if data_lines else "None found"
 
-            def parse_sample_rels(raw_output: str) -> str:
-                lines = [line.strip()
-                         for line in raw_output.strip().split('\n') if line.strip()]
-                if len(lines) > 1:
-                    # Skip header, format relationship data
-                    formatted = []
-                    for line in lines[1:]:
-                        # Simple space-split for the three columns
-                        parts = line.split()
-                        if len(parts) >= 3:
-                            rel_type = parts[0].strip('"')
-                            from_type = parts[1].strip('"')
-                            to_type = parts[2].strip('"')
-                            formatted.append(
-                                f"{from_type} -[{rel_type}]-> {to_type}")
-                        else:
-                            formatted.append(line.strip('"'))
-                    # Limit to 10 for readability
-                    return '\n'.join(formatted[:10])
-                return "No relationships found"
+            # Parse results
+            connection_status = improved_simple_parse(connection_result).strip()
+            total_nodes = improved_simple_parse(total_nodes_raw)
+            total_rels = improved_simple_parse(total_rels_raw)
+            node_types = improved_parse_list(node_stats_raw)
+            rel_types = improved_parse_list(rel_stats_raw)
+            
+            # Parse sample relationships similarly
+            sample_rels = improved_parse_list(sample_rels_raw)
 
-            # Get individual node type counts
-            node_type_counts = {}
-            node_types = parse_list(node_stats_raw).split('\n')
-            for node_type in node_types:
-                if node_type and node_type != "None found":
-                    try:
-                        count_raw = await self.run_query(f"MATCH (n:{node_type}) RETURN count(n)")
-                        count = simple_parse(count_raw)
-                        node_type_counts[node_type] = count
-                    except:
-                        node_type_counts[node_type] = "?"
+            return f"""
+=== Neo4j Connection Test ===
+Status: {connection_status}
 
-            # Get individual relationship type counts
-            rel_type_counts = {}
-            rel_types = parse_list(rel_stats_raw).split('\n')
-            for rel_type in rel_types:
-                if rel_type and rel_type != "None found":
-                    try:
-                        count_raw = await self.run_query(f"MATCH ()-[r:{rel_type}]->() RETURN count(r)")
-                        count = simple_parse(count_raw)
-                        rel_type_counts[rel_type] = count
-                    except:
-                        rel_type_counts[rel_type] = "?"
+=== Total Counts ===
+Nodes: {total_nodes}
+Relationships: {total_rels}
 
-            # Parse the basic results
-            total_nodes = simple_parse(total_nodes_raw)
-            total_rels = simple_parse(total_rels_raw)
-            connection_status = simple_parse(connection_result).strip('"')
-            sample_rels = parse_sample_rels(sample_rels_raw)
+=== Node Types ===
+{node_types}
 
-            # Format node type counts
-            node_stats_formatted = []
-            for node_type, count in node_type_counts.items():
-                node_stats_formatted.append(f"{node_type}: {count}")
-            node_stats = '\n'.join(
-                node_stats_formatted) if node_stats_formatted else "No nodes found"
+=== Relationship Types ===
+{rel_types}
 
-            # Format relationship type counts
-            rel_stats_formatted = []
-            for rel_type, count in rel_type_counts.items():
-                rel_stats_formatted.append(f"{rel_type}: {count}")
-            rel_stats = '\n'.join(
-                rel_stats_formatted) if rel_stats_formatted else "No relationships found"
-
-            # Format final report
-            report = [
-                "=== Neo4j Connection Test ===",
-                f"Status: {connection_status}",
-                "",
-                "=== Total Counts ===",
-                f"Nodes: {total_nodes}",
-                f"Relationships: {total_rels}",
-                "",
-                "=== Node Types ===",
-                node_stats,
-                "",
-                "=== Relationship Types ===",
-                rel_stats,
-                "",
-                "=== Sample Relationships (max 15) ===",
-                sample_rels
-            ]
-
-            return "\n".join(report)
+=== Sample Relationships (max 15) ===
+{sample_rels}
+"""
 
         except Exception as e:
-            logger.error(f"Connection test failed: {e}")
-            return f"Connection failed: {str(e)}"
+            return f"Connection test failed: {str(e)}"
 
     @function
     def connect(self) -> bool:
@@ -565,7 +511,7 @@ Raw Relationship Types Output:
 
     @function
     async def simple_test(self) -> str:
-        """Simple test using the same queries as debug_database"""
+        """Simple test with improved parsing logic"""
         try:
             await self.ensure_client()
 
@@ -574,26 +520,70 @@ Raw Relationship Types Output:
             labels_result = await self.run_query("CALL db.labels()")
             rel_types_result = await self.run_query("CALL db.relationshipTypes()")
 
-            # Simple parsing - just take the second line
-            def simple_parse(raw_output: str) -> str:
+            # Debug: Let's see what we're actually getting
+            debug_info = f"""
+=== RAW OUTPUT DEBUG ===
+Count Result:
+{repr(count_result)}
+
+Labels Result:
+{repr(labels_result)}
+
+Rel Types Result:
+{repr(rel_types_result)}
+"""
+
+            # Improved parsing functions
+            def improved_simple_parse(raw_output: str) -> str:
+                """Parse a single value result more robustly"""
+                if not raw_output:
+                    return "0"
+
                 lines = [line.strip()
                          for line in raw_output.strip().split('\n') if line.strip()]
-                return lines[1] if len(lines) >= 2 else "0"
 
-            def parse_list(raw_output: str) -> str:
+                # Look for a line that contains just a number
+                for line in lines:
+                    # Remove quotes and try to parse as number
+                    clean_line = line.strip('"').strip("'")
+                    if clean_line.isdigit():
+                        return clean_line
+
+                # Fallback: return the last non-empty line
+                return lines[-1] if lines else "0"
+
+            def improved_parse_list(raw_output: str) -> str:
+                """Parse list results more robustly"""
+                if not raw_output:
+                    return "None found"
+
                 lines = [line.strip()
                          for line in raw_output.strip().split('\n') if line.strip()]
-                # Skip header, return the rest
-                if len(lines) > 1:
-                    return '\n'.join(lines[1:])
-                return "None found"
 
-            node_count = simple_parse(count_result)
-            node_types = parse_list(labels_result)
-            rel_types = parse_list(rel_types_result)
+                # Filter out header-like lines and empty lines
+                data_lines = []
+                for line in lines:
+                    # Skip lines that look like headers
+                    if line.lower().startswith('label') or line.lower().startswith('relationshiptype'):
+                        continue
+                    # Skip lines with just dashes or equals
+                    if all(c in '-=+|' for c in line):
+                        continue
+                    # Add non-empty lines
+                    if line and line not in data_lines:
+                        # Remove quotes
+                        clean_line = line.strip('"').strip("'")
+                        if clean_line:
+                            data_lines.append(clean_line)
+
+                return '\n'.join(data_lines) if data_lines else "None found"
+
+            node_count = improved_simple_parse(count_result)
+            node_types = improved_parse_list(labels_result)
+            rel_types = improved_parse_list(rel_types_result)
 
             return f"""
-=== Simple Neo4j Test ===
+=== Simple Neo4j Test (Improved) ===
 Node Count: {node_count}
 
 Node Types:
@@ -601,6 +591,8 @@ Node Types:
 
 Relationship Types:
 {rel_types}
+
+{debug_info}
 """
 
         except Exception as e:
