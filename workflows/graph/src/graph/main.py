@@ -68,41 +68,6 @@ class Graph:
         # Escape quotes and backslashes
         return value.replace('\\', '\\\\').replace('"', '\\"').replace("'", "\\'")
 
-    def _extract_simple_imports(self, content: str, filepath: str) -> List[str]:
-        """Extract imports using simple regex patterns."""
-        imports = []
-
-        # Get file extension to determine import patterns
-        _, ext = os.path.splitext(filepath)
-        ext = ext.lower()
-
-        if ext == '.py':
-            # Python imports
-            patterns = [
-                r'from\s+([^\s]+)\s+import',  # from module import
-                r'import\s+([^\s,]+)',        # import module
-            ]
-        elif ext in ['.js', '.ts', '.jsx', '.tsx']:
-            # JavaScript/TypeScript imports
-            patterns = [
-                r'from\s+[\'"]([^\'"]+)[\'"]',     # from 'module'
-                r'import\s+[\'"]([^\'"]+)[\'"]',   # import 'module'
-                r'require\([\'"]([^\'"]+)[\'"]\)',  # require('module')
-            ]
-        else:
-            return imports
-
-        for pattern in patterns:
-            matches = re.findall(pattern, content, re.MULTILINE)
-            for match in matches:
-                # Clean up the import path
-                import_path = match.strip()
-                # Skip relative imports for now
-                if import_path and not import_path.startswith('.'):
-                    imports.append(import_path)
-
-        return list(set(imports))  # Remove duplicates
-
     def _build_file_cypher(self, filepath: str, language: str) -> str:
         """Build Cypher query for creating a file node - OPTIMIZED VERSION."""
         escaped_filepath = self._escape_cypher_string(filepath)
@@ -325,10 +290,15 @@ class Graph:
                                 symbol_dict, filepath))
                             symbols.append((filepath, symbol_type))
 
-                # Extract imports using simple regex patterns
+                # Replace the simple import extraction with ImportAnalyzer
                 try:
-                    file_imports = self._extract_simple_imports(
-                        content, filepath)
+                    # Use the more robust ImportAnalyzer instead of simple regex
+                    file_imports = await ImportAnalyzer.analyze_file_imports(
+                        filepath=filepath,
+                        content=content,
+                        neo4j=None  # Don't create relationships here, just get the imports
+                    )
+                    # Convert Set to List and add to imports collection
                     for import_path in file_imports:
                         imports.append((filepath, import_path))
                 except Exception as import_err:

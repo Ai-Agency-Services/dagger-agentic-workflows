@@ -179,13 +179,13 @@ class NeoService:
         await self.ensure_client()
 
         # Write query to file
-        client = self.cypher_shell_client.with_new_file(
+        client = self.cypher_shell_client.with_env_variable("CACHE_BUSTER", datetime.now().isoformat()).with_new_file(
             "/tmp/query.cypher", query)
 
         return await client.with_exec([
             "cypher-shell",
             "-a", self.config.neo4j.uri,
-            "-d", "neo4j",  # Explicitly specify the database
+            "-d", "neo4j",
             "-u", self.config.neo4j.username,
             "--non-interactive",
             "-f", "/tmp/query.cypher"
