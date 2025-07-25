@@ -17,6 +17,8 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
 from simple_chalk import blue, red, yellow, green
 
+from dagger.client.gen import NeoService
+
 # Initialize tracer for OpenTelemetry
 tracer = trace.get_tracer(__name__)
 
@@ -33,7 +35,7 @@ class CoverAgentDependencies:
     report: CoverageReport
     reporter: 'Reporter'
     current_code_module: Optional[CodeModule] = field(default=None)
-    neo4j_client: Optional[dagger.Container] = field(default=None)
+    neo_service: Optional[NeoService] = field(default=None)
 
 
 async def add_coverage_report_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
@@ -596,26 +598,15 @@ async def run_cypher_query_tool(ctx: RunContext[CoverAgentDependencies], query: 
     print(
         blue(f"🔍 Running Neo4j query: {query[:100]}{'...' if len(query) > 100 else ''}"))
 
-    if not ctx.deps.neo4j_client:
+    if not ctx.deps.neo_service:
         error_msg = "Neo4j client is not available. Cannot run Cypher query."
         print(red(f"❌ {error_msg}"))
         return error_msg
 
     try:
-        # Create the query file
-        client = ctx.deps.neo4j_client.with_new_file(
-            "/tmp/query.cypher", query
-        )
-        print(blue(f"📝 Created query file in container"))
-
         # Execute query
         print(blue(f"⚙️ Executing query with cypher-shell..."))
-        result = await client.with_exec([
-            "cypher-shell",
-            "-a", ctx.deps.config.neo4j.uri,
-            "--non-interactive",
-            "-f", "/tmp/query.cypher"
-        ]).stdout()
+        result = await ctx.deps.neo_service.run_query(query=query)
 
         # Log results
         print(
@@ -636,7 +627,7 @@ async def analyze_imports_tool(ctx: RunContext[CoverAgentDependencies], filepath
     """
     print(yellow(f"=== START: analyze_imports_tool for {filepath} ==="))
 
-    if not ctx.deps.neo4j_client:
+    if not ctx.deps.neo_service:
         error_msg = "Neo4j client is not available. Cannot analyze imports."
         print(red(f"❌ {error_msg}"))
         return error_msg

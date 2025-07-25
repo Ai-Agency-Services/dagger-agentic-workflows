@@ -35,6 +35,7 @@ class Cover:
     model: str = "x-ai/grok-3-mini-beta"
     neo_client: Optional[dagger.Container] = None
     neo_data: Optional[dagger.CacheVolume] = None
+    neo_service: Optional[NeoService] = None
 
     @classmethod
     async def create(
@@ -94,18 +95,16 @@ class Cover:
             self.openai_api_key = openai_api_key
             self.config: YAMLConfig = YAMLConfig(**self.config)
             self.model = model_name
-            if not self.neo_client:
-                neo_service: NeoService = dag.neo_service(
-                    self.config_file,
-                    password=neo4j_password,
-                    github_access_token=github_access_token,
-                    neo_auth=neo_auth,
-                    neo_data=self.neo_data
+            self.neo_service = dag.neo_service(
+                self.config_file,
+                password=neo4j_password,
+                github_access_token=github_access_token,
+                neo_auth=neo_auth,
+                neo_data=self.neo_data
                 )
 
-                self.neo_client = await neo_service.create_neo_client()
-                test_result = await neo_service.simple_test()
-                print(green(f"Neo4j connection test result: {test_result}"))
+            test_result = await self.neo_service.test_connection()
+            print(green(f"Neo4j connection test result: {test_result}"))
 
             # Setup repository
             source = (
@@ -194,7 +193,7 @@ class Cover:
                 container=current_container,
                 report=report,
                 reporter=self.reporter,
-                neo4j_client=self.neo_client,
+                neo_service=self.neo_service,
             )
 
             # Run test generation
