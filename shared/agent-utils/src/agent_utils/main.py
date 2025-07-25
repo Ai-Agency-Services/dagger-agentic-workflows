@@ -3,18 +3,11 @@ import json
 import os
 import re
 from enum import Enum
-from typing import NamedTuple, Optional, List, Any
+from typing import NamedTuple, Optional, List, Any, Dict
 
 import dagger
 from dagger import dag, field, function, object_type
 from pydantic import BaseModel
-
-# @object_type
-# class LLMCredentials(NamedTuple):
-#     """Holds the base URL and API key for an LLM provider."""
-#     base_url: Optional[str]
-#     api_key: dagger.Secret
-
 
 class SymbolType(Enum):
     VARIABLE = "variable"
@@ -27,6 +20,9 @@ class SymbolType(Enum):
     CONSTANT = "constant"
     METHOD = "method"
     PROPERTY = "property"
+    MODULE = "module"
+    TYPE = "type"
+    IMPORT = "import"
 
 
 class CodeSymbol(BaseModel):
@@ -39,6 +35,9 @@ class CodeSymbol(BaseModel):
     scope: Optional[str] = None
     signature: Optional[str] = None
     visibility: Optional[str] = None
+    parameters: Optional[List[Dict[str, str]]] = None
+    return_type: Optional[str] = None
+    docstring: Optional[str] = None
 
 
 class CodeFile(BaseModel):
@@ -46,12 +45,12 @@ class CodeFile(BaseModel):
     filepath: str
     language: str
     symbols: List[CodeSymbol] = []
+    imports: List[str] = []
 
 
 def detect_language(filepath: str) -> str:
     """Detect the programming language from the file extension."""
     ext = os.path.splitext(filepath)[1].lower()
-    print(f"**** Detecting language for file: {filepath}, extension: {ext}")
     language_map = {
         '.py': 'python',
         '.js': 'javascript',
@@ -73,877 +72,565 @@ def detect_language(filepath: str) -> str:
         '.kt': 'kotlin',
         '.cs': 'csharp',
         '.xml': 'xml',
-        'xsl': 'xml',
-        'xslt': 'xml',
         '.json': 'json',
     }
     return language_map.get(ext, 'unknown')
 
 
-def parse_python_code(content: str) -> list[CodeSymbol]:
-    """Parse Python code to extract symbols using AST."""
-    symbols = []
-
-    try:
-        tree = ast.parse(content)
-
-        # Track scopes for nested definitions
-        current_scope = ""
-
-        # Process all nodes in the AST
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
-                # Check if it's a method in a class
-                symbol_type = "method" if current_scope else "function"
-
-                # Get function arguments
-                args_list = []
-                for arg in node.args.args:
-                    args_list.append(arg.arg)
-
-                # Get default values for arguments
-                defaults = [None] * (len(node.args.args) -
-                                     len(node.args.defaults)) + node.args.defaults
-
-                # Create argument signatures with defaults when available
-                arg_signatures = []
-                for i, arg in enumerate(node.args.args):
-                    if defaults[i] is None:
-                        arg_signatures.append(arg.arg)
-                    else:
-                        if isinstance(defaults[i], ast.Constant):
-                            default_val = defaults[i].value
-                            arg_signatures.append(f"{arg.arg}={default_val}")
-                        else:
-                            arg_signatures.append(f"{arg.arg}=...")
-
-                signature = f"def {node.name}({', '.join(arg_signatures)})"
-
-                full_name = f"{current_scope}.{node.name}" if current_scope else node.name
-
-                symbols.append(CodeSymbol(
-                    name=node.name,
-                    type=symbol_type,
-                    line_number=node.lineno,
-                    column=node.col_offset,
-                    end_line=node.end_lineno,
-                    end_column=node.end_col_offset,
-                    scope=current_scope,
-                    signature=signature
-                ))
-
-            elif isinstance(node, ast.ClassDef):
-                old_scope = current_scope
-                current_scope = node.name if not current_scope else f"{current_scope}.{node.name}"
-
-                symbols.append(CodeSymbol(
-                    name=node.name,
-                    type="class",
-                    line_number=node.lineno,
-                    column=node.col_offset,
-                    end_line=node.end_lineno,
-                    end_column=node.end_col_offset,
-                    scope=old_scope
-                ))
-
-                # Reset scope after processing this class's children
-                current_scope = old_scope
-
-            elif isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        # Check if this is likely a constant (ALL_CAPS)
-                        is_constant = target.id.isupper()
-
-                        symbols.append(CodeSymbol(
-                            name=target.id,
-                            type="constant" if is_constant else "variable",
-                            line_number=target.lineno,
-                            column=target.col_offset,
-                            scope=current_scope
-                        ))
-    except SyntaxError as e:
-        print(f"Syntax error parsing Python code: {e}")
-
-    return symbols
-
-
-def parse_javascript_code(content: str) -> list[CodeSymbol]:
-    """Parse JavaScript/TypeScript code using regex patterns."""
-    symbols = []
-
-    # Regex patterns for JavaScript/TypeScript
-    function_patterns = [
-        # Regular function declaration
-        r'function\s+(\w+)\s*\([^)]*\)',
-        # Arrow function with explicit name
-        r'(?:const|let|var)\s+(\w+)\s*=\s*(?:\([^)]*\)|[^=]*)\s*=>\s*[{]?',
-        # Class method
-        r'(?:async\s+)?(\w+)\s*\([^)]*\)\s*[{]',
-        # Constructor
-        r'constructor\s*\([^)]*\)'
-    ]
-
-    class_pattern = r'class\s+(\w+)'
-    variable_patterns = [
-        # var, let, const declarations
-        r'(?:var|let|const)\s+(\w+)(?:\s*=|,|\s*$)',
-        # TypeScript interfaces
-        r'interface\s+(\w+)',
-        # TypeScript types
-        r'type\s+(\w+)',
-        # TypeScript enum
-        r'enum\s+(\w+)'
-    ]
-
-    # Process file line by line
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        # Check for functions
-        for pattern in function_patterns:
-            for match in re.finditer(pattern, line):
-                if pattern == r'constructor\s*\([^)]*\)':
-                    name = "constructor"
-                else:
-                    name = match.group(1)
-
-                symbols.append(CodeSymbol(
-                    name=name,
-                    type="function",
-                    line_number=i+1,
-                    column=match.start(),
-                    signature=match.group(0)
-                ))
-
-        # Check for classes
-        for match in re.finditer(class_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="class",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for variables and other declarations
-        for pattern in variable_patterns:
-            for match in re.finditer(pattern, line):
-                if "interface" in pattern:
-                    symbol_type = "interface"
-                elif "type" in pattern:
-                    symbol_type = "type"
-                elif "enum" in pattern:
-                    symbol_type = "enum"
-                else:
-                    symbol_type = "constant" if match.group(
-                        1).isupper() else "variable"
-
-                symbols.append(CodeSymbol(
-                    name=match.group(1),
-                    type=symbol_type,
-                    line_number=i+1,
-                    column=match.start()
-                ))
-
-    return symbols
-
-
-def parse_java_code(content: str) -> list[CodeSymbol]:
-    """Parse Java code using regex patterns."""
-    symbols = []
-
-    # Regex patterns for Java
-    class_pattern = r'(?:public|private|protected)?\s+(?:abstract|final)?\s+class\s+(\w+)'
-    interface_pattern = r'(?:public|private|protected)?\s+interface\s+(\w+)'
-    enum_pattern = r'(?:public|private|protected)?\s+enum\s+(\w+)'
-
-    method_pattern = r'(?:public|private|protected)?\s+(?:static|final|abstract)?\s+(?:\w+(?:<[^>]*>)?)\s+(\w+)\s*\([^)]*\)'
-    field_pattern = r'(?:public|private|protected)?\s+(?:static|final)?\s+(?:\w+(?:<[^>]*>)?)\s+(\w+)\s*[=;]'
-
-    # Process file line by line
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        # Check for classes
-        for match in re.finditer(class_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="class",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for interfaces
-        for match in re.finditer(interface_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="interface",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for enums
-        for match in re.finditer(enum_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="enum",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for methods
-        for match in re.finditer(method_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="method",
-                line_number=i+1,
-                column=match.start(),
-                signature=match.group(0)
-            ))
-
-        # Check for fields
-        for match in re.finditer(field_pattern, line):
-            is_constant = re.search(
-                r'\bfinal\b', line) and match.group(1).isupper()
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="constant" if is_constant else "variable",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-    return symbols
-
-
-def parse_c_cpp_code(content: str) -> list[CodeSymbol]:
-    """Parse C/C++ code using regex patterns."""
-    symbols = []
-
-    # Regex patterns for C/C++
-    function_pattern = r'(?:\w+\s+)+(\w+)\s*\([^;{]*\)\s*[{]'
-    class_pattern = r'(?:class|struct)\s+(\w+)'
-    variable_pattern = r'(?:int|float|double|char|bool|unsigned|long|short|void\s*\*|[a-zA-Z_]\w*(?:<[^>]*>)?)\s+(\w+)(?:\s*\[|\s*=|\s*;|\s*,)'
-    enum_pattern = r'enum\s+(?:class\s+)?(\w+)'
-    define_pattern = r'#define\s+(\w+)'
-
-    # Process file line by line
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        # Strip comments to avoid false positives
-        line = re.sub(r'//.*$', '', line)
-
-        # Check for functions
-        for match in re.finditer(function_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="function",
-                line_number=i+1,
-                column=match.start(),
-                signature=match.group(0).strip('{')
-            ))
-
-        # Check for classes and structs
-        for match in re.finditer(class_pattern, line):
-            symbol_type = "class" if "class" in line[:match.start(
-            )] else "struct"
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type=symbol_type,
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for enums
-        for match in re.finditer(enum_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="enum",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for #define macros
-        for match in re.finditer(define_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="constant",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for variables
-        for match in re.finditer(variable_pattern, line):
-            # Skip if this is part of a function declaration
-            if re.search(r'\)\s*$', line):
-                continue
-
-            is_constant = match.group(1).isupper(
-            ) or "const " in line[:match.start()]
-            symbols.append(CodeSymbol(
-                name=match.group(2),
-                type="constant" if is_constant else "variable",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-    return symbols
-
-
-def parse_go_code(content: str) -> list[CodeSymbol]:
-    """Parse Go code using regex patterns."""
-    symbols = []
-
-    # Regex patterns for Go
-    function_pattern = r'func\s+(\w+)'
-    method_pattern = r'func\s+\([^)]*\)\s+(\w+)'
-    struct_pattern = r'type\s+(\w+)\s+struct'
-    interface_pattern = r'type\s+(\w+)\s+interface'
-    const_pattern = r'const\s+(\w+)'
-    var_pattern = r'var\s+(\w+)'
-
-    # Process file line by line
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        # Check for functions
-        for match in re.finditer(function_pattern, line):
-            # Skip methods (handled separately)
-            if re.search(r'func\s+\(', line[:match.start()]):
-                continue
-
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="function",
-                line_number=i+1,
-                column=match.start(),
-                signature=line.strip()
-            ))
-
-        # Check for methods
-        for match in re.finditer(method_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="method",
-                line_number=i+1,
-                column=match.start(),
-                signature=line.strip()
-            ))
-
-        # Check for structs
-        for match in re.finditer(struct_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="struct",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for interfaces
-        for match in re.finditer(interface_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="interface",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for constants
-        for match in re.finditer(const_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="constant",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for variables
-        for match in re.finditer(var_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="variable",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-    return symbols
-
-
-def parse_rust_code(content: str) -> list[CodeSymbol]:
-    """Parse Rust code using regex patterns."""
-    symbols = []
-
-    # Regex patterns for Rust
-    function_pattern = r'fn\s+(\w+)'
-    struct_pattern = r'struct\s+(\w+)'
-    trait_pattern = r'trait\s+(\w+)'
-    enum_pattern = r'enum\s+(\w+)'
-    impl_pattern = r'impl\s+(?:<[^>]*>\s+)?(?:\w+\s+for\s+)?(\w+)'
-    const_pattern = r'const\s+(\w+)'
-    let_pattern = r'let\s+(?:mut\s+)?(\w+)'
-
-    # Process file line by line
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        # Strip comments
-        line = re.sub(r'//.*$', '', line)
-
-        # Check for functions
-        for match in re.finditer(function_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="function",
-                line_number=i+1,
-                column=match.start(),
-                signature=line.strip()
-            ))
-
-        # Check for structs
-        for match in re.finditer(struct_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="struct",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for traits
-        for match in re.finditer(trait_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="trait",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for enums
-        for match in re.finditer(enum_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="enum",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for impl blocks (implementation)
-        for match in re.finditer(impl_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="implementation",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for constants
-        for match in re.finditer(const_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="constant",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for variables (let statements)
-        for match in re.finditer(let_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="variable",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-    return symbols
-
-
-def parse_ruby_code(content: str) -> list[CodeSymbol]:
-    """Parse Ruby code using regex patterns."""
-    symbols = []
-
-    # Regex patterns for Ruby
-    class_pattern = r'class\s+(\w+)'
-    module_pattern = r'module\s+(\w+)'
-    method_pattern = r'def\s+(\w+[!?]?)'
-    constant_pattern = r'([A-Z][A-Z0-9_]*)\s*='
-    attr_pattern = r'(?:attr_reader|attr_writer|attr_accessor)\s+:(\w+)'
-    var_pattern = r'(?:@{1,2}|\$)(\w+)'  # Instance, class and global variables
-
-    # Process file line by line
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        # Strip comments
-        line = re.sub(r'#.*$', '', line)
-
-        # Check for classes
-        for match in re.finditer(class_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="class",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for modules
-        for match in re.finditer(module_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="module",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for methods
-        for match in re.finditer(method_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="method",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for constants
-        for match in re.finditer(constant_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="constant",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for attributes
-        for match in re.finditer(attr_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="property",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for instance/class/global variables
-        for match in re.finditer(var_pattern, line):
-            var_type = "variable"
-            if match.group(0).startswith("@@"):
-                var_type = "class_variable"
-            elif match.group(0).startswith("@"):
-                var_type = "instance_variable"
-            elif match.group(0).startswith("$"):
-                var_type = "global_variable"
-
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type=var_type,
-                line_number=i+1,
-                column=match.start()
-            ))
-
-    return symbols
-
-
-def parse_php_code(content: str) -> list[CodeSymbol]:
-    """Parse PHP code using regex patterns."""
-    symbols = []
-
-    # Regex patterns for PHP
-    class_pattern = r'class\s+(\w+)'
-    interface_pattern = r'interface\s+(\w+)'
-    trait_pattern = r'trait\s+(\w+)'
-    function_pattern = r'function\s+(\w+)'
-    method_pattern = r'(?:public|private|protected)(?:\s+static)?\s+function\s+(\w+)'
-    property_pattern = r'(?:public|private|protected)(?:\s+static)?\s+\$(\w+)'
-    const_pattern = r'const\s+(\w+)'
-    var_pattern = r'\$(\w+)\s*='
-
-    # Process file line by line
-    lines = content.splitlines()
-    for i, line in enumerate(lines):
-        # Strip comments
-        line = re.sub(r'(?://.*$|/\*.*?\*/)', '', line)
-
-        # Check for classes
-        for match in re.finditer(class_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="class",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for interfaces
-        for match in re.finditer(interface_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="interface",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for traits
-        for match in re.finditer(trait_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="trait",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for standalone functions (not methods)
-        if not re.search(r'(?:public|private|protected)', line):
-            for match in re.finditer(function_pattern, line):
-                symbols.append(CodeSymbol(
-                    name=match.group(1),
-                    type="function",
-                    line_number=i+1,
-                    column=match.start()
-                ))
-
-        # Check for methods
-        for match in re.finditer(method_pattern, line):
-            visibility = "public"
-            if "private" in line[:match.start()]:
-                visibility = "private"
-            elif "protected" in line[:match.start()]:
-                visibility = "protected"
-
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="method",
-                line_number=i+1,
-                column=match.start(),
-                visibility=visibility
-            ))
-
-        # Check for class properties
-        for match in re.finditer(property_pattern, line):
-            visibility = "public"
-            if "private" in line[:match.start()]:
-                visibility = "private"
-            elif "protected" in line[:match.start()]:
-                visibility = "protected"
-
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="property",
-                line_number=i+1,
-                column=match.start(),
-                visibility=visibility
-            ))
-
-        # Check for constants
-        for match in re.finditer(const_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="constant",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Check for regular variables
-        for match in re.finditer(var_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="variable",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-    return symbols
-
-
-def parse_generic_code(content: str) -> list[CodeSymbol]:
-    """Parse code generically using regex patterns for common symbols."""
-    symbols = []
-
-    # Simple regex patterns for functions, classes and variables
-    function_pattern = r'(?:function|def|func|fn)\s+(\w+)'
-    class_pattern = r'(?:class|struct|interface|trait|enum)\s+(\w+)'
-    variable_pattern = r'(?:var|let|const|int|float|string|bool|char)\s+(\w+)'
-
-    # Process file line by line
-    for i, line in enumerate(content.splitlines()):
-        # Look for functions
-        for match in re.finditer(function_pattern, line):
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type="function",
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Look for classes
-        for match in re.finditer(class_pattern, line):
-            # Determine type based on what appears in the line
-            if "struct" in line[:match.start()]:
-                symbol_type = "struct"
-            elif "interface" in line[:match.start()]:
-                symbol_type = "interface"
-            elif "trait" in line[:match.start()]:
-                symbol_type = "trait"
-            elif "enum" in line[:match.start()]:
-                symbol_type = "enum"
-            else:
-                symbol_type = "class"
-
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type=symbol_type,
-                line_number=i+1,
-                column=match.start()
-            ))
-
-        # Look for variables
-        for match in re.finditer(variable_pattern, line):
-            # Determine type based on what appears in the line
-            if "const" in line[:match.start()] or match.group(1).isupper():
-                symbol_type = "constant"
-            else:
-                symbol_type = "variable"
-
-            symbols.append(CodeSymbol(
-                name=match.group(1),
-                type=symbol_type,
-                line_number=i+1,
-                column=match.start()
-            ))
-
-    return symbols
-
-
 @object_type
 class AgentUtils:
-    """Utility class for Dagger agents"""
-
-    def __init__(self):
-        self.code_files = []
-
-    # @function
-    # async def get_llm_credentials(
-    #     provider: str,
-    #     open_router_key: Optional[dagger.Secret],
-    #     openai_key: Optional[dagger.Secret],
-    # ) -> LLMCredentials:
-    #     """
-    #     Determines the LLM base URL and retrieves the plaintext API key based on the provider.
-
-    #     Args:
-    #         provider: The name of the LLM provider ('openrouter' or 'openai').
-    #         open_router_key: The Dagger secret for the OpenRouter API key.
-    #         openai_key: The Dagger secret for the OpenAI API key.
-
-    #     Returns:
-    #         A tuple containing (base_url, api_key_plain).
-    #         base_url is None for OpenAI default.
-
-    #     Raises:
-    #         ValueError: If the provider is unsupported or the required key is missing.
-    #     """
-    #     base_url: Optional[str] = None
-    #     api_key_secret: Optional[dagger.Secret] = None
-
-    #     if provider == "openrouter":
-    #         if not open_router_key:
-    #             raise ValueError(
-    #                 "open_router_api_key is required for provider 'openrouter'")
-    #         base_url = "https://openrouter.ai/api/v1"
-    #         api_key_secret = open_router_key
-    #         print("Using OpenRouter provider.")
-    #     elif provider == "openai":
-    #         if not openai_key:
-    #             raise ValueError(
-    #                 "openai_api_key is required for provider 'openai'")
-    #         base_url = None  # OpenAIProvider uses default if None
-    #         api_key_secret = openai_key
-    #         print("Using OpenAI provider.")
-    #     else:
-    #         raise ValueError(f"Unsupported LLM provider: {provider}")
-
-    #     # Retrieve plaintext key - this will implicitly check if the secret was assigned
-    #     if not api_key_secret:
-    #         # Should be caught by provider checks, but defensive programming
-    #         raise ValueError(
-    #             f"API key secret not found for provider '{provider}'.")
-
-    #     return LLMCredentials(base_url=base_url, api_key=api_key_secret)
+    """Enhanced utility class using Tree-sitter for accurate code parsing"""
 
     @function
-    def parse_code_file_to_json(self, content: str, filepath: str) -> dagger.File:
-        """Parse a code file and return a JSON file containing the extracted symbols and metadata."""
+    async def parse_code_file_to_json(self, content: str, filepath: str) -> dagger.File:
+        """Parse a code file using Tree-sitter and return JSON with extracted symbols."""
         if not isinstance(content, str):
-            raise TypeError(f"Expected content to be str, got {type(content).__name__}")
-        
+            raise TypeError(
+                f"Expected content to be str, got {type(content).__name__}")
+
         language = detect_language(filepath)
-        symbols = []
 
-        if language == 'python':
-            symbols = parse_python_code(content)
-        elif language in ['javascript', 'typescript']:
-            symbols = parse_javascript_code(content)
-        elif language == 'java':
-            symbols = parse_java_code(content)
-        elif language in ['c', 'cpp']:
-            symbols = parse_c_cpp_code(content)
-        elif language == 'go':
-            symbols = parse_go_code(content)
-        elif language == 'rust':
-            symbols = parse_rust_code(content)
-        elif language == 'ruby':
-            symbols = parse_ruby_code(content)
-        elif language == 'php':
-            symbols = parse_php_code(content)
-        else:
-            symbols = parse_generic_code(content)
-
-        # Convert symbols to serializable dictionaries
-        serializable_symbols = []
-        for symbol in symbols:
-            symbol_dict = {
-                "name": getattr(symbol, "name", ""),
-                "type": getattr(symbol, "type", ""),
-                "line_number": getattr(symbol, "line_number", 0),
-                "column": getattr(symbol, "column", 0),
-                "end_line_number": getattr(symbol, "end_line_number", None),
-                "end_column": getattr(symbol, "end_column", None),
-                "scope": getattr(symbol, "scope", None),
-                "signature": getattr(symbol, "signature", None),
-                "visibility": getattr(symbol, "visibility", None)
-            }
-            serializable_symbols.append(symbol_dict)
-
-        # Create a dictionary representation of the CodeFile
-        code_file_dict = {
-            "content": content,
-            "filepath": filepath,
-            "language": language,
-            "symbols": serializable_symbols
-        }
-
-        # Convert to JSON
-        json_str = json.dumps(code_file_dict)
-
-        # Create a Dagger file with the JSON content
-        json_file = dag.container().with_new_file(
-            "code_file.json", json_str).file("code_file.json")
-        return json_file
+        # Use Tree-sitter for supported languages, fallback for others
+        if language in ['python', 'javascript', 'typescript', 'java', 'go', 'rust', 'c', 'cpp']:
+            return await self._parse_with_tree_sitter(content, filepath, language)
+        # else:
+        #     # Fallback to regex-based parsing for unsupported languages
+        #     return await self._parse_with_fallback(content, filepath, language)
 
     @function
-    def json_to_code_file(json_file: dagger.File) -> dagger.File:
-        """
-        Convert a JSON file to a CodeFile model and return as a new JSON file.
+    async def _parse_with_tree_sitter(self, content: str, filepath: str, language: str) -> dagger.File:
+        """Parse code using Tree-sitter with language-specific query patterns."""
 
-        Args:
-            json_file (dagger.File): The JSON file containing code file data.
+        # Get file extension for tree-sitter
+        ext = self._get_file_extension(language)
+        filename = f"/tmp/code{ext}"
 
-        Returns:
-            dagger.File: A new JSON file with the converted model.
-        """
-        async def convert():
-            # Read the contents of the JSON file
-            json_content = await json_file.contents()
+        # Create parsing script based on language
+        parser_script = self._generate_parser_script(language)
 
-            # Deserialize JSON content
-            data = json.loads(json_content)
+        return (
+            dag.container()
+            .from_("python:3.11-alpine")
+            # Install system dependencies for compilation
+            .with_exec(["apk", "add", "--no-cache",
+                       "build-base",
+                        "git",
+                        "gcc",
+                        "musl-dev",
+                        "libffi-dev",
+                        "nodejs",
+                        "npm"])
+            # Upgrade pip and install wheel for better package support
+            .with_exec(["pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
+            # Install tree-sitter with specific versions that work well
+            .with_exec(["pip", "install",
+                       "tree-sitter==0.20.4",
+                        "setuptools-rust",
+                        "tree-sitter-languages==1.8.0"])
+            # Write the code file
+            .with_new_file(filename, content)
+            # Write the parser script
+            .with_new_file("/tmp/parser.py", parser_script)
+            # Run the parser
+            .with_exec(["python", "/tmp/parser.py", filename, filepath, language])
+            .file("/tmp/result.json")
+        )
 
-            # Convert to CodeFile model (directly)
-            result = CodeFile.model_validate(data)
+    def _get_file_extension(self, language: str) -> str:
+        """Get appropriate file extension for the language."""
+        extensions = {
+            'python': '.py',
+            'javascript': '.js',
+            'typescript': '.ts',
+            'java': '.java',
+            'go': '.go',
+            'rust': '.rs',
+            'c': '.c',
+            'cpp': '.cpp'
+        }
+        return extensions.get(language, '.txt')
 
-            # Convert back to JSON
-            result_json = json.dumps(result.model_dump())
+    def _generate_parser_script(self, language: str) -> str:
+        """Generate a Python script that uses Tree-sitter to parse the code."""
+        return '''
+import sys
+import json
+import tree_sitter_languages
+from tree_sitter import Language, Parser, Node
 
-            # Create a new file with the result
-            return dag.container().with_new_file("code_file_result.json", result_json).file("code_file_result.json")
+def get_node_text(node, source_code):
+    """Get the text content of a node."""
+    return source_code[node.start_byte:node.end_byte].decode('utf-8')
 
-        return convert()
+def extract_symbols_and_imports(source_code, language_name):
+    """Extract symbols and imports using Tree-sitter."""
+    
+    # Get the language and create parser
+    try:
+        language = tree_sitter_languages.get_language(language_name)
+        parser = Parser()
+        parser.set_language(language)
+    except Exception as e:
+        print(f"Error setting up parser for {language_name}: {e}")
+        return {"symbols": [], "imports": []}
+    
+    # Parse the code
+    tree = parser.parse(source_code)
+    root_node = tree.root_node
+    
+    symbols = []
+    imports = []
+    
+    def traverse_node(node, scope=""):
+        """Recursively traverse the AST and extract symbols."""
+        
+        # Language-specific symbol extraction
+        if language_name == "python":
+            symbols.extend(extract_python_symbols(node, source_code, scope))
+            imports.extend(extract_python_imports(node, source_code))
+        elif language_name in ["javascript", "typescript"]:
+            symbols.extend(extract_js_symbols(node, source_code, scope))
+            imports.extend(extract_js_imports(node, source_code))
+        elif language_name == "java":
+            symbols.extend(extract_java_symbols(node, source_code, scope))
+            imports.extend(extract_java_imports(node, source_code))
+        elif language_name == "go":
+            symbols.extend(extract_go_symbols(node, source_code, scope))
+            imports.extend(extract_go_imports(node, source_code))
+        elif language_name == "rust":
+            symbols.extend(extract_rust_symbols(node, source_code, scope))
+            imports.extend(extract_rust_imports(node, source_code))
+        elif language_name in ["c", "cpp"]:
+            symbols.extend(extract_c_symbols(node, source_code, scope))
+            imports.extend(extract_c_imports(node, source_code))
+        
+        # Recursively process children
+        for child in node.children:
+            new_scope = scope
+            if node.type in ["class_definition", "class_declaration", "struct_specifier"]:
+                # Update scope for nested definitions
+                name_node = next((c for c in node.children if c.type in ["identifier", "type_identifier"]), None)
+                if name_node:
+                    class_name = get_node_text(name_node, source_code)
+                    new_scope = f"{scope}.{class_name}" if scope else class_name
+            
+            traverse_node(child, new_scope)
+    
+    # Start traversal
+    traverse_node(root_node)
+    
+    return {"symbols": symbols, "imports": list(set(imports))}
+
+def extract_python_symbols(node, source_code, scope):
+    """Extract Python-specific symbols."""
+    symbols = []
+    
+    if node.type == "function_definition":
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            
+            # Get parameters
+            parameters = []
+            params_node = next((c for c in node.children if c.type == "parameters"), None)
+            if params_node:
+                for param in params_node.children:
+                    if param.type == "identifier":
+                        parameters.append({"name": get_node_text(param, source_code), "type": "any"})
+            
+            # Get docstring
+            docstring = None
+            if len(node.children) > 0:
+                body = next((c for c in node.children if c.type == "block"), None)
+                if body and len(body.children) > 0:
+                    first_stmt = body.children[0]
+                    if first_stmt.type == "expression_statement":
+                        expr = first_stmt.children[0]
+                        if expr.type == "string":
+                            docstring = get_node_text(expr, source_code).strip('"').strip("'")
+            
+            symbols.append({
+                "name": name,
+                "type": "method" if scope else "function",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "end_line_number": node.end_point[0] + 1,
+                "end_column": node.end_point[1],
+                "scope": scope,
+                "parameters": parameters,
+                "docstring": docstring,
+                "signature": get_node_text(node.children[0] if node.children else node, source_code)
+            })
+    
+    elif node.type == "class_definition":
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "class",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "end_line_number": node.end_point[0] + 1,
+                "end_column": node.end_point[1],
+                "scope": scope
+            })
+    
+    elif node.type == "assignment":
+        # Handle variable assignments
+        target = node.children[0] if node.children else None
+        if target and target.type == "identifier":
+            name = get_node_text(target, source_code)
+            is_constant = name.isupper()
+            symbols.append({
+                "name": name,
+                "type": "constant" if is_constant else "variable",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    return symbols
+
+def extract_python_imports(node, source_code):
+    """Extract Python import statements."""
+    imports = []
+    
+    if node.type == "import_statement":
+        # import module
+        for child in node.children:
+            if child.type == "dotted_name" or child.type == "identifier":
+                imports.append(get_node_text(child, source_code))
+    
+    elif node.type == "import_from_statement": 
+        # from module import ...
+        module_node = next((c for c in node.children if c.type == "dotted_name"), None)
+        if module_node:
+            imports.append(get_node_text(module_node, source_code))
+    
+    return imports
+
+def extract_js_symbols(node, source_code, scope):
+    """Extract JavaScript/TypeScript symbols."""
+    symbols = []
+    
+    if node.type in ["function_declaration", "function_definition"]:
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            
+            # Get parameters
+            parameters = []
+            params_node = next((c for c in node.children if c.type == "formal_parameters"), None)
+            if params_node:
+                for param in params_node.children:
+                    if param.type == "identifier":
+                        parameters.append({"name": get_node_text(param, source_code), "type": "any"})
+            
+            symbols.append({
+                "name": name,
+                "type": "function",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "end_line_number": node.end_point[0] + 1,
+                "end_column": node.end_point[1],
+                "scope": scope,
+                "parameters": parameters
+            })
+    
+    elif node.type == "class_declaration":
+        name_node = next((c for c in node.children if c.type == "type_identifier" or c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "class",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "end_line_number": node.end_point[0] + 1,
+                "end_column": node.end_point[1],
+                "scope": scope
+            })
+    
+    elif node.type == "interface_declaration":
+        name_node = next((c for c in node.children if c.type == "type_identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "interface",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "end_line_number": node.end_point[0] + 1,
+                "end_column": node.end_point[1],
+                "scope": scope
+            })
+    
+    elif node.type == "variable_declarator":
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            # Check if it's an arrow function assignment
+            init_node = next((c for c in node.children if c.type == "arrow_function"), None)
+            symbol_type = "function" if init_node else "variable"
+            
+            symbols.append({
+                "name": name,
+                "type": symbol_type,
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    return symbols
+
+def extract_js_imports(node, source_code):
+    """Extract JavaScript/TypeScript imports."""
+    imports = []
+    
+    if node.type == "import_statement":
+        source_node = next((c for c in node.children if c.type == "string"), None)
+        if source_node:
+            import_path = get_node_text(source_node, source_code).strip('"').strip("'")
+            imports.append(import_path)
+    
+    return imports
+
+def extract_java_symbols(node, source_code, scope):
+    """Extract Java symbols."""
+    symbols = []
+    
+    if node.type == "method_declaration":
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "method",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    elif node.type == "class_declaration":
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "class",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    elif node.type == "interface_declaration":
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "interface",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    return symbols
+
+def extract_java_imports(node, source_code):
+    """Extract Java imports."""
+    imports = []
+    
+    if node.type == "import_declaration":
+        # Find the scoped_identifier or identifier
+        import_node = next((c for c in node.children if c.type in ["scoped_identifier", "identifier"]), None)
+        if import_node:
+            imports.append(get_node_text(import_node, source_code))
+    
+    return imports
+
+def extract_go_symbols(node, source_code, scope):
+    """Extract Go symbols."""
+    symbols = []
+    
+    if node.type == "function_declaration":
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "function",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    elif node.type == "type_declaration":
+        # Look for struct, interface, etc.
+        for child in node.children:
+            if child.type == "type_spec":
+                name_node = next((c for c in child.children if c.type == "type_identifier"), None)
+                if name_node:
+                    name = get_node_text(name_node, source_code)
+                    # Determine if it's a struct, interface, etc.
+                    type_node = child.children[-1] if child.children else None
+                    symbol_type = "struct" if type_node and type_node.type == "struct_type" else "type"
+                    
+                    symbols.append({
+                        "name": name,
+                        "type": symbol_type,
+                        "line_number": child.start_point[0] + 1,
+                        "column": child.start_point[1],
+                        "scope": scope
+                    })
+    
+    return symbols
+
+def extract_go_imports(node, source_code):
+    """Extract Go imports."""
+    imports = []
+    
+    if node.type == "import_declaration":
+        for child in node.children:
+            if child.type == "import_spec":
+                path_node = next((c for c in child.children if c.type == "interpreted_string_literal"), None)
+                if path_node:
+                    import_path = get_node_text(path_node, source_code).strip('"')
+                    imports.append(import_path)
+    
+    return imports
+
+def extract_rust_symbols(node, source_code, scope):
+    """Extract Rust symbols."""
+    symbols = []
+    
+    if node.type == "function_item":
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "function",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    elif node.type == "struct_item":
+        name_node = next((c for c in node.children if c.type == "type_identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "struct",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    elif node.type == "trait_item":
+        name_node = next((c for c in node.children if c.type == "type_identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbols.append({
+                "name": name,
+                "type": "trait",
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    return symbols
+
+def extract_rust_imports(node, source_code):
+    """Extract Rust imports."""
+    imports = []
+    
+    if node.type == "use_declaration":
+        # Extract the use path
+        use_node = next((c for c in node.children if c.type == "use_list" or c.type == "scoped_identifier"), None)
+        if use_node:
+            imports.append(get_node_text(use_node, source_code))
+    
+    return imports
+
+def extract_c_symbols(node, source_code, scope):
+    """Extract C/C++ symbols."""
+    symbols = []
+    
+    if node.type == "function_definition":
+        # Find function name
+        declarator = next((c for c in node.children if c.type == "function_declarator"), None)
+        if declarator:
+            name_node = next((c for c in declarator.children if c.type == "identifier"), None)
+            if name_node:
+                name = get_node_text(name_node, source_code)
+                symbols.append({
+                    "name": name,
+                    "type": "function",
+                    "line_number": node.start_point[0] + 1,
+                    "column": node.start_point[1],
+                    "scope": scope
+                })
+    
+    elif node.type in ["struct_specifier", "class_specifier"]:
+        name_node = next((c for c in node.children if c.type == "type_identifier"), None)
+        if name_node:
+            name = get_node_text(name_node, source_code)
+            symbol_type = "class" if node.type == "class_specifier" else "struct"
+            symbols.append({
+                "name": name,
+                "type": symbol_type,
+                "line_number": node.start_point[0] + 1,
+                "column": node.start_point[1],
+                "scope": scope
+            })
+    
+    return symbols
+
+def extract_c_imports(node, source_code):
+    """Extract C/C++ includes."""
+    imports = []
+    
+    if node.type == "preproc_include":
+        # Extract the include path
+        path_node = next((c for c in node.children if c.type in ["string_literal", "system_lib_string"]), None)
+        if path_node:
+            import_path = get_node_text(path_node, source_code).strip('<>').strip('"')
+            imports.append(import_path)
+    
+    return imports
+
+def main():
+    if len(sys.argv) != 4:
+        print("Usage: python parser.py <code_file> <filepath> <language>")
+        sys.exit(1)
+    
+    code_file = sys.argv[1]
+    filepath = sys.argv[2]
+    language = sys.argv[3]
+    
+    # Read the source code
+    with open(code_file, 'rb') as f:
+        source_code = f.read()
+    
+    # Extract symbols and imports
+    result = extract_symbols_and_imports(source_code, language)
+    
+    # Create the final result
+    code_file_dict = {
+        "content": source_code.decode('utf-8'),
+        "filepath": filepath,
+        "language": language,
+        "symbols": result["symbols"],
+        "imports": result["imports"]
+    }
+    
+    # Write result to JSON file
+    with open('/tmp/result.json', 'w') as f:
+        json.dump(code_file_dict, f, indent=2)
+
+if __name__ == "__main__":
+    main()
+'''
