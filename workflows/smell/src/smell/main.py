@@ -289,6 +289,7 @@ class Smell:
     """Code smell detection service using Clean Code principles"""
     config: dict
     config_file: dagger.File
+    neo_service: Optional[NeoService] = None
     neo_data: Optional[dagger.CacheVolume] = None
 
     @classmethod
@@ -454,7 +455,9 @@ Your codebase follows Clean Code principles well.
 
         try:
             # Create Neo4j service
-            neo_service: NeoService = dag.neo_service(
+            self.config = YAMLConfig(
+                **self.config) if isinstance(self.config, dict) else self.config
+            self.neo_service: NeoService = dag.neo_service(
                 self.config_file,
                 password=neo_password,
                 github_access_token=github_access_token,
@@ -463,7 +466,7 @@ Your codebase follows Clean Code principles well.
             )
 
             # Test connection
-            connection_test = await neo_service.simple_test()
+            connection_test = await self.neo_service.test_connection()
             logger.info(f"Neo4j connection: {connection_test}")
 
             # Get all detectors
@@ -474,7 +477,7 @@ Your codebase follows Clean Code principles well.
             # Run all detectors concurrently
             results = await self._run_detectors_concurrently(
                 detectors=detectors,
-                neo_service=neo_service,
+                neo_service=self.neo_service,
                 logger=logger,
                 max_concurrent=concurrency_config['max_concurrent']
             )
@@ -582,7 +585,7 @@ Your codebase follows Clean Code principles well.
 
         try:
             # Create Neo4j service
-            neo_service: NeoService = dag.neo_service(
+            self.neo_service: NeoService = dag.neo_service(
                 self.config_file,
                 password=neo_password,
                 github_access_token=github_access_token,
@@ -599,7 +602,7 @@ Your codebase follows Clean Code principles well.
             # Run detectors concurrently
             results = await self._run_detectors_concurrently(
                 detectors=selected_detectors,
-                neo_service=neo_service,
+                neo_service=self.neo_service,
                 logger=logger,
                 max_concurrent=concurrency_config['max_concurrent']
             )
