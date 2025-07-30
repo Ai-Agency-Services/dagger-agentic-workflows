@@ -1,11 +1,12 @@
 import logging
 import time
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Dict, List, Optional, Tuple
 
-import anyio  # Added for concurrency
+import anyio
 import dagger
 import yaml
 from ais_dagger_agents_config.models import YAMLConfig
@@ -48,6 +49,64 @@ class CodeSmellDetector(ABC):
         """Get the detector name"""
         pass
 
+    async def run_safe_query(self, neo_service: NeoService, query: str) -> str:
+        """Run Neo4j query with error handling for property existence"""
+        try:
+            return await neo_service.run_query(query)
+        except Exception as e:
+            error_str = str(e)
+            # Handle unknown property key warnings
+            if "UnknownPropertyKeyWarning" in error_str:
+                # Extract the property name from the error message
+                match = re.search(
+                    r"property name is: ([a-zA-Z0-9_.]+)", error_str)
+                if match:
+                    prop_name = match.group(1)
+                    logging.info(
+                        f"Auto-fixing query with property IS NULL check for: {prop_name}")
+
+                    # Replace the property condition with IS NULL check
+                    modified_query = query.replace(
+                        f"WHERE {prop_name} =",
+                        f"WHERE ({prop_name} IS NULL OR {prop_name} ="
+                    )
+                    modified_query = modified_query.replace(
+                        f"AND {prop_name} =",
+                        f"AND ({prop_name} IS NULL OR {prop_name} ="
+                    )
+
+                    # Replace any exists() checks
+                    modified_query = modified_query.replace(
+                        f"exists({prop_name})",
+                        f"{prop_name} IS NOT NULL"
+                    )
+                    modified_query = modified_query.replace(
+                        f"NOT exists({prop_name})",
+                        f"{prop_name} IS NULL"
+                    )
+
+                    # Add a closing parenthesis if needed
+                    if "IS NULL OR" in modified_query and ")" not in modified_query.split("IS NULL OR")[1].split("AND")[0]:
+                        modified_parts = modified_query.split("IS NULL OR")
+                        for i in range(1, len(modified_parts)):
+                            if "AND" in modified_parts[i]:
+                                part_before_and = modified_parts[i].split("AND")[
+                                    0]
+                                if ")" not in part_before_and:
+                                    modified_parts[i] = part_before_and + ")" + \
+                                        "AND" + \
+                                        modified_parts[i].split("AND")[1]
+                            else:
+                                if ")" not in modified_parts[i]:
+                                    modified_parts[i] += ")"
+                        modified_query = "IS NULL OR".join(modified_parts)
+
+                    logging.info(f"Modified query: {modified_query}")
+                    return await neo_service.run_query(modified_query)
+
+            # Re-raise other errors
+            raise
+
 
 class CircularDependencyDetector(CodeSmellDetector):
     """Detects circular dependencies between modules"""
@@ -65,7 +124,7 @@ class CircularDependencyDetector(CodeSmellDetector):
         LIMIT 10
         """
 
-        result = await neo_service.run_query(query)
+        result = await self.run_safe_query(neo_service, query)
         smells = []
 
         # Parse the cypher-shell output
@@ -110,7 +169,7 @@ class LargeClassDetector(CodeSmellDetector):
         LIMIT 10
         """
 
-        result = await neo_service.run_query(query)
+        result = await self.run_safe_query(neo_service, query)
         smells = []
 
         lines = [line.strip()
@@ -156,7 +215,7 @@ class FeatureEnvyDetector(CodeSmellDetector):
         LIMIT 8
         """
 
-        result = await neo_service.run_query(query)
+        result = await self.run_safe_query(neo_service, query)
         smells = []
 
         lines = [line.strip()
@@ -193,12 +252,26 @@ class DeadCodeDetector(CodeSmellDetector):
         """Clean Code Principle: Delete dead code, don't comment it out"""
         query = """
         MATCH (symbol:Function|Class|Interface)-[:DEFINED_IN]->(f:File)
-        WHERE symbol.scope = "public"
+        WHERE (symbol.scope IS NULL OR symbol.scope = "public")
+        AND NOT f.filepath CONTAINS "test"
         AND NOT EXISTS {
+            // Check if the file is imported directly
             MATCH (other:File)-[:IMPORTS]->(f)
             WHERE other <> f
         }
-        AND NOT f.filepath CONTAINS "test"
+        AND NOT EXISTS {
+            // Check if the symbol is referenced by name
+            MATCH (other:File)-[:IMPORTS]->(f),
+                  (other)-[:CONTAINS]->(ref)
+            WHERE other <> f
+              AND ref.name = symbol.name
+        }
+        AND NOT EXISTS {
+            // Check for re-exports
+            MATCH (reexport:File)-[:IMPORTS]->(f),
+                  (other:File)-[:IMPORTS]->(reexport)
+            WHERE other <> f AND reexport <> f
+        }
         RETURN 
             symbol.name as unused_symbol,
             labels(symbol)[0] as symbol_type,
@@ -206,7 +279,7 @@ class DeadCodeDetector(CodeSmellDetector):
         LIMIT 15
         """
 
-        result = await neo_service.run_query(query)
+        result = await self.run_safe_query(neo_service, query)
         smells = []
 
         lines = [line.strip()
@@ -253,7 +326,7 @@ class ShotgunSurgeryDetector(CodeSmellDetector):
         LIMIT 5
         """
 
-        result = await neo_service.run_query(query)
+        result = await self.run_safe_query(neo_service, query)
         smells = []
 
         lines = [line.strip()
@@ -282,6 +355,62 @@ class ShotgunSurgeryDetector(CodeSmellDetector):
 
     def get_name(self) -> str:
         return "Shotgun Surgery"
+
+
+# New detector to find properties used in queries
+class SchemaDiscrepancyDetector(CodeSmellDetector):
+    """Detects schema discrepancies in the codebase"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        """Clean Code Principle: Consistency"""
+        # First, check what node properties actually exist
+        schema_query = """
+        MATCH (n)
+        UNWIND keys(n) as property
+        WITH property, labels(n)[0] as label, count(*) as count
+        RETURN label, property, count
+        ORDER BY count DESC
+        LIMIT 50
+        """
+
+        try:
+            schema_result = await self.run_safe_query(neo_service, schema_query)
+
+            # Sample check for a specific property that might be missing
+            check_query = """
+            MATCH (s:Function|Class|Interface)
+            WHERE s.scope IS NOT NULL
+            RETURN count(s) as count_with_scope
+            """
+
+            check_result = await self.run_safe_query(neo_service, check_query)
+            count_lines = [line.strip() for line in check_result.strip().split(
+                '\n') if line.strip()]
+            count_with_scope = 0
+            if len(count_lines) > 1:
+                count_with_scope = int(
+                    count_lines[1]) if count_lines[1].isdigit() else 0
+
+            smells = []
+            if count_with_scope == 0:
+                smells.append(CodeSmell(
+                    name="Schema Discrepancy",
+                    description="The 'scope' property is missing from Function/Class/Interface nodes but used in queries",
+                    severity=SmellSeverity.MEDIUM,
+                    location="Neo4j Database",
+                    metrics={"missing_property": "scope",
+                             "affected_queries": ["DeadCodeDetector"]},
+                    recommendation="Update queries to check if properties exist before using them"
+                ))
+
+            return smells
+
+        except Exception as e:
+            logging.error(f"Error in SchemaDiscrepancyDetector: {e}")
+            return []
+
+    def get_name(self) -> str:
+        return "Schema Discrepancies"
 
 
 @object_type
@@ -329,7 +458,27 @@ class Smell:
             FeatureEnvyDetector(),
             DeadCodeDetector(),
             ShotgunSurgeryDetector(),
+            SchemaDiscrepancyDetector(),  # Added new detector
         ]
+
+    async def _get_or_create_neo_service(
+        self,
+        github_access_token: dagger.Secret,
+        neo_password: dagger.Secret,
+        neo_auth: dagger.Secret
+    ) -> NeoService:
+        """Get existing Neo4j service or create a new one if it doesn't exist."""
+        if not self.neo_service:
+            self.config = YAMLConfig(
+                **self.config) if isinstance(self.config, dict) else self.config
+            self.neo_service = dag.neo_service(
+                self.config_file,
+                password=neo_password,
+                github_access_token=github_access_token,
+                neo_auth=neo_auth,
+                neo_data=self.neo_data
+            )
+        return self.neo_service
 
     async def _run_detectors_concurrently(
         self,
@@ -350,9 +499,11 @@ class Smell:
                 detector_name = detector.get_name()
                 try:
                     logger.info(f"🔍 Running {detector_name} detector...")
+                    start_time = time.time()
                     smells = await detector.detect(neo_service)
+                    duration = time.time() - start_time
                     logger.info(
-                        f"✅ {detector_name}: {len(smells)} smells detected")
+                        f"✅ {detector_name}: {len(smells)} smells detected in {duration:.2f}s")
                     return detector_name, smells
                 except Exception as e:
                     logger.error(f"❌ {detector_name} failed: {e}")
@@ -454,19 +605,15 @@ Your codebase follows Clean Code principles well.
         logger.info("Starting concurrent code smell analysis")
 
         try:
-            # Create Neo4j service
-            self.config = YAMLConfig(
-                **self.config) if isinstance(self.config, dict) else self.config
-            self.neo_service: NeoService = dag.neo_service(
-                self.config_file,
-                password=neo_password,
+            # Get or create Neo4j service
+            neo_service = await self._get_or_create_neo_service(
                 github_access_token=github_access_token,
-                neo_auth=neo_auth,
-                neo_data=self.neo_data
+                neo_password=neo_password,
+                neo_auth=neo_auth
             )
 
             # Test connection
-            connection_test = await self.neo_service.test_connection()
+            connection_test = await neo_service.test_connection()
             logger.info(f"Neo4j connection: {connection_test}")
 
             # Get all detectors
@@ -477,7 +624,7 @@ Your codebase follows Clean Code principles well.
             # Run all detectors concurrently
             results = await self._run_detectors_concurrently(
                 detectors=detectors,
-                neo_service=self.neo_service,
+                neo_service=neo_service,
                 logger=logger,
                 max_concurrent=concurrency_config['max_concurrent']
             )
@@ -496,7 +643,7 @@ Your codebase follows Clean Code principles well.
     @function
     async def analyze_specific_detector(
         self,
-        detector_name: Annotated[str, Doc("Detector to run: 'circular', 'large', 'envy', 'dead', or 'shotgun'")],
+        detector_name: Annotated[str, Doc("Detector to run: 'circular', 'large', 'envy', 'dead', 'shotgun', or 'schema'")],
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
         neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
         neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
@@ -511,19 +658,18 @@ Your codebase follows Clean Code principles well.
             'envy': FeatureEnvyDetector(),
             'dead': DeadCodeDetector(),
             'shotgun': ShotgunSurgeryDetector(),
+            'schema': SchemaDiscrepancyDetector(),
         }
 
         if detector_name not in detector_map:
             return f"❌ Unknown detector: {detector_name}. Available: {list(detector_map.keys())}"
 
         try:
-            # Create Neo4j service
-            neo_service: NeoService = dag.neo_service(
-                self.config_file,
-                password=neo_password,
+            # Get or create Neo4j service
+            neo_service = await self._get_or_create_neo_service(
                 github_access_token=github_access_token,
-                neo_auth=neo_auth,
-                neo_data=self.neo_data
+                neo_password=neo_password,
+                neo_auth=neo_auth
             )
 
             # Run specific detector
@@ -559,7 +705,7 @@ Your codebase follows Clean Code principles well.
     @function
     async def analyze_multiple_detectors(
         self,
-        detector_names: Annotated[List[str], Doc("List of detectors to run: 'circular', 'large', 'envy', 'dead', 'shotgun'")],
+        detector_names: Annotated[List[str], Doc("List of detectors to run: 'circular', 'large', 'envy', 'dead', 'shotgun', 'schema'")],
         github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
         neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
         neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
@@ -575,6 +721,7 @@ Your codebase follows Clean Code principles well.
             'envy': FeatureEnvyDetector(),
             'dead': DeadCodeDetector(),
             'shotgun': ShotgunSurgeryDetector(),
+            'schema': SchemaDiscrepancyDetector(),
         }
 
         # Validate detector names
@@ -584,13 +731,11 @@ Your codebase follows Clean Code principles well.
             return f"❌ Unknown detectors: {invalid_detectors}. Available: {list(detector_map.keys())}"
 
         try:
-            # Create Neo4j service
-            self.neo_service: NeoService = dag.neo_service(
-                self.config_file,
-                password=neo_password,
+            # Get or create Neo4j service
+            neo_service = await self._get_or_create_neo_service(
                 github_access_token=github_access_token,
-                neo_auth=neo_auth,
-                neo_data=self.neo_data
+                neo_password=neo_password,
+                neo_auth=neo_auth
             )
 
             # Get selected detectors
@@ -602,7 +747,7 @@ Your codebase follows Clean Code principles well.
             # Run detectors concurrently
             results = await self._run_detectors_concurrently(
                 detectors=selected_detectors,
-                neo_service=self.neo_service,
+                neo_service=neo_service,
                 logger=logger,
                 max_concurrent=concurrency_config['max_concurrent']
             )
