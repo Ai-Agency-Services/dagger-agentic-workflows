@@ -284,6 +284,388 @@ class ShotgunSurgeryDetector(CodeSmellDetector):
         return "Shotgun Surgery"
 
 
+class HighFanOutDetector(CodeSmellDetector):
+    """Modules that depend on many files (high efferent coupling)"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        query = """
+        MATCH (f:File)
+        OPTIONAL MATCH (f)-[:IMPORTS]->(dep:File)
+        WITH f, count(DISTINCT dep) AS fan_out
+        WHERE fan_out > 12
+        RETURN f.filepath AS file, fan_out
+        ORDER BY fan_out DESC
+        LIMIT 20
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 2:
+                filepath = parts[0].strip('"')
+                fan_out = int(parts[1]) if parts[1].isdigit() else 0
+                sev = SmellSeverity.HIGH if fan_out >= 20 else SmellSeverity.MEDIUM
+                smells.append(CodeSmell(
+                    name="High Fan-Out",
+                    description=f"Imports {fan_out} files (high efferent coupling)",
+                    severity=sev,
+                    location=filepath,
+                    metrics={"fan_out": fan_out},
+                    recommendation="Reduce dependencies via inversion/abstractions or split module"
+                ))
+        return smells
+
+    def get_name(self) -> str:
+        return "High Fan-Out"
+
+
+class HighFanInDetector(CodeSmellDetector):
+    """Modules that many other files depend on (high afferent coupling)"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        query = """
+        MATCH (f:File)
+        OPTIONAL MATCH (imp:File)-[:IMPORTS]->(f)
+        WITH f, count(DISTINCT imp) AS fan_in
+        WHERE fan_in > 12
+        RETURN f.filepath AS file, fan_in
+        ORDER BY fan_in DESC
+        LIMIT 20
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 2:
+                filepath = parts[0].strip('"')
+                fan_in = int(parts[1]) if parts[1].isdigit() else 0
+                sev = SmellSeverity.CRITICAL if fan_in >= 30 else SmellSeverity.HIGH
+                smells.append(CodeSmell(
+                    name="High Fan-In",
+                    description=f"Imported by {fan_in} files (unstable dependency)",
+                    severity=sev,
+                    location=filepath,
+                    metrics={"fan_in": fan_in},
+                    recommendation="Introduce a Facade or split responsibilities to reduce inbound deps"
+                ))
+        return smells
+
+    def get_name(self) -> str:
+        return "High Fan-In"
+
+
+class InstabilityDetector(CodeSmellDetector):
+    """Instability metric = fan_out / (fan_in + fan_out)"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        query = """
+        MATCH (f:File)
+        OPTIONAL MATCH (f)-[:IMPORTS]->(o:File)
+        WITH f, count(DISTINCT o) AS fan_out
+        OPTIONAL MATCH (i:File)-[:IMPORTS]->(f)
+        WITH f, fan_out, count(DISTINCT i) AS fan_in
+        WITH f, fan_in, fan_out,
+             CASE WHEN fan_in + fan_out = 0 THEN 0.0
+                  ELSE toFloat(fan_out) / (fan_in + fan_out) END AS instability
+        WHERE fan_out > 0 OR fan_in > 0
+        RETURN f.filepath AS file, fan_in, fan_out, round(instability, 2) AS instability
+        ORDER BY instability DESC, fan_out DESC
+        LIMIT 20
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 4:
+                filepath = parts[0].strip('"')
+                fan_in = int(parts[1]) if parts[1].isdigit() else 0
+                fan_out = int(parts[2]) if parts[2].isdigit() else 0
+                try:
+                    instability = float(parts[3])
+                except Exception:
+                    instability = 0.0
+                sev = SmellSeverity.HIGH if instability >= 0.8 and fan_out >= 8 else SmellSeverity.MEDIUM
+                smells.append(CodeSmell(
+                    name="High Instability",
+                    description=f"Instability={instability} (fan_in={fan_in}, fan_out={fan_out})",
+                    severity=sev,
+                    location=filepath,
+                    metrics={"fan_in": fan_in, "fan_out": fan_out,
+                             "instability": instability},
+                    recommendation="Reduce outward deps or increase inbound reuse to stabilize"
+                ))
+        return smells
+
+    def get_name(self) -> str:
+        return "Instability"
+
+
+class LongFunctionDetector(CodeSmellDetector):
+    """Functions/methods with large line spans"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        threshold = 120
+        query = f"""
+        MATCH (fn)-[:DEFINED_IN]->(f:File)
+        WHERE (fn:Function OR fn:Method)
+        WITH fn, f, coalesce(fn.end_line, -1) - coalesce(fn.start_line, 0) AS span
+        WHERE span >= {threshold}
+        RETURN f.filepath AS file, fn.name AS symbol, labels(fn)[0] AS kind, span
+        ORDER BY span DESC
+        LIMIT 50
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 4:
+                filepath = parts[0].strip('"')
+                symbol = parts[1].strip('"')
+                kind = parts[2].strip('"')
+                try:
+                    span = int(parts[3])
+                except Exception:
+                    span = threshold
+                sev = SmellSeverity.CRITICAL if span >= 300 else SmellSeverity.HIGH if span >= 180 else SmellSeverity.MEDIUM
+                smells.append(CodeSmell(
+                    name="Long Function/Method",
+                    description=f"{kind} '{symbol}' spans {span} lines",
+                    severity=sev,
+                    location=filepath,
+                    metrics={"span": span, "symbol": symbol, "kind": kind},
+                    recommendation="Extract smaller functions and reduce complexity"
+                ))
+        return smells
+
+    def get_name(self) -> str:
+        return "Long Functions"
+
+
+class DeepDependencyChainDetector(CodeSmellDetector):
+    """Files with very deep import chains"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        min_depth = 6
+        query = f"""
+        MATCH p = (a:File)-[:IMPORTS*1..12]->(:File)
+        WITH a, max(length(p)) AS max_len
+        WHERE max_len >= {min_depth}
+        RETURN a.filepath AS file, max_len
+        ORDER BY max_len DESC
+        LIMIT 20
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 2:
+                filepath = parts[0].strip('"')
+                depth = int(parts[1]) if parts[1].isdigit() else min_depth
+                sev = SmellSeverity.HIGH if depth >= 10 else SmellSeverity.MEDIUM
+                smells.append(CodeSmell(
+                    name="Deep Dependency Chain",
+                    description=f"Max import chain depth {depth}",
+                    severity=sev,
+                    location=filepath,
+                    metrics={"max_chain_depth": depth},
+                    recommendation="Flatten layers or introduce boundaries to shorten chains"
+                ))
+        return smells
+
+    def get_name(self) -> str:
+        return "Deep Dependency Chains"
+
+
+class OrphanModuleDetector(CodeSmellDetector):
+    """Files with no imports in or out"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        query = """
+        MATCH (f:File)
+        WHERE NOT (f)-[:IMPORTS]->(:File)
+          AND NOT (:File)-[:IMPORTS]->(f)
+        RETURN f.filepath AS file
+        LIMIT 50
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            filepath = line.split()[0].strip('"')
+            smells.append(CodeSmell(
+                name="Orphan Module",
+                description="No imports in or out; may be unused or a utility missing integration",
+                severity=SmellSeverity.MEDIUM,
+                location=filepath,
+                metrics={},
+                recommendation="Delete if unused or integrate via an explicit interface"
+            ))
+        return smells
+
+    def get_name(self) -> str:
+        return "Orphan Modules"
+
+
+class BarrelFileDetector(CodeSmellDetector):
+    """Barrel files: many re-exports/imports but few symbols defined locally"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        query = """
+        MATCH (f:File)
+        OPTIONAL MATCH (f)-[:IMPORTS]->(dep:File)
+        WITH f, count(DISTINCT dep) AS fan_out
+        OPTIONAL MATCH (s)-[:DEFINED_IN]->(f)
+        WHERE s:Function OR s:Class OR s:Variable OR s:Interface OR s:Method
+        WITH f, fan_out, count(DISTINCT s) AS symbols
+        WHERE fan_out >= 10 AND symbols <= 1
+        RETURN f.filepath AS file, fan_out, symbols
+        ORDER BY fan_out DESC
+        LIMIT 20
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 3:
+                filepath = parts[0].strip('"')
+                fan_out = int(parts[1]) if parts[1].isdigit() else 0
+                symbols = int(parts[2]) if parts[2].isdigit() else 0
+                sev = SmellSeverity.MEDIUM if fan_out >= 10 else SmellSeverity.LOW
+                smells.append(CodeSmell(
+                    name="Barrel File",
+                    description=f"Re-exports/imports {fan_out} files but defines {symbols} symbols",
+                    severity=sev,
+                    location=filepath,
+                    metrics={"fan_out": fan_out, "symbols": symbols},
+                    recommendation="Keep barrels tiny; avoid adding logic or many indirections"
+                ))
+        return smells
+
+    def get_name(self) -> str:
+        return "Barrel Files"
+
+
+class DuplicateSymbolDetector(CodeSmellDetector):
+    """Colliding symbol names across files"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        query = """
+        MATCH (s)-[:DEFINED_IN]->(f:File)
+        WITH s.name AS name, head(labels(s)) AS kind, collect(DISTINCT f.filepath) AS files
+        WHERE size(files) > 1 AND name IS NOT NULL AND name <> ""
+        RETURN name, kind, size(files) AS occurrences
+        ORDER BY occurrences DESC
+        LIMIT 25
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 3:
+                name = parts[0].strip('"')
+                kind = parts[1].strip('"')
+                occ = int(parts[2]) if parts[2].isdigit() else 2
+                sev = SmellSeverity.HIGH if occ >= 4 else SmellSeverity.MEDIUM
+                smells.append(CodeSmell(
+                    name="Duplicate Symbol",
+                    description=f"Symbol '{name}' ({kind}) appears in {occ} files",
+                    severity=sev,
+                    location="Multiple files",
+                    metrics={"occurrences": occ, "symbol": name, "kind": kind},
+                    recommendation="Rename or consolidate to avoid ambiguity and shadowing"
+                ))
+        return smells
+
+    def get_name(self) -> str:
+        return "Duplicate Symbols"
+
+
+class GodComponentDetector(CodeSmellDetector):
+    """TSX/JSX components with many functions (likely too much responsibility)"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        threshold = 6
+        query = """
+        MATCH (f:File)
+        WHERE f.filepath ENDS WITH ".tsx" OR f.filepath ENDS WITH ".jsx"
+        OPTIONAL MATCH (fn:Function)-[:DEFINED_IN]->(f)
+        WITH f, count(fn) AS functions
+        WHERE functions >= 6
+        RETURN f.filepath AS file, functions
+        ORDER BY functions DESC
+        LIMIT 20
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 2:
+                filepath = parts[0].strip('"')
+                fcount = int(parts[1]) if parts[1].isdigit() else threshold
+                sev = SmellSeverity.HIGH if fcount >= 10 else SmellSeverity.MEDIUM
+                smells.append(CodeSmell(
+                    name="God Component",
+                    description=f"Contains {fcount} functions; likely multiple responsibilities",
+                    severity=sev,
+                    location=filepath,
+                    metrics={"function_count": fcount},
+                    recommendation="Extract smaller components/hooks for clearer responsibilities"
+                ))
+        return smells
+
+    def get_name(self) -> str:
+        return "God Components"
+
+
+class CrossDirectoryCouplingDetector(CodeSmellDetector):
+    """Files importing broadly across many feature folders"""
+
+    async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
+        query = """
+        MATCH (a:File)-[:IMPORTS]->(b:File)
+        WITH a, b, split(a.filepath,"/") AS ap, split(b.filepath,"/") AS bp
+        WITH a,
+             (CASE WHEN size(ap) > 3 THEN ap[3] ELSE ap[size(ap)-2] END) AS a_dir,
+             (CASE WHEN size(bp) > 3 THEN bp[3] ELSE bp[size(bp)-2] END) AS b_dir
+        WHERE a_dir IS NOT NULL AND b_dir IS NOT NULL AND a_dir <> b_dir
+        WITH a, collect(DISTINCT b_dir) AS dirs
+        WITH a, size(dirs) AS distinct_dirs
+        WHERE distinct_dirs >= 3
+        RETURN a.filepath AS file, distinct_dirs
+        ORDER BY distinct_dirs DESC
+        LIMIT 20
+        """
+        result = await neo_service.run_query(query)
+        smells: List[CodeSmell] = []
+        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) >= 2:
+                filepath = parts[0].strip('"')
+                dirs = int(parts[1]) if parts[1].isdigit() else 3
+                sev = SmellSeverity.MEDIUM if dirs >= 3 else SmellSeverity.LOW
+                smells.append(CodeSmell(
+                    name="Cross-Directory Coupling",
+                    description=f"Imports from {dirs} distinct directories",
+                    severity=sev,
+                    location=filepath,
+                    metrics={"distinct_dirs": dirs},
+                    recommendation="Align imports to a stable boundary or reduce cross-feature coupling"
+                ))
+        return smells
+
+    def get_name(self) -> str:
+        return "Cross-Directory Coupling"
+
+
 @object_type
 class Smell:
     """Code smell detection service using Clean Code principles"""
@@ -328,6 +710,16 @@ class Smell:
             FeatureEnvyDetector(),
             DeadCodeDetector(),
             ShotgunSurgeryDetector(),
+            HighFanOutDetector(),
+            HighFanInDetector(),
+            InstabilityDetector(),
+            LongFunctionDetector(),
+            DeepDependencyChainDetector(),
+            OrphanModuleDetector(),
+            BarrelFileDetector(),
+            DuplicateSymbolDetector(),
+            GodComponentDetector(),
+            CrossDirectoryCouplingDetector(),
         ]
 
     async def _run_detectors_concurrently(

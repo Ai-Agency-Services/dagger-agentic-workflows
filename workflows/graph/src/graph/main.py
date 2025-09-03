@@ -1,27 +1,21 @@
+import json
 import logging
 import os
-from typing import Annotated, Optional, List, Tuple, Dict, Set
-import json
-import re
+from typing import Annotated, Dict, List, Optional, Set, Tuple
 
-import anyio  # Added for concurrency
+import anyio
 import dagger
 import yaml
-from dagger.client.gen import NeoService, NeoServiceSymbolProperties, NeoServiceRelationshipProperties
 from ais_dagger_agents_config.models import YAMLConfig
 from dagger import Doc, dag, function, object_type
-from graph.models.code_file import CodeFile, CodeSymbol
-from graph.operations.import_analyzer import ImportAnalyzer
-from graph.operations.relationship_extractor import RelationshipExtractor
-from graph.utils import dagger_json_file_to_pydantic
-from graph.services.neo4j_service import Neo4jService
+from dagger.client.gen import NeoService
 
 
 @object_type
 class Graph:
     config: dict
     config_file: dagger.File
-    neo_service: Optional[Neo4jService] = None
+    neo_service: Optional[NeoService] = None
     neo_data: Optional[dagger.CacheVolume] = None
 
     @classmethod
@@ -118,10 +112,10 @@ class Graph:
         escaped_to = self._escape_cypher_string(to_symbol)
         escaped_filepath = self._escape_cypher_string(filepath)
 
-        # Match any symbol type (Function, Class, Variable, etc.)
-        return f'''MATCH (s1) WHERE (s1:Function OR s1:Class OR s1:Variable OR s1:Method) 
+        # Match common symbol types; include Interface for TS references
+        return f'''MATCH (s1) WHERE (s1:Function OR s1:Class OR s1:Variable OR s1:Method OR s1:Interface) 
 AND s1.name = "{escaped_from}" AND s1.filepath = "{escaped_filepath}"
-MATCH (s2) WHERE (s2:Function OR s2:Class OR s2:Variable OR s2:Method) 
+MATCH (s2) WHERE (s2:Function OR s2:Class OR s2:Variable OR s2:Method OR s2:Interface) 
 AND s2.name = "{escaped_to}" AND s2.filepath = "{escaped_filepath}"
 MERGE (s1)-[:{relationship_type}]->(s2);'''
 
@@ -408,6 +402,15 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                 # Extract imports from parsed data
                 parsed_imports = code_file_dict.get("imports", [])
 
+                # Fallback: add re-export sources as imports (handles `export {X} from '...';`)
+                try:
+                    import re as _re
+                    for m in _re.finditer(r'export\\s*\\{[^}]*\\}\\s*from\\s*[\'"]([^\'"]+)[\'"]\\s*;?', content):
+                        parsed_imports.append(m.group(1))
+                except Exception as _re_err:
+                    logger.debug(
+                        f"Re-export scan failed for {filepath}: {_re_err}")
+
                 # Build file creation query
                 queries.append(self._build_file_cypher(filepath, language))
 
@@ -604,7 +607,8 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
 
             # Get file extensions to process
             file_extensions = getattr(
-                self.config.indexing, 'file_extensions', ['py', 'js', 'ts'])
+                # include TSX/JSX by default
+                self.config.indexing, 'file_extensions', ['py', 'js', 'ts', 'tsx', 'jsx'])
 
             # Build find command for multiple extensions with exclusions
             find_cmd = ["find", work_dir, "-type", "f", "("]
@@ -664,10 +668,6 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                 max_concurrent=processing_config['max_concurrent']
             )
 
-            # Clear database first
-            logger.info("Clearing existing database")
-            await self.neo_service.clear_database()
-
             # Create constraints and indexes to match neo4j_schema
             logger.info("Creating constraints and indexes")
             constraints_and_indexes = [
@@ -676,12 +676,10 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                 "CREATE CONSTRAINT function_name_path_line IF NOT EXISTS FOR (function:Function) REQUIRE (function.name, function.filepath, function.start_line) IS UNIQUE",
                 "CREATE CONSTRAINT class_name_path_line IF NOT EXISTS FOR (class:Class) REQUIRE (class.name, class.filepath, class.start_line) IS UNIQUE",
                 "CREATE CONSTRAINT variable_name_path_line IF NOT EXISTS FOR (variable:Variable) REQUIRE (variable.name, variable.filepath, variable.line_number) IS UNIQUE",
-                "CREATE CONSTRAINT symbol_name_path_line IF NOT EXISTS FOR (s:Symbol) REQUIRE (s.name, s.filepath, s.line_number) IS UNIQUE",
+                "CREATE CONSTRAINT method_name_path_line IF NOT EXISTS FOR (m:Method) REQUIRE (m.name, m.filepath, m.start_line) IS UNIQUE",
                 "CREATE INDEX function_name_idx IF NOT EXISTS FOR (f:Function) ON (f.name)",
                 "CREATE INDEX file_language_idx IF NOT EXISTS FOR (f:File) ON (f.language)",
-                "CREATE INDEX file_filepath_idx IF NOT EXISTS FOR (f:File) ON (f.filepath)",
-                "CREATE INDEX symbol_name_idx IF NOT EXISTS FOR (s:Symbol) ON (s.name)",
-                "CREATE INDEX symbol_filepath_idx IF NOT EXISTS FOR (s:Symbol) ON (s.filepath)"
+                "CREATE INDEX file_filepath_idx IF NOT EXISTS FOR (f:File) ON (f.filepath)"
             ]
 
             for query in constraints_and_indexes:

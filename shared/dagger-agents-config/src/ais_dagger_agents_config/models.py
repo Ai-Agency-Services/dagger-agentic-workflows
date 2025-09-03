@@ -55,6 +55,8 @@ class GitConfig(BaseModel):
     """Git configuration."""
     user_name: str = Field(description="Git user name")
     user_email: EmailStr = Field(description="Git user email")
+    base_pull_request_branch: str = Field(
+        description="Base branch for pull requests")
 
 
 class ConcurrencyConfig(BaseModel):
@@ -146,6 +148,8 @@ class CoreAPIConfig(BaseModel):
     """Core API configuration with optional fields."""
     model: Optional[str] = Field(
         default=None, description="Model to use for core operations")
+    fqdn: Optional[str] = Field(
+        default=None, description="Fully qualified domain name for the core API")
     provider: Optional[str] = Field(
         default=None, description="Provider for the core API, e.g., 'openai'")
     fallback_models: List[str] = Field(
