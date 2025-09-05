@@ -65,6 +65,9 @@ def create_fastapi_app(model_name: str = "gpt-4o", provider: str = "openai") -> 
             # Parse request body
             body = await request.json()
 
+            # Check for debug mode
+            debug_mode = body.get("debug", False)
+
             # Extract message content from the request
             message_content = "Help me create a knowledge graph"
             if "messages" in body and isinstance(body["messages"], list) and body["messages"]:
@@ -76,18 +79,32 @@ def create_fastapi_app(model_name: str = "gpt-4o", provider: str = "openai") -> 
             user_state = UserIntentState()
             deps = StateDeps(state=user_state)
 
-            # Use agent directly for simplicity
-            await agent.run(message_content, deps=deps)
+            # Use agent directly and capture response
+            agent_response = await agent.run(message_content, deps=deps)
+            logger.info(f"Agent response: {agent_response[:100]}...")
 
             # Check if we have an approved user goal
-            result = {}
+            result = {
+                "response": agent_response  # Always include agent's response
+            }
+
             if deps.state.approved_user_goal:
-                result = {
-                    "kind_of_graph": deps.state.approved_user_goal.kind_of_graph,
-                    "graph_description": deps.state.approved_user_goal.graph_description
-                }
+                result["kind_of_graph"] = deps.state.approved_user_goal.kind_of_graph
+                result["graph_description"] = deps.state.approved_user_goal.graph_description
+                result["status"] = "approved"
             elif deps.state.perceived_user_goal:
-                result = deps.state.perceived_user_goal
+                result["kind_of_graph"] = deps.state.perceived_user_goal["kind_of_graph"]
+                result["graph_description"] = deps.state.perceived_user_goal["graph_description"]
+                result["status"] = "perceived"
+            else:
+                result["status"] = "incomplete"
+
+            # Include complete state in debug mode
+            if debug_mode:
+                result["state"] = deps.state.model_dump() if hasattr(deps.state, "model_dump") else {
+                    k: v for k, v in vars(deps.state).items()
+                    if not k.startswith("_")
+                }
 
             # Return the result as JSON
             return JSONResponse(content=result)
