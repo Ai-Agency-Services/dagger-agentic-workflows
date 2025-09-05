@@ -80,7 +80,10 @@ def create_fastapi_app(model_name: str = "gpt-4o", provider: str = "openai") -> 
             deps = StateDeps(state=user_state)
 
             # Use agent directly and capture response
-            agent_response = await agent.run(message_content, deps=deps)
+            agent_result = await agent.run(message_content, deps=deps)
+
+            # Extract the string response from the AgentRunResult object
+            agent_response = str(agent_result)
             logger.info(f"Agent response: {agent_response[:100]}...")
 
             # Check if we have an approved user goal
