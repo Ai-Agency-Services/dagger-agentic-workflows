@@ -180,3 +180,195 @@ class UserIntent:
         except Exception as e:
             self.logger.error(f"Error creating AG-UI app: {e}")
             return f"Failed to create AG-UI app: {str(e)}"
+
+    @function
+    async def get_user_intent_interactive(
+        self,
+        provider: str,
+        open_router_api_key: dagger.Secret,
+        initial_prompt: Optional[str] = None,
+        openai_api_key: Optional[dagger.Secret] = None,
+        interactive_inputs: Optional[list[str]] = None,
+        non_interactive_fallback: bool = False
+    ) -> intent:
+        """
+        Run the user intent agent in interactive CLI mode to define a knowledge graph use case.
+
+        Args:
+            provider: LLM provider to use ('openai' or 'openrouter')
+            open_router_api_key: API key for OpenRouter
+            initial_prompt: Optional initial prompt from the user
+            openai_api_key: API key for OpenAI
+            interactive_inputs: Optional list of inputs to feed to the conversation (for non-interactive environments)
+            non_interactive_fallback: If True, use a default conversation flow when stdin is unavailable
+
+        Returns:
+            An intent object containing the approved user goal
+        """
+        # Set up logging first to avoid AttributeError
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        logger = logging.getLogger(__name__)
+
+        try:
+            # Add missing git configuration to avoid validation errors
+            config_dict = dict(self.config)
+            if "git" not in config_dict:
+                config_dict["git"] = {}
+            if "base_pull_request_branch" not in config_dict.get("git", {}):
+                config_dict["git"]["base_pull_request_branch"] = "main"
+                logger.info("Added default git.base_pull_request_branch: main")
+
+            # Log configuration before validation
+            logger.info("UserIntentAgent initializing with configuration")
+
+            try:
+                # Validate config with Pydantic
+                validated_config = YAMLConfig(**config_dict)
+                self.config = validated_config
+            except Exception as config_error:
+                logger.error(f"Configuration validation error: {config_error}")
+                return intent(
+                    kind_of_graph="error",
+                    graph_description=f"Configuration error: {str(config_error)}"
+                )
+
+            # Get LLM credentials
+            llm_credentials = await get_llm_credentials(
+                provider=provider,
+                open_router_key=open_router_api_key,
+                openai_key=openai_api_key
+            )
+
+            # Create LLM model
+            model = await create_llm_model(
+                api_key=llm_credentials.api_key,
+                base_url=llm_credentials.base_url,
+                model_name=self.config.core_api.model
+            )
+
+            # Create agent
+            agent: Agent = create_user_intent_agent(pydantic_ai_model=model)
+            agent.instrument_all()
+
+            # Create dependencies with empty state
+            deps = UserIntentAgentDependencies()
+
+            # Initialize conversation with prompt or default
+            message = initial_prompt if initial_prompt else "I need help defining a knowledge graph use case."
+            print(f"\n🧠 User: {message}")
+
+            # Set up interactive inputs if provided
+            input_iter = iter(interactive_inputs or [])
+
+            # Track if we're in fallback mode due to stdin issues
+            using_fallback = False
+
+            # Interactive conversation loop
+            while True:
+                # Run agent with current message
+                response = await agent.run(message, deps=deps)
+                print(f"\n🤖 Agent: {response}\n")
+
+                # Check if we have an approved user goal and can exit
+                if "approved_user_goal" in deps.state:
+                    print("\n✅ User goal approved. Conversation complete.")
+                    break
+
+                # Try to get the next input based on available sources
+                try:
+                    # If we have predefined inputs, use those first
+                    if interactive_inputs:
+                        try:
+                            message = next(input_iter)
+                            print(f"🧠 User: {message}")
+                            continue
+                        except StopIteration:
+                            print("\n⚠️ No more pre-defined inputs.")
+                            if not non_interactive_fallback:
+                                break
+                            using_fallback = True
+
+                    # If we're in a non-interactive environment or hit EOF before
+                    if using_fallback or non_interactive_fallback:
+                        # Use a simple fallback conversation to generate a knowledge graph
+                        if "product" in str(response).lower() or "supply" in str(response).lower():
+                            message = "I want to create a supply chain knowledge graph for tracking product dependencies"
+                            print(f"🧠 User (fallback): {message}")
+                        else:
+                            message = "Let's do a product dependency knowledge graph that shows relationships between components"
+                            print(f"🧠 User (fallback): {message}")
+
+                        # Only run through fallback conversation once
+                        using_fallback = True
+                        continue
+
+                    # Otherwise try to get interactive input
+                    print("\nEnter your response (or type 'exit' to end conversation):")
+                    message = input("🧠 User: ")
+
+                except (EOFError, KeyboardInterrupt):
+                    print("\n⚠️ Input stream ended or interrupted.")
+
+                    # If fallback is enabled, continue with default responses
+                    if non_interactive_fallback and not using_fallback:
+                        using_fallback = True
+                        message = "I want to create a product dependency graph"
+                        print(f"🧠 User (fallback): {message}")
+                        continue
+                    else:
+                        print("Ending conversation.")
+                        break
+
+                # Check for exit commands
+                if message.lower() in ["exit", "quit", "done", "bye"]:
+                    print("\n👋 Ending conversation.")
+                    break
+
+            # If we're in fallback mode and still don't have an approved goal,
+            # make one final attempt with a very specific request
+            if using_fallback and "approved_user_goal" not in deps.state:
+                logger.info("Using fallback to create a default approved goal")
+                final_message = ("I want to create a product dependency knowledge graph "
+                                 "to track relationships between components and suppliers")
+                print(f"\n🧠 User (fallback): {final_message}")
+                await agent.run(final_message, deps=deps)
+
+            # Check if approved_user_goal was set
+            if "approved_user_goal" not in deps.state:
+                logger.warning(
+                    "No approved user goal found in state after conversation.")
+                # Create a default goal in non-interactive mode
+                if non_interactive_fallback:
+                    logger.info("Creating default knowledge graph goal")
+                    return intent(
+                        kind_of_graph="product dependency",
+                        graph_description="A knowledge graph for tracking product dependencies between components and suppliers"
+                    )
+                else:
+                    return intent(
+                        kind_of_graph="error",
+                        graph_description="No approved user goal was set during the conversation."
+                    )
+
+            # Convert the dictionary to an intent object
+            approved_goal = deps.state["approved_user_goal"]
+            return intent(
+                kind_of_graph=approved_goal["kind_of_graph"],
+                graph_description=approved_goal["graph_description"]
+            )
+
+        except UnexpectedModelBehavior as agent_error:
+            logger.error(f"Error in UserIntentAgent: {agent_error}")
+            return intent(
+                kind_of_graph="error",
+                graph_description=f"Agent error: {str(agent_error)}"
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error in UserIntentAgent: {e}")
+            return intent(
+                kind_of_graph="error",
+                graph_description=f"Unexpected error: {str(e)}"
+            )
