@@ -17,7 +17,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
 from simple_chalk import blue, red, yellow, green
 
-from dagger.client.gen import NeoService
+from dagger.client.gen import NeoService, AgentUtilsCodeClientService
 
 # Initialize tracer for OpenTelemetry
 tracer = trace.get_tracer(__name__)
@@ -36,6 +36,7 @@ class CoverAgentDependencies:
     reporter: 'Reporter'
     current_code_module: Optional[CodeModule] = field(default=None)
     neo_service: Optional[NeoService] = field(default=None)
+    query_service: Optional[AgentUtilsCodeClientService] = field(default=None)
 
 
 async def add_coverage_report_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
@@ -286,6 +287,38 @@ async def write_test_file_tool(ctx: RunContext[CoverAgentDependencies], contents
         traceback.print_exc()
         return f"Error writing test file: {e}"
 
+
+async def query_codebase_tool(ctx: RunContext[CoverAgentDependencies], question: str, similarity_threshold: float = 0.7) -> str:
+    """Tool: Query the codebase using both semantic and structural information
+    
+    Args:
+        question: The natural language question about the codebase
+        similarity_threshold: Threshold for semantic similarity (0.0-1.0)
+    
+    Returns:
+        Structured results combining semantic search and graph relationships
+    """
+    print(blue(f"🔍 Querying codebase: {question}"))
+
+    if not ctx.deps.query_service:
+        return "Error: Code query service is not available. Make sure it's configured properly."
+
+    try:
+        # Use the query service
+        results = await ctx.deps.query_service.query(
+            question=question,
+            similarity_threshold=similarity_threshold,
+            max_results=5
+        )
+
+        return results
+
+    except Exception as e:
+        error_msg = f"Error querying codebase: {e}"
+        print(red(f"❌ {error_msg}"))
+        import traceback
+        traceback.print_exc()
+        return error_msg
 
 async def run_all_tests_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
     """Tool: Attempt to run all of the unit tests in the container using the configured command.
@@ -763,6 +796,38 @@ You can use analyze_imports_tool(filepath) for a quick overview or run_cypher_qu
     """
 
 
+async def add_query_service_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
+    return """
+\n ------- \n
+<query_service_usage>
+POWERFUL CODEBASE SEARCH: You have access to a unified query service that combines semantic search with graph relationships.
+
+Use query_codebase_tool(question, similarity_threshold=0.7) to ask natural language questions about the codebase like:
+- "How are error states handled in the authentication flow?"
+- "Where is the main data fetching logic implemented?"
+- "Find code related to form validation"
+- "Show me examples of API calls to external services"
+
+The query service will:
+1. Find semantically relevant code snippets across the codebase
+2. Enrich results with graph relationships (imports, references, dependencies)
+3. Present both code content and structural information
+
+This is especially valuable for:
+- Understanding unfamiliar code patterns
+- Finding similar implementations to reference
+- Identifying dependencies that need mocking in tests
+- Discovering code that interacts with the module you're testing
+
+Example: `query_codebase_tool("How are API errors handled?", 0.8)`
+
+The query service complements the more structured Neo4j queries by providing a natural language interface
+to the codebase when you don't know exactly what to look for.
+</query_service_usage>
+\n ------- \n
+"""
+
+
 def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     """
     Creates and configures the CoverAI agent instance.
@@ -794,12 +859,14 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     agent.system_prompt(add_current_code_module_prompt)
     agent.system_prompt(add_dependency_files_prompt)
     agent.system_prompt(add_neo4j_usage_prompt)
+    agent.system_prompt(add_query_service_prompt)  # Register the new prompt
 
     agent.tool(read_file_tool)
     agent.tool(run_test_tool)
     agent.tool(write_test_file_tool)
     agent.tool(run_cypher_query_tool)
     agent.tool(analyze_imports_tool)
+    agent.tool(query_codebase_tool)  # Register the new tool
 
     print(f"CoverAI Agent created with model: {pydantic_ai_model.model_name}")
     return agent

@@ -86,7 +86,6 @@ class Cover:
             "OpenAI API key (required if provider is 'openai')")] = None,
         neo4j_password: Annotated[Optional[dagger.Secret], Doc(
             "Neo4j password")] = None,
-
     ) -> dagger.Container:
         """Set up the test environment and return a ready-to-use container."""
         try:
@@ -95,16 +94,35 @@ class Cover:
             self.openai_api_key = openai_api_key
             self.config: YAMLConfig = YAMLConfig(**self.config)
             self.model = model_name
+
+            # Set up Neo4j service
             self.neo_service = dag.neo_service(
                 self.config_file,
                 password=neo4j_password,
                 github_access_token=github_access_token,
                 neo_auth=neo_auth,
                 neo_data=self.neo_data
-                )
+            )
 
             test_result = await self.neo_service.test_connection()
             print(green(f"Neo4j connection test result: {test_result}"))
+
+            # Set up Query Service that combines Neo4j and vector data
+            vector_service = dag.vector_service(
+                self.config_file,
+                github_access_token=github_access_token
+            )
+
+            # Create the query service using agent-utils
+            query_utils = dag.query_utils()
+            self.query_service = await query_utils.create_query_service(
+                config_file=self.config_file,
+                neo_service=self.neo_service,
+                vector_service=vector_service,
+                openai_api_key=openai_api_key or open_router_api_key
+            )
+
+            print(green("Query service initialized successfully"))
 
             # Setup repository
             source = (
@@ -194,6 +212,7 @@ class Cover:
                 report=report,
                 reporter=self.reporter,
                 neo_service=self.neo_service,
+                query_service=self.query_service,  # Add the query service
             )
 
             # Run test generation

@@ -186,6 +186,9 @@ class FeatureEnvyDetector(CodeSmellDetector):
         return "Feature Envy"
 
 
+# TODO:One of the property names in your query is not available in the database,
+# make sure you didn't misspell it or that the label is available when you run this statement in your application
+# (the missing property name is: scope)
 class DeadCodeDetector(CodeSmellDetector):
     """Detects potentially unused code"""
 

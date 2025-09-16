@@ -1,6 +1,6 @@
 {
   "name": "Cover",
-  "engineVersion": "v0.18.14",
+  "engineVersion": "v0.18.17",
   "sdk": {
     "source": "python"
   },
@@ -8,6 +8,10 @@
     {
       "name": "Reporter",
       "source": "plugins/reporter"
+    },
+    {
+      "name": "agent-utils",
+      "source": "../../shared/agent-utils"
     },
     {
       "name": "builder",

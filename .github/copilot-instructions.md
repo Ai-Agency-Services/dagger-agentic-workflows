@@ -10,16 +10,17 @@ Use these focused rules when proposing or editing code in this repo. Keep change
   - services/neo/src/neo/main.py: Neo4j service wrapper and utilities.
   - shared/dagger-agents-config/src/ais_dagger_agents_config/models.py: YAMLConfig + AgentsConfig.
 
-## Editing rules (do/don’t)
+## Editing rules (do/don't)
 - Do keep Dagger @object_type fields serializable only; create runtime objects (agents, clients) locally inside @function methods.
 - Do use Pydantic v2 (model_validate, BaseModel) and existing models; extend YAMLConfig via the shared package.
-- Do prefer ImportAnalyzer and shared parsing utilities; don’t duplicate simple import scanners.
-- Don’t add heavy dependencies to runtime containers unless necessary; prefer native/standard libs and existing images.
-- Don’t break function signatures or public module APIs without updating all call sites.
+- Do prefer ImportAnalyzer and shared parsing utilities; don't duplicate simple import scanners.
+- Don't add heavy dependencies to runtime containers unless necessary; prefer native/standard libs and existing images.
+- Don't break function signatures or public module APIs without updating all call sites.
 
 ## Dagger patterns
 - Split responsibilities: environment setup → per-report processing → batch orchestration → test generation.
-- Use anyio/asyncio for concurrency with proper timeouts (no CancelScope misuse). Use asyncio.wait_for or anyio.move_on_after correctly.
+- Always use anyio for concurrency, not asyncio. Use anyio.TaskGroup and anyio.move_on_after for timeouts.
+- Never use asyncio.create_task or CancelScope directly. Prefer anyio for better Dagger compatibility.
 - Return primitive data, dagger.Files/Dirs, or JSON via helpers; avoid passing custom classes across boundaries.
 
 ## Configuration
@@ -28,7 +29,7 @@ Use these focused rules when proposing or editing code in this repo. Keep change
 
 ## Graph + Vector
 - Prefer vector-first retrieval (Supabase match_code_embeddings) then enrich with Neo4j structure (files, symbols, imports, calls, references).
-- Preserve existing relationships; don’t drop IMPORTS/DEFINED_IN/EXPORTS when adding new ones.
+- Preserve existing relationships; don't drop IMPORTS/DEFINED_IN/EXPORTS when adding new ones.
 - Keep relative import resolution logic intact; reuse helper methods where present.
 
 ## Neo4j service
@@ -42,7 +43,7 @@ Use these focused rules when proposing or editing code in this repo. Keep change
 
 ## Pull Requests behavior
 - Use gh to create/update PRs. Guard for missing labels; create or continue gracefully.
-- Commit identity comes from config.git (user_name/user_email). Don’t hardcode.
+- Commit identity comes from config.git (user_name/user_email). Don't hardcode.
 
 ## Style & quality gates
 - Python: black/ruff conventions (see SDK docs). Type hints required for public functions.
