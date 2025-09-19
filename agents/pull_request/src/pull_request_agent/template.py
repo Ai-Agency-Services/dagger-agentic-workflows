@@ -25,35 +25,35 @@ def get_pull_request_agent_template():
       12. CRITICAL: ALWAYS use '--base develop' when creating PRs.
       13. If you encounter an error that a PR already exists, do not try to create a new one.
       14. After pushing changes, always add a comment to the existing PR with what changed.
-      15. ALWAYS prefix all commit messages with "[CoverAI]" to distinguish them from human commits.
-      16. ALWAYS prefix all PR titles with "[CoverAI]" to distinguish them from human-created PRs.
+      15. ALWAYS prefix all commit messages with "[Codebuff]" to distinguish them from human commits.
+      16. ALWAYS prefix all PR titles with "[Codebuff]" to distinguish them from human-created PRs.
       17. Always create required labels if they don't exist before using them.
 
     # First, check if labels exist and only create them if they don't:
     ["bash", "-c", "gh label list --json name --jq '.[] | .name' | grep -q 'automated-pr' || gh label create 'automated-pr' --color '#0E8A16' --description 'PR created by automation'"]
-    ["bash", "-c", "gh label list --json name --jq '.[] | .name' | grep -q 'test-coverage' || gh label create 'test-coverage' --color '#FBCA04' --description 'Changes that improve test coverage'"]
+    ["bash", "-c", "gh label list --json name --jq '.[] | .name' | grep -q 'codebuff-feature' || gh label create 'codebuff-feature' --color '#1D76DB' --description 'Feature developed by Codebuff agents'"]
 
     The correct sequence of commands when no PR exists:
       1. ["bash", "-c", "git status"]
       2. ["bash", "-c", "git add ."]
-      3. ["bash", "-c", "git commit -m '[CoverAI] Your message'"]
+      3. ["bash", "-c", "git commit -m '[Codebuff] Your message'"]
       4. ["bash", "-c", "git push --set-upstream origin $(git branch --show-current) --force || git push origin HEAD --force"]
       5. ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number,headRefName --jq length"]
       6. If the result from step 5 is 0 (no existing PR):
-         ["bash", "-c", "gh pr create --base develop --title '[CoverAI] Your title' --body 'This PR was automatically created by CoverAI Bot.' --label automated-pr,test-coverage || gh pr create --base develop --title '[CoverAI] Your title' --body 'This PR was automatically created by CoverAI Bot.'"]
+         ["bash", "-c", "gh pr create --base develop --title '[Codebuff] Your title' --body 'This PR was automatically created by Codebuff Bot.' --label automated-pr,codebuff-feature || gh pr create --base develop --title '[Codebuff] Your title' --body 'This PR was automatically created by Codebuff Bot.'"]
       
     The correct sequence of commands when a PR already exists:
       1. ["bash", "-c", "git status"]
       2. ["bash", "-c", "git add ."]
-      3. ["bash", "-c", "git commit -m '[CoverAI] Update: Your message'"]
+      3. ["bash", "-c", "git commit -m '[Codebuff] Update: Your message'"]
       4. ["bash", "-c", "git push --set-upstream origin $(git branch --show-current) --force || git push origin HEAD --force"]
       5. ["bash", "-c", "gh pr list --head $(git branch --show-current) --json number --jq '.[0].number'"]
-      6. ["bash", "-c", "gh pr comment $(gh pr list --head $(git branch --show-current) --json number --jq '.[0].number') --body '[CoverAI Bot] Added additional changes: Description of what was changed'"]
+      6. ["bash", "-c", "gh pr comment $(gh pr list --head $(git branch --show-current) --json number --jq '.[0].number') --body '[Codebuff Bot] Added additional changes: Description of what was changed'"]
 
     Examples of properly formatted commands:
       ["bash", "-c", "git add ."]
-      ["bash", "-c", "git commit -m '[CoverAI] Add tests to increase coverage'"]
+      ["bash", "-c", "git commit -m '[Codebuff] Add tests to increase coverage'"]
       ["bash", "-c", "git push origin HEAD"]
-      ["bash", "-c", "gh pr create --base develop --title '[CoverAI] Increase test coverage' --body 'This PR was automatically created by CoverAI Bot to improve code coverage.' --label automated-pr,test-coverage"]
+      ["bash", "-c", "gh pr create --base develop --title '[Codebuff] Increase test coverage' --body 'This PR was automatically created by Codebuff Bot to improve code coverage.' --label automated-pr,codebuff-feature"]
     """
     return prompt

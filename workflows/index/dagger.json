@@ -8,6 +8,10 @@
     {
       "name": "builder",
       "source": "../../agents/builder"
+    },
+    {
+      "name": "neo_service",
+      "source": "../../services/neo"
     }
   ]
 }

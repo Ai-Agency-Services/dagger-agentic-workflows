@@ -1,0 +1,1 @@
+# Smell workflow tests

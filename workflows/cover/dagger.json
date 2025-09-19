@@ -1,6 +1,6 @@
 {
   "name": "Cover",
-  "engineVersion": "v0.18.5",
+  "engineVersion": "v0.18.17",
   "sdk": {
     "source": "python"
   },
@@ -10,8 +10,16 @@
       "source": "plugins/reporter"
     },
     {
+      "name": "agent-utils",
+      "source": "../../shared/agent-utils"
+    },
+    {
       "name": "builder",
       "source": "../../agents/builder"
+    },
+    {
+      "name": "neo_service",
+      "source": "../../services/neo"
     },
     {
       "name": "pull_request_agent",

@@ -5,7 +5,7 @@ container:
     docker_file_path: "./dockerfile"
 
 core_api:
-    model: "x-ai/grok-3-mini-beta"
+    model: "google/gemini-2.0-flash-001"
     provider: "openrouter"
     fallback_models:
         - "openai/gpt-4o"
@@ -37,3 +37,35 @@ agents:
 concurrency:
   batch_size: 2  # Start small and increase if stable
   max_concurrent: 2
+
+neo4j:
+    uri: "neo4j://neo:7687"
+    user: "neo4j"
+    database: "neo4j"
+    
+    http_port: 7474
+    bolt_port: 7687
+    
+    cypher_shell_repo: "https://github.com/Ai-Agency-Services/cypher-shell.git"
+    
+    image: "neo4j:2025.05"
+    container_name: "neo4j-db"
+    data_volume_path: "/data"
+    cache_volume_name: "neo4j-data"
+    
+    enabled: true
+    clear_on_start: false
+    
+    # Plugin settings
+    plugins: 
+        - "apoc"
+    
+    # APOC settings
+    apoc_export_file_enabled: "true"
+    apoc_import_file_enabled: "true"
+    apoc_import_file_use_neo4j_config: "true"
+
+    # Server memory settings
+    memory_pagecache_size: "1G"
+    memory_heap_initial_size: "1G"
+    memory_heap_max_size: "1G"

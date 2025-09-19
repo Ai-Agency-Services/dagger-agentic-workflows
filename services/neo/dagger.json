@@ -1,0 +1,13 @@
+{
+  "name": "neo_service",
+  "engineVersion": "v0.18.5",
+  "sdk": {
+    "source": "python"
+  },
+  "dependencies": [
+    {
+      "name": "builder",
+      "source": "../../agents/builder"
+    }
+  ]
+}

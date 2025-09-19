@@ -1,13 +1,13 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from index.services.neo4j_service import Neo4jService
+from ..services.neo4j_service import Neo4jService
 
 
 class CodeGraphInterface:
     """Interface for LLMs to query the code graph database"""
 
-    def __init__(self, neo4j: Neo4jService):  # Updated type hint
+    def __init__(self, neo4j: Neo4jService):
         self.neo4j = neo4j
         self.logger = logging.getLogger(__name__)
 
@@ -51,27 +51,118 @@ class CodeGraphInterface:
         return await self.neo4j.execute_query(query, {"name": class_name})
 
     async def get_module_dependencies(self, filepath: str) -> List[Dict[str, Any]]:
-        """Get dependencies of a specific file/module"""
+        """Get files imported by a specific file"""
         query = """
-        MATCH (f:File {filepath: $filepath})-[:IMPORTS]->(m)
-        RETURN m.name as module_name
+        MATCH (f:File {filepath: $filepath})-[:IMPORTS]->(imported:File)
+        RETURN imported.filepath as imported_file, 
+               imported.language as language
+        ORDER BY imported_file
         """
         return await self.neo4j.execute_query(query, {"filepath": filepath})
 
-    async def find_related_code(self, query_text: str) -> List[Dict[str, Any]]:
-        """Find code elements related to a text query (using full-text search)"""
-        # This would ideally combine Neo4j with Supabase vector search
-        # For now, just do a simple text match
+    async def get_dependent_files(self, filepath: str) -> List[Dict[str, Any]]:
+        """Get files that import this file"""
         query = """
-        MATCH (n)
-        WHERE n.name CONTAINS $query OR (n.signature IS NOT NULL AND n.signature CONTAINS $query)
-        RETURN n.name as name, n.type as type, n.filepath as filepath,
-               n.start_line as line
-        LIMIT 10
+        MATCH (f:File)-[:IMPORTS]->(target:File {filepath: $filepath})
+        RETURN f.filepath as importing_file, 
+               f.language as language
+        ORDER BY importing_file
         """
-        return await self.neo4j.execute_query(query, {"query": query_text})
+        return await self.neo4j.execute_query(query, {"filepath": filepath})
 
-    async def execute_custom_query(self, query: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Execute a custom Cypher query - advanced feature for LLMs"""
-        # Note: This should be used carefully with proper validation
-        return await self.neo4j.execute_query(query, params)
+    async def get_import_graph(self, depth: int = 2) -> List[Dict[str, Any]]:
+        """Get the import graph of the codebase up to a certain depth"""
+        query = """
+        MATCH path = (f:File)-[:IMPORTS*1..{depth}]->(imported:File)
+        RETURN [node in nodes(path) | node.filepath] as import_chain,
+               length(path) as depth
+        LIMIT 100
+        """
+        return await self.neo4j.execute_query(query, {"depth": depth})
+
+    async def find_circular_imports(self) -> List[Dict[str, Any]]:
+        """Find circular dependencies in the codebase"""
+        query = """
+        MATCH path = (f:File)-[:IMPORTS*2..10]->(f)
+        WITH nodes(path) as files
+        RETURN [file in files | file.filepath] as circular_dependency
+        LIMIT 20
+        """
+        return await self.neo4j.execute_query(query, {})
+
+    async def get_most_imported_files(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Find the most imported files in the codebase"""
+        query = """
+        MATCH (f:File)<-[r:IMPORTS]-(importer:File)
+        WITH f, count(r) as import_count
+        RETURN f.filepath as filepath, 
+               f.language as language,
+               import_count
+        ORDER BY import_count DESC
+        LIMIT $limit
+        """
+        return await self.neo4j.execute_query(query, {"limit": limit})
+
+    async def get_files_with_most_imports(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Find files that import the most other files"""
+        query = """
+        MATCH (f:File)-[r:IMPORTS]->(imported:File)
+        WITH f, count(r) as import_count
+        RETURN f.filepath as filepath, 
+               f.language as language,
+               import_count
+        ORDER BY import_count DESC
+        LIMIT $limit
+        """
+        return await self.neo4j.execute_query(query, {"limit": limit})
+
+    async def analyze_module_coupling(self) -> List[Dict[str, Any]]:
+        """Analyze module coupling by finding directories with most inter-dependencies"""
+        query = """
+        // Extract directories from file paths
+        MATCH (f1:File)-[:IMPORTS]->(f2:File)
+        WITH 
+          CASE 
+            WHEN f1.filepath CONTAINS '/' 
+            THEN substring(f1.filepath, 0, split(f1.filepath, '/')[0])
+            ELSE f1.filepath 
+          END AS dir1,
+          CASE 
+            WHEN f2.filepath CONTAINS '/' 
+            THEN substring(f2.filepath, 0, split(f2.filepath, '/')[0])
+            ELSE f2.filepath 
+          END AS dir2
+        WHERE dir1 <> dir2
+        WITH dir1, dir2, count(*) as coupling
+        RETURN dir1 as source_directory,
+               dir2 as target_directory,
+               coupling as dependency_count
+        ORDER BY coupling DESC
+        LIMIT 20
+        """
+        return await self.neo4j.execute_query(query, {})
+
+    async def generate_import_visualization(self) -> Dict[str, Any]:
+        """Generate data for import graph visualization"""
+        query = """
+        MATCH (f:File)
+        OPTIONAL MATCH (f)-[:IMPORTS]->(imported:File)
+        WITH f, collect(imported) as imports
+        RETURN {
+            nodes: collect({
+                id: f.filepath,
+                label: last(split(f.filepath, "/")),
+                language: f.language,
+                imports_count: size(imports)
+            }),
+            edges: [
+                (f)-[:IMPORTS]->(imported) |
+                {
+                    source: f.filepath,
+                    target: imported.filepath
+                }
+            ]
+        } as graph
+        """
+        result = await self.neo4j.execute_query(query, {})
+        return result[0] if result else {"nodes": [], "edges": []}

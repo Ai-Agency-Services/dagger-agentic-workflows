@@ -11,9 +11,6 @@ from dagger import Doc, dag, function, object_type
 from index.models import ProcessingConfig
 from index.operations.embedding_handler import EmbeddingHandler
 from index.operations.file_processor import FileProcessor
-from index.operations.relationship_extractor import RelationshipExtractor
-from index.services.neo4j_service import Neo4jService
-from index.utils.code_parser import parse_code_file
 from index.utils.file import get_file_size
 from supabase import Client, create_client
 
@@ -70,8 +67,7 @@ class Index:
         container: dagger.Container,
         openai_key: dagger.Secret,
         config: ProcessingConfig,
-        logger: logging.Logger,
-        neo4j: Optional[Neo4jService] = None  # Updated type hint
+        logger: logging.Logger
     ) -> int:
         """Safely process a single file with comprehensive error handling."""
         try:
@@ -102,55 +98,6 @@ class Index:
                 chunks_data, supabase, openai_key, config, logger
             )
 
-            # Add Neo4j integration here
-            if neo4j:
-                try:
-                    # Parse the file to get structured code information
-                    code_file = parse_code_file(content, filepath)
-                    if code_file:
-                        logger.info(f"Adding {filepath} to Neo4j graph")
-
-                        # Add file node
-                        await neo4j.add_file_node(filepath, getattr(
-                            code_file, 'language', 'unknown'))
-
-                        # Add symbol nodes
-                        symbols = getattr(code_file, 'symbols', [])
-                        for symbol in symbols:
-                            if not hasattr(symbol, 'name') or not symbol.name:
-                                continue
-
-                            # Extract symbol properties
-                            symbol_type = symbol.type.capitalize() if hasattr(symbol, 'type') else 'Symbol'
-                            line_number = getattr(symbol, 'line_number', 0)
-                            end_line = getattr(symbol, 'end_line', line_number)
-
-                            # Collect additional properties
-                            properties = {}
-                            for attr in ['signature', 'docstring', 'visibility', 'scope']:
-                                if hasattr(symbol, attr) and getattr(symbol, attr):
-                                    properties[attr] = getattr(symbol, attr)
-
-                            # Add symbol to Neo4j
-                            await neo4j.add_symbol(
-                                symbol_type=symbol_type,
-                                name=symbol.name,
-                                filepath=filepath,
-                                start_line=line_number,
-                                end_line=end_line,
-                                properties=properties
-                            )
-
-                        # Extract relationships between symbols
-                        await RelationshipExtractor.extract_relationships(filepath, code_file, neo4j)
-                        logger.info(
-                            f"Successfully added {filepath} to Neo4j with {len(symbols)} symbols")
-
-                except Exception as neo4j_err:
-                    logger.error(
-                        f"Failed to add {filepath} to Neo4j: {neo4j_err}")
-                    # Continue processing - don't let Neo4j errors stop the vector indexing
-
             logger.info(f"File {filepath} processed: {result} chunks indexed")
             return result
 
@@ -165,8 +112,7 @@ class Index:
         container,
         openai_key,
         config,
-        logger,
-        neo4j=None
+        logger
     ) -> int:
         """Process files with semaphore-controlled concurrency using anyio."""
         if not files:
@@ -178,7 +124,7 @@ class Index:
         async def process_with_limit(filepath: str):
             async with semaphore:
                 result = await self._safe_process_file(
-                    filepath, supabase, container, openai_key, config, logger, neo4j
+                    filepath, supabase, container, openai_key, config, logger
                 )
                 results.append(result)
 
@@ -221,38 +167,14 @@ class Index:
             )
 
             # Get file list
-            file_extensions = getattr(config_obj.test_generation, 'file_extensions', [
-                                      "py", "js", "ts", "java", "c", "cpp", "go", "rs"])
+            file_extensions = getattr(
+                config_obj.indexing, 'file_extensions')
             files = await FileProcessor.get_filtered_files(container, file_extensions)
 
             return container, files
 
         except Exception as e:
             raise Exception(f"Failed to setup repository {repo_url}: {e}")
-
-    @function
-    async def neo_service(
-        self,
-        password: Annotated[dagger.Secret, Doc("Neo4j password")],
-        neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
-        github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
-
-    ) -> dagger.Service:
-        """Create a Neo4j service as a Dagger service"""
-        self.config: YAMLConfig = YAMLConfig(
-            **self.config) if isinstance(self.config, dict) else self.config
-
-        neo_service = Neo4jService(
-            cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
-            password=password,
-            neo_auth=neo_auth,
-            github_access_token=github_access_token,
-            config_file=self.config_file,
-            user=self.config.neo4j.username,
-            database=self.config.neo4j.database,
-            uri="neo4j://neo:7687"
-        )
-        return await neo_service.create_neo4j_service()
 
     @function
     async def index_codebase(
@@ -263,8 +185,6 @@ class Index:
         supabase_url: Annotated[str, Doc("Supabase project URL")],
         openai_api_key: Annotated[dagger.Secret, Doc("OpenAI API key")],
         open_router_api_key: Annotated[dagger.Secret, Doc("OpenRouter API key")],
-        neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
-        neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
         supabase_key: Annotated[dagger.Secret, Doc("Supabase API key")],
     ) -> str:
         """Index all code files in a repository using anyio concurrency."""
@@ -279,52 +199,6 @@ class Index:
                 logger.info("Setting OpenAI API key...")
                 os.environ["OPENAI_API_KEY"] = await openai_api_key.plaintext()
 
-            neo4j = None
-            if self.config.neo4j.enabled:
-                try:
-                    logger.info("Starting Neo4j service...")
-
-                    # Create the Neo4jService instance that will be used for everything
-                    neo4j_service = Neo4jService(
-                        cypher_shell_repo=self.config.neo4j.cypher_shell_repository,
-                        password=neo_password,
-                        neo_auth=neo_auth,
-                        github_access_token=github_access_token,
-                        config_file=self.config_file,
-                        uri="neo4j://neo:7687",
-                        user=self.config.neo4j.username,
-                        database=self.config.neo4j.database,
-                    )
-
-                    # Initialize the client container
-                    await neo4j_service.create_neo4j_client()
-
-                    # Test connection
-                    test_result = await neo4j_service.test_connection()
-                    logger.info(f"Neo4j connection test: {test_result}")
-
-                    # Test the connection explicitly
-                    is_connected = neo4j_service.connect()
-                    if is_connected:
-                        logger.info("Neo4j service successfully initialized")
-
-                        # Clear database if requested
-                        if self.config.neo4j.clear_on_start:
-                            logger.info("Clearing Neo4j database...")
-                            success = await neo4j_service.clear_database()
-                            if success:
-                                logger.info(
-                                    "Neo4j database cleared successfully")
-
-                        neo4j = neo4j_service
-                    else:
-                        logger.error("Neo4j service failed to initialize")
-                        neo4j = None
-
-                except Exception as e:
-                    logger.error(f"Neo4j service setup failed: {e}")
-                    neo4j = None
-
             # Set up Supabase client
             supabase = create_client(supabase_url, await supabase_key.plaintext())
 
@@ -336,9 +210,6 @@ class Index:
                 branch
             )
             logger.info(f"Found {len(files)} files to process")
-
-            # Setup database
-            supabase = create_client(supabase_url, await supabase_key.plaintext())
 
             # Clear existing data if requested
             if self.config.indexing.clear_on_start:
@@ -356,8 +227,7 @@ class Index:
                 container,
                 openai_api_key,
                 processing_config,
-                logger,
-                neo4j=neo4j
+                logger
             )
 
             logger.info(f"Successfully indexed {total_chunks} code chunks")

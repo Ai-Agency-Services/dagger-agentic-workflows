@@ -1,0 +1,13 @@
+{
+  "name": "query_service",
+  "engineVersion": "v0.18.17",
+  "sdk": {
+    "source": "python"
+  },
+  "dependencies": [
+    {
+      "name": "neo_service",
+      "source": "../neo"
+    }
+  ]
+}
