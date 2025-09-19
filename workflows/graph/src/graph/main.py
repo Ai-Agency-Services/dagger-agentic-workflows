@@ -79,10 +79,9 @@ class Graph:
 
         # Handle optional properties
         properties = []
-        for attr in ['scope', 'docstring', 'parent']:
+        for attr in ['scope', 'docstring', 'parent', 'signature', 'visibility']:
             if attr in symbol_dict and symbol_dict[attr]:
-                escaped_value = self._escape_cypher_string(
-                    str(symbol_dict[attr]))
+                escaped_value = self._escape_cypher_string(str(symbol_dict[attr]))
                 properties.append(f'{attr}: "{escaped_value}"')
 
         props_string = ', ' + ', '.join(properties) if properties else ''
@@ -107,16 +106,26 @@ class Graph:
 
     def _build_symbol_relationship_cypher(self, from_symbol: str, to_symbol: str,
                                           relationship_type: str, filepath: str) -> str:
-        """Build Cypher query for creating symbol-to-symbol relationships."""
+        """Build Cypher query for creating symbol-to-symbol relationships within a file."""
         escaped_from = self._escape_cypher_string(from_symbol)
         escaped_to = self._escape_cypher_string(to_symbol)
         escaped_filepath = self._escape_cypher_string(filepath)
 
-        # Match common symbol types; include Interface for TS references
         return f'''MATCH (s1) WHERE (s1:Function OR s1:Class OR s1:Variable OR s1:Method OR s1:Interface) 
 AND s1.name = "{escaped_from}" AND s1.filepath = "{escaped_filepath}"
 MATCH (s2) WHERE (s2:Function OR s2:Class OR s2:Variable OR s2:Method OR s2:Interface) 
 AND s2.name = "{escaped_to}" AND s2.filepath = "{escaped_filepath}"
+MERGE (s1)-[:{relationship_type}]->(s2);'''
+
+    def _build_cross_file_symbol_relationship_cypher(self, from_symbol: str, from_filepath: str,
+                                                     to_symbol: str, to_filepath: str,
+                                                     relationship_type: str) -> str:
+        """Build Cypher for creating symbol-to-symbol relationships across files."""
+        ef = self._escape_cypher_string
+        return f'''MATCH (s1) WHERE (s1:Function OR s1:Class OR s1:Variable OR s1:Method OR s1:Interface)
+AND s1.name = "{ef(from_symbol)}" AND s1.filepath = "{ef(from_filepath)}"
+MATCH (s2) WHERE (s2:Function OR s2:Class OR s2:Variable OR s2:Method OR s2:Interface)
+AND s2.name = "{ef(to_symbol)}" AND s2.filepath = "{ef(to_filepath)}"
 MERGE (s1)-[:{relationship_type}]->(s2);'''
 
     def _resolve_relative_import(self, current_file: str, import_path: str) -> Optional[str]:
@@ -385,6 +394,7 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
             imports = []
             symbols = []
             symbol_relationships = []
+            symbol_names = []
 
             # Parse code file using the agent_utils parser
             try:
@@ -424,6 +434,7 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                             queries.append(self._build_symbol_cypher(
                                 symbol_dict, filepath))
                             symbols.append((filepath, symbol_type))
+                            symbol_names.append(symbol_name)
 
                     # Extract symbol relationships (CALLS and REFERENCES)
                     try:
@@ -467,10 +478,12 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
 
             return {
                 "success": True,
+                "file": filepath,
                 "queries": queries,
                 "imports": imports,
                 "symbols": symbols,
-                "symbol_relationships": symbol_relationships
+                "symbol_relationships": symbol_relationships,
+                "symbol_names": symbol_names
             }
 
         except Exception as e:
@@ -483,10 +496,10 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
         container: dagger.Container,
         logger: logging.Logger,
         max_concurrent: int = 3
-    ) -> Tuple[int, int, List[str], List[Tuple[str, str]], List[Tuple[str, str]], List[str]]:
+    ) -> Tuple[int, int, List[str], List[Tuple[str, str]], List[Tuple[str, str]], List[str], List[Tuple[str, str]]]:
         """Process files with semaphore-controlled concurrency and collect all queries."""
         if not files:
-            return 0, 0, [], [], [], []
+            return 0, 0, [], [], [], [], []
 
         semaphore = anyio.Semaphore(max_concurrent)
         results = []
@@ -494,17 +507,20 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
         all_imports = []
         all_symbols = []
         all_symbol_relationships = []
+        all_symbol_names: List[Tuple[str, str]] = []
 
         async def process_with_limit(filepath: str):
             async with semaphore:
                 result = await self._safe_build_graph_data_for_file(filepath, container, logger)
                 results.append(result["success"])
                 if result["success"]:
-                    all_queries.extend(result["queries"])
-                    all_imports.extend(result["imports"])
-                    all_symbols.extend(result["symbols"])
+                    all_queries.extend(result.get("queries", []))
+                    all_imports.extend(result.get("imports", []))
+                    all_symbols.extend(result.get("symbols", []))
                     all_symbol_relationships.extend(
                         result.get("symbol_relationships", []))
+                    for n in result.get("symbol_names", []):
+                        all_symbol_names.append((result.get("file", filepath), n))
                 return result
 
         # Use anyio task group for concurrent processing
@@ -518,9 +534,9 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
 
         logger.info(
             f"Processed {processed} files successfully, {failed} failed")
-        logger.info(f"Generated {len(all_queries)} node/symbol queries, {len(all_imports)} import relationships, {len(all_symbols)} symbol relationships, {len(all_symbol_relationships)} symbol-to-symbol relationships")
+        logger.info(f"Generated {len(all_queries)} node/symbol queries, {len(all_imports)} import relationships, {len(all_symbols)} symbol relationships, {len(all_symbol_relationships)} symbol-to-symbol relationships, {len(all_symbol_names)} symbol names")
 
-        return processed, failed, all_queries, all_imports, all_symbols, all_symbol_relationships
+        return processed, failed, all_queries, all_imports, all_symbols, all_symbol_relationships, all_symbol_names
 
     @function
     async def setup_neo(
@@ -661,7 +677,7 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
             logger.info(f"Found {len(files)} files to process")
 
             # Process files concurrently and collect all queries
-            processed, failed, all_queries, all_imports, all_symbols, all_symbol_relationships = await self._process_files_with_semaphore(
+            processed, failed, all_queries, all_imports, all_symbols, all_symbol_relationships, all_symbol_names = await self._process_files_with_semaphore(
                 files=files,
                 container=container,
                 logger=logger,
@@ -724,7 +740,7 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                 import_queries, "import", logger, batch_size=5, max_concurrent_batches=8
             )
 
-            # Execute symbol relationship queries (NEW)
+            # Execute symbol relationship queries (within-file)
             if all_symbol_relationships:
                 logger.info(
                     f"Creating {len(all_symbol_relationships)} symbol relationships using concurrent batches")
@@ -733,6 +749,58 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                 )
             else:
                 symbol_rel_successful = symbol_rel_failed = 0
+
+            # Cross-file symbol resolution (post-processing)
+            try:
+                # Build imports map and symbols map
+                file_to_imports: Dict[str, Set[str]] = {}
+                for frm, to in set(all_imports):
+                    file_to_imports.setdefault(frm, set()).add(to)
+                symbols_by_file: Dict[str, Set[str]] = {}
+                for f, n in all_symbol_names:
+                    symbols_by_file.setdefault(f, set()).add(n)
+
+                # Generate cross-file symbol relationship queries
+                cross_file_queries: List[str] = []
+                agent_utils = dag.agent_utils()
+                for a_file, imported_files in file_to_imports.items():
+                    try:
+                        a_content = await container.file(a_file).contents()
+                        # Parse A's symbols for scope detection
+                        code_file_json = await agent_utils.parse_code_file_to_json(a_content, a_file)
+                        json_content = await code_file_json.contents()
+                        a_dict = json.loads(json_content)
+                        a_symbols = a_dict.get("symbols", []) or []
+                        a_symbol_map = {s.get("name"): s for s in a_symbols if s.get("name")}
+                        a_lines = a_content.split('\n')
+
+                        for b_file in imported_files:
+                            for name in symbols_by_file.get(b_file, set()):
+                                # Scan for occurrences in A
+                                for i, line in enumerate(a_lines, 1):
+                                    if name not in line:
+                                        continue
+                                    # Identify containing symbol in A
+                                    container_symbol = self._find_containing_symbol(i, a_symbol_map)
+                                    if not container_symbol or container_symbol == name:
+                                        continue
+                                    rel_type = "CALLS" if f"{name}(" in line else "REFERENCES"
+                                    cross_file_queries.append(
+                                        self._build_cross_file_symbol_relationship_cypher(
+                                            container_symbol, a_file, name, b_file, rel_type
+                                        )
+                                    )
+                    except Exception as cf_err:
+                        logger.debug(f"Cross-file resolution skipped for {a_file}: {cf_err}")
+
+                # De-dup and limit to reasonable size
+                if cross_file_queries:
+                    logger.info(f"Creating {len(cross_file_queries)} cross-file symbol relationships")
+                    await self._execute_queries_in_concurrent_batches(
+                        cross_file_queries, "cross-file-symbol-relationship", logger, batch_size=5, max_concurrent_batches=8
+                    )
+            except Exception as e:
+                logger.warning(f"Cross-file symbol resolution encountered an issue: {e}")
 
             logger.info(
                 "Successfully executed all concurrent batch Cypher queries")
@@ -745,3 +813,205 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
         except Exception as e:
             logger.error(f"Graph building failed: {e}")
             raise
+
+    @function
+    async def build_graph_for_directory(
+        self,
+        github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
+        local_path: Annotated[str, Doc("Local path to a checked-out repository (attached directory mode)")],
+        neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
+        neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
+        open_router_api_key: Annotated[dagger.Secret, Doc("OpenRouter API key")],
+    ) -> str:
+        """Build a graph representation of a locally checked-out repository (attached directory mode).
+        Mirrors build_graph_for_repository, but uses a local path for the source tree.
+        """
+        logger = self._setup_logging()
+        processing_config = self._get_processing_config()
+
+        try:
+            # Setup Neo4j first
+            await self.setup_neo(
+                github_access_token=github_access_token,
+                neo_password=neo_password,
+                neo_auth=neo_auth
+            )
+
+            # Use attached directory as source
+            source = dag.host().directory(local_path)
+
+            # Build container environment from local source
+            self.config: YAMLConfig = YAMLConfig(
+                **self.config) if isinstance(self.config, dict) else self.config
+            container = await dag.builder(self.config_file).build_test_environment(
+                source=source,
+                dockerfile_path=self.config.container.docker_file_path,
+                open_router_api_key=open_router_api_key,
+                provider=self.config.core_api.provider if self.config.core_api else None,
+                openai_api_key=open_router_api_key
+            )
+
+            # Get working directory from config
+            work_dir = getattr(self.config.container, 'work_dir', '/app')
+            logger.info(f"Using work directory: {work_dir}")
+
+            # Get file extensions to process (include TSX/JSX by default)
+            file_extensions = getattr(
+                self.config.indexing, 'file_extensions', ['py', 'js', 'ts', 'tsx', 'jsx'])
+
+            # Build find command for multiple extensions with exclusions
+            find_cmd = ["find", work_dir, "-type", "f", "("]
+            for i, ext in enumerate(file_extensions):
+                ext = ext.strip('.')
+                if i > 0:
+                    find_cmd.append("-o")
+                find_cmd.extend(["-name", f"*.{ext}"])
+            find_cmd.append(")")
+
+            # Exclude common vendor/test/build paths and noisy files
+            find_cmd.extend([
+                "!", "-path", "*/node_modules/*",
+                "!", "-path", r"*/\.*",
+                "!", "-path", "*/dist/*",
+                "!", "-path", "*/build/*",
+                "!", "-path", "*/tests/*",
+                "!", "-path", "*/test/*",
+                "!", "-path", "*/__tests__/*",
+                "!", "-path", "*/spec/*",
+                "!", "-path", "*/.pytest_cache/*",
+                "!", "-name", "*.test.*",
+                "!", "-name", "*.spec.*",
+                "!", "-name", "*_test.*",
+                "!", "-name", "test_*",
+                "!", "-name", "*.min.*",
+                "!", "-name", "*.xml",
+                "!", "-name", "*.json",
+                "!", "-name", "*.md",
+                "!", "-name", "*.yaml",
+                "!", "-name", "*.yml"
+            ])
+
+            logger.info(f"Running find command: {' '.join(find_cmd)}")
+            file_list = await container.with_exec(find_cmd).stdout()
+            files = [f for f in file_list.strip().split("\n") if f.strip()]
+
+            if not files:
+                logger.warning(f"No files found in {work_dir} with extensions: {file_extensions}")
+                return f"No files found in {work_dir} with specified extensions"
+
+            logger.info(f"Found {len(files)} files to process")
+
+            # Process files concurrently and collect all queries
+            processed, failed, all_queries, all_imports, all_symbols, all_symbol_relationships, all_symbol_names = await self._process_files_with_semaphore(
+                files=files,
+                container=container,
+                logger=logger,
+                max_concurrent=processing_config['max_concurrent']
+            )
+
+            # Create constraints and indexes to match neo4j_schema
+            logger.info("Creating constraints and indexes")
+            constraints_and_indexes = [
+                "CREATE CONSTRAINT file_path_constraint IF NOT EXISTS FOR (file:File) REQUIRE file.path IS UNIQUE",
+                "CREATE CONSTRAINT file_filepath_unique IF NOT EXISTS FOR (f:File) REQUIRE f.filepath IS UNIQUE",
+                "CREATE CONSTRAINT function_name_path_line IF NOT EXISTS FOR (function:Function) REQUIRE (function.name, function.filepath, function.start_line) IS UNIQUE",
+                "CREATE CONSTRAINT class_name_path_line IF NOT EXISTS FOR (class:Class) REQUIRE (class.name, class.filepath, class.start_line) IS UNIQUE",
+                "CREATE CONSTRAINT variable_name_path_line IF NOT EXISTS FOR (variable:Variable) REQUIRE (variable.name, variable.filepath, variable.line_number) IS UNIQUE",
+                "CREATE CONSTRAINT method_name_path_line IF NOT EXISTS FOR (m:Method) REQUIRE (m.name, m.filepath, m.start_line) IS UNIQUE",
+                "CREATE INDEX function_name_idx IF NOT EXISTS FOR (f:Function) ON (f.name)",
+                "CREATE INDEX file_language_idx IF NOT EXISTS FOR (f:File) ON (f.language)",
+                "CREATE INDEX file_filepath_idx IF NOT EXISTS FOR (f:File) ON (f.filepath)"
+            ]
+
+            for query in constraints_and_indexes:
+                try:
+                    await self.neo_service.run_query(query)
+                    constraint_name = query.split()[2]
+                    logger.info(f"Created constraint/index: {constraint_name}")
+                except Exception as e:
+                    logger.warning(f"Could not create constraint/index: {e}")
+
+            # Execute file/symbol node queries
+            logger.info(f"Executing {len(all_queries)} node/symbol queries using concurrent batches")
+            await self._execute_queries_in_concurrent_batches(
+                all_queries, "node/symbol", logger, batch_size=5, max_concurrent_batches=8
+            )
+
+            # Create DEFINED_IN relationships
+            logger.info(f"Creating {len(all_symbols)} DEFINED_IN relationships using concurrent batches")
+            relationship_queries = []
+            for filepath, symbol_type in set(all_symbols):
+                relationship_queries.append(self._build_relationship_cypher(filepath, symbol_type))
+            await self._execute_queries_in_concurrent_batches(
+                relationship_queries, "relationship", logger, batch_size=5, max_concurrent_batches=8
+            )
+
+            # Create IMPORTS relationships
+            logger.info(f"Creating {len(all_imports)} import relationships using concurrent batches")
+            import_queries = [self._build_import_cypher(frm, to) for frm, to in set(all_imports)]
+            await self._execute_queries_in_concurrent_batches(
+                import_queries, "import", logger, batch_size=5, max_concurrent_batches=8
+            )
+
+            # Within-file symbol relationships
+            if all_symbol_relationships:
+                logger.info(f"Creating {len(all_symbol_relationships)} symbol relationships using concurrent batches")
+                await self._execute_queries_in_concurrent_batches(
+                    all_symbol_relationships, "symbol-relationship", logger, batch_size=5, max_concurrent_batches=8
+                )
+
+            # Cross-file symbol resolution (reuses same logic as repository mode)
+            try:
+                file_to_imports: Dict[str, Set[str]] = {}
+                for frm, to in set(all_imports):
+                    file_to_imports.setdefault(frm, set()).add(to)
+                symbols_by_file: Dict[str, Set[str]] = {}
+                for f, n in all_symbol_names:
+                    symbols_by_file.setdefault(f, set()).add(n)
+
+                cross_file_queries: List[str] = []
+                agent_utils = dag.agent_utils()
+                for a_file, imported_files in file_to_imports.items():
+                    try:
+                        a_content = await container.file(a_file).contents()
+                        code_file_json = await agent_utils.parse_code_file_to_json(a_content, a_file)
+                        a_dict = json.loads(await code_file_json.contents())
+                        a_symbol_map = {s.get("name"): s for s in a_dict.get("symbols", []) if s.get("name")}
+                        a_lines = a_content.split('\n')
+
+                        for b_file in imported_files:
+                            for name in symbols_by_file.get(b_file, set()):
+                                for i, line in enumerate(a_lines, 1):
+                                    if name not in line:
+                                        continue
+                                    container_symbol = self._find_containing_symbol(i, a_symbol_map)
+                                    if not container_symbol or container_symbol == name:
+                                        continue
+                                    rel_type = "CALLS" if f"{name}(" in line else "REFERENCES"
+                                    cross_file_queries.append(
+                                        self._build_cross_file_symbol_relationship_cypher(
+                                            container_symbol, a_file, name, b_file, rel_type
+                                        )
+                                    )
+                    except Exception as cf_err:
+                        logger.debug(f"Cross-file resolution skipped for {a_file}: {cf_err}")
+
+                if cross_file_queries:
+                    logger.info(f"Creating {len(cross_file_queries)} cross-file symbol relationships")
+                    await self._execute_queries_in_concurrent_batches(
+                        cross_file_queries, "cross-file-symbol-relationship", logger, batch_size=5, max_concurrent_batches=8
+                    )
+            except Exception as e:
+                logger.warning(f"Cross-file symbol resolution encountered an issue: {e}")
+
+            # Verify connection
+            test_result = await self.neo_service.test_connection()
+            return (
+                f"Graph built successfully from directory: {processed} files processed, {failed} file failures. "
+                f"Database status: {test_result}"
+            )
+
+        except Exception as e:
+            logger.error(f"Graph building (directory) failed: {e}")
+            raise
+

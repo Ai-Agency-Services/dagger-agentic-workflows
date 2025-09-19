@@ -27,7 +27,7 @@ async def check_syntax(
         # Check Python files
         if "*.py" in file_patterns:
             py_check = await ctx.deps.container.with_exec([
-                "bash", "-c", "find . -name '*.py' -exec python -m py_compile {} \; 2>&1 || echo 'Python syntax check completed with issues'"
+                "bash", "-c", r"find . -name '*.py' -exec python -m py_compile {} \; 2>&1 || echo 'Python syntax check completed with issues'"
             ]).stdout()
             results.append(f"Python syntax check: {py_check.strip() if py_check.strip() else 'PASSED'}")
         

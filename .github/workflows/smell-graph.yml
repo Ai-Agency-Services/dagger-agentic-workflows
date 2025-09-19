@@ -1,0 +1,145 @@
+name: Smell Graph Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode: remote (clone by URL) or attached (use local checkout)"
+        required: true
+        default: "remote"
+      target_repo_url:
+        description: "Repository URL to analyze (remote mode)"
+        required: false
+      target_branch:
+        description: "Branch to analyze (remote mode)"
+        required: false
+        default: "main"
+      attached_repository:
+        description: "owner/repo to checkout (attached mode)"
+        required: false
+      attached_ref:
+        description: "Branch or SHA to checkout (attached mode)"
+        required: false
+        default: "main"
+      attached_path:
+        description: "Path to checkout attached repo"
+        required: false
+        default: "target-repo"
+      post_comment:
+        description: "Post PR comment with report (when on pull_request)"
+        required: false
+        default: "true"
+
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  smell-graph:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repository (workflow code)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: (Attached mode) Checkout target repository
+        if: ${{ inputs.mode == 'attached' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.attached_repository || format('{0}/{1}', github.repository_owner, github.event.pull_request.head.repo.name) }}
+          ref: ${{ inputs.attached_ref || github.event.pull_request.head.ref }}
+          path: ${{ inputs.attached_path }}
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install Dagger CLI
+        run: |
+          curl -L https://dl.dagger.io/dagger/install.sh | DAGGER_VERSION=v0.18.18 sh
+          echo "$PWD/bin" >> $GITHUB_PATH
+
+      - name: Verify tools
+        run: |
+          dagger version
+          uv --version
+
+      - name: Build Graph (remote mode)
+        if: ${{ inputs.mode == 'remote' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT || github.token }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+          NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          dagger call graph build-graph-for-repository \
+            --config-file=workflows/graph/demo/agencyservices.yaml \
+            --github-access-token=env:GH_PAT \
+            --repository-url="${{ inputs.target_repo_url || github.event.pull_request.head.repo.clone_url }}" \
+            --branch="${{ inputs.target_branch || github.event.pull_request.head.ref }}" \
+            --neo-password=env:NEO4J_PASSWORD \
+            --neo-auth=env:NEO4J_AUTH \
+            --open-router-api-key=env:OPENROUTER_API_KEY
+
+      - name: Build Graph (attached mode)
+        if: ${{ inputs.mode == 'attached' }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT || github.token }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+          NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          dagger call graph build-graph-for-directory \
+            --config-file=workflows/graph/demo/agencyservices.yaml \
+            --github-access-token=env:GH_PAT \
+            --local-path="${{ inputs.attached_path }}" \
+            --neo-password=env:NEO4J_PASSWORD \
+            --neo-auth=env:NEO4J_AUTH \
+            --open-router-api-key=env:OPENROUTER_API_KEY
+
+      - name: Analyze Smells (always-verbose report with links)
+        id: smell
+        env:
+          GITHUB_REPO_URL: ${{ inputs.mode == 'remote' && (inputs.target_repo_url || github.event.pull_request.head.repo.html_url) || (format('https://github.com/{0}', inputs.attached_repository) || github.event.pull_request.head.repo.html_url) }}
+          GITHUB_BRANCH: ${{ inputs.mode == 'remote' && (inputs.target_branch || github.event.pull_request.head.ref) || (inputs.attached_ref || github.event.pull_request.head.ref) }}
+        run: |
+          # Optional: inject repo_url/branch into smell config for link generation
+          # If your smell config already sets git.repo_url/branch, you can skip this step.
+          # sudo apt-get update && sudo apt-get install -y jq || true
+          # yq -iy \
+          #   ".git.repo_url = env(GITHUB_REPO_URL) | .git.branch = env(GITHUB_BRANCH)" \
+          #   workflows/smell/demo/agencyservices.yaml || true
+
+          dagger call smell analyze-codebase \
+            --config-file=workflows/smell/demo/agencyservices.yaml \
+            --neo-data=cache:neo4j-data \
+            > smell_report.txt
+
+          echo "report<<__EOF__" >> $GITHUB_OUTPUT
+          cat smell_report.txt >> $GITHUB_OUTPUT
+          echo "__EOF__" >> $GITHUB_OUTPUT
+
+      - name: Upload Smell Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: smell-report
+          path: smell_report.txt
+
+      - name: Comment on PR with Smell Report
+        if: ${{ github.event_name == 'pull_request' && inputs.post_comment == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `### Code Smell Report\n\n<details>\n<summary>Click to expand</summary>\n\n${{ steps.smell.outputs.report }}\n\n</details>`;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

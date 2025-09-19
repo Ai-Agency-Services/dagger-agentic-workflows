@@ -10,6 +10,27 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+    "pytest-cov>=5.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/"]
+addopts = [
+    "--strict-markers",
+    "--verbose",
+    "--tb=short",
+]
+markers = [
+    "smell: marks tests for code smell detection",
+    "neo4j: marks tests that require Neo4j database",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["hatchling==1.25.0"]

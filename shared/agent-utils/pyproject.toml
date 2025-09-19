@@ -11,5 +11,27 @@ dependencies = [
 requires = ["hatchling==1.25.0"]
 build-backend = "hatchling.build"
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/"]
+addopts = [
+    "--strict-markers",
+    "--verbose",
+    "--tb=short",
+]
+markers = [
+    "utils: marks tests for agent utilities",
+    "parsing: marks tests for code parsing functionality",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+asyncio_mode = "auto"
+
 [tool.uv.sources]
 dagger-io = { path = "sdk", editable = true }

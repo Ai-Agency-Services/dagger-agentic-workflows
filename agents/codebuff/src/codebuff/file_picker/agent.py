@@ -6,6 +6,7 @@ from ais_dagger_agents_config import YAMLConfig
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
 from simple_chalk import blue, green, yellow
+from codebuff.constants import EXCLUDED_DIRS
 
 
 @dataclass
@@ -23,14 +24,17 @@ async def search_relevant_files(
     print(blue(f"🔍 Searching for files related to: {search_terms}"))
     
     try:
-        # Search file names
+        # Search file names (excluding common directories)
+        exclude_args = " ".join([f"-not -path '*/{dir}/*'" for dir in EXCLUDED_DIRS])
+        
         name_search = await ctx.deps.container.with_exec([
-            "bash", "-c", f"find . -type f -iname '*{search_terms}*' | head -15"
+            "bash", "-c", f"find . -type f {exclude_args} -iname '*{search_terms}*' | head -15"
         ]).stdout()
         
-        # Search file contents
+        # Search file contents (excluding common directories)
+        exclude_grep = " ".join([f"--exclude-dir={dir}" for dir in EXCLUDED_DIRS])
         content_search = await ctx.deps.container.with_exec([
-            "bash", "-c", f"grep -r -l '{search_terms}' --include='*.py' --include='*.js' --include='*.ts' --include='*.java' --include='*.go' --include='*.rs' . 2>/dev/null | head -10"
+            "bash", "-c", f"grep -r -l '{search_terms}' {exclude_grep} --include='*.py' --include='*.js' --include='*.ts' --include='*.java' --include='*.go' --include='*.rs' --include='*.jsx' --include='*.tsx' . 2>/dev/null | head -10"
         ]).stdout()
         
         result = f"""File Search Results for '{search_terms}':
@@ -58,14 +62,16 @@ async def analyze_file_relevance(
     print(blue(f"📊 Analyzing file relevance for: {ctx.deps.task_description}"))
     
     try:
-        # Get recently modified files
+        # Get recently modified files (excluding common directories)
+        exclude_args = " ".join([f"-not -path '*/{dir}/*'" for dir in EXCLUDED_DIRS])
+        
         recent_files = await ctx.deps.container.with_exec([
-            "bash", "-c", "find . -type f \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.java' -o -name '*.go' \) -exec ls -lt {} + | head -10"
+            "bash", "-c", rf"find . -type f {exclude_args} \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.java' -o -name '*.go' -o -name '*.jsx' -o -name '*.tsx' \) -exec ls -lt {{}} + | head -10"
         ]).stdout()
         
-        # Get file sizes and types
+        # Get file sizes and types (excluding common directories)
         file_types = await ctx.deps.container.with_exec([
-            "bash", "-c", "find . -type f \( -name '*.py' -o -name '*.js' -o -name '*.ts' \) | head -20 | xargs file"
+            "bash", "-c", rf"find . -type f {exclude_args} \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.jsx' -o -name '*.tsx' \) | head -20 | xargs file"
         ]).stdout()
         
         result = f"""File Relevance Analysis:
