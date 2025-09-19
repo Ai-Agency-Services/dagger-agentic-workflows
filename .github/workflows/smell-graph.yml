@@ -81,8 +81,9 @@ jobs:
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
-          dagger call --mod $GITHUB_WORKSPACE/workflows/graph build-graph-for-repository \
+          dagger call --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
+            build-graph-for-repository \
             --github-access-token=env:GH_PAT \
             --repository-url="${{ inputs.target_repo_url || github.event.pull_request.head.repo.clone_url }}" \
             --branch="${{ inputs.target_branch || github.event.pull_request.head.ref }}" \
@@ -101,8 +102,9 @@ jobs:
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
-          dagger call --mod $GITHUB_WORKSPACE/workflows/graph build-graph-for-directory \
+          dagger call --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
+            build-graph-for-directory \
             --github-access-token=env:GH_PAT \
             --local-path="${{ github.workspace }}/${{ inputs.attached_path }}" \
             --neo-password=env:NEO4J_PASSWORD \
@@ -125,9 +127,10 @@ jobs:
           #   ".git.repo_url = env(GITHUB_REPO_URL) | .git.branch = env(GITHUB_BRANCH)" \
           #   demo/agencyservices.yaml || true
 
-          dagger call --mod $GITHUB_WORKSPACE/workflows/smell analyze-codebase \
+          dagger call --mod $GITHUB_WORKSPACE/workflows/smell \
             --config-file=demo/agencyservices.yaml \
             --neo-data=cache:neo4j-data \
+            analyze-codebase \
             > smell_report.txt
 
           echo "report<<__EOF__" >> $GITHUB_OUTPUT
