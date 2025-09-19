@@ -168,3 +168,28 @@ dagger call cover generate-tests \
 - Validate all external inputs
 - Limit container permissions appropriately
 - Review AI-generated code before deployment
+
+## CI Workflows
+
+### Unit Tests (develop)
+Runs unit tests automatically on:
+- push to develop (covers merges into develop)
+- pull_request targeting develop (pre-merge checks)
+
+Workflow file: .github/workflows/unit-tests-develop.yml
+
+What it does:
+- Installs uv
+- Installs test dependencies (make install)
+- Runs unit tests only (make test-unit → pytest -m "unit")
+
+How to customize:
+- Edit Makefile targets if you want to change markers or args
+- Add caching steps if you need speed (e.g., actions/cache for uv wheels)
+- Expand to matrix strategy if you want multiple OS/Python versions
+
+### Smell Graph Report
+- See .github/workflows/smell-graph.yml for running Graph + Smell against:
+  - remote mode (repository_url/branch)
+  - attached mode (checkout external repo to path and analyze)
+- Posts a PR comment with a detailed report and GitHub links (if configured)
