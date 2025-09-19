@@ -1342,6 +1342,10 @@ No code smells detected
                 connection_test = "Skipped (no credentials)"
             logger.info(f"Neo4j connection: {connection_test}")
 
+            if neo_service is None:
+                return ("Error: Neo4j service not configured. Provide --github-access-token, "
+                        "--neo-password and --neo-auth (e.g., env:GITHUB_TOKEN, env:NEO4J_PASSWORD, env:NEO_AUTH).")
+
             # Get all detectors
             detectors = self._get_all_detectors()
             logger.info(
@@ -1427,6 +1431,10 @@ No code smells detected
                     neo_data=self.neo_data
                 )
 
+            # Ensure Neo service exists
+            if neo_service is None:
+                return ("Error: Neo4j service not configured. Provide --github-access-token, "
+                        "--neo-password and --neo-auth (e.g., env:GITHUB_TOKEN, env:NEO4J_PASSWORD, env:NEO_AUTH).")
             # Run specific detector
             detector = normalized_map[norm]
             logger.info(f"🔍 Running {detector.get_name()} detector...")
@@ -1496,6 +1504,9 @@ No code smells detected
                 )
 
             # Get selected detectors (normalized earlier)
+            if neo_service is None:
+                return ("Error: Neo4j service not configured. Provide --github-access-token, "
+                        "--neo-password and --neo-auth (e.g., env:GITHUB_TOKEN, env:NEO4J_PASSWORD, env:NEO_AUTH).")
             logger.info(
                 f"Running {len(selected_detectors)} selected detectors concurrently")
 
