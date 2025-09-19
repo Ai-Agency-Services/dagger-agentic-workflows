@@ -129,17 +129,14 @@ jobs:
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/smell/dagger.json" && echo "Found smell dagger.json" || (echo "Missing smell dagger.json" && exit 1)
-          # Optional: inject repo_url/branch into smell config for link generation
-          # If your smell config already sets git.repo_url/branch, you can skip this step.
-          # sudo apt-get update && sudo apt-get install -y jq || true
-          # yq -iy \
-          #   ".git.repo_url = env(GITHUB_REPO_URL) | .git.branch = env(GITHUB_BRANCH)" \
-          #   demo/agencyservices.yaml || true
 
           dagger call --mod $GITHUB_WORKSPACE/workflows/smell \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
             analyze-codebase \
+            --github-access-token=env:GH_PAT \
+            --neo-password=env:NEO4J_PASSWORD \
+            --neo-auth=env:NEO4J_AUTH \
             > smell_report.txt
 
           {
