@@ -73,7 +73,7 @@ jobs:
           uv --version
 
       - name: Build Graph (remote mode)
-        if: ${{ inputs.mode == 'remote' }}
+        if: ${{ inputs.mode != 'attached' }}
         env:
           GH_PAT: ${{ secrets.GH_PAT || github.token }}
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
@@ -85,6 +85,7 @@ jobs:
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
           dagger call --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
+            --neo-data=./tmp/neo4j-data \
             build-graph-for-repository \
             --github-access-token=env:GH_PAT \
             --repository-url="${{ inputs.target_repo_url || github.event.pull_request.head.repo.clone_url }}" \
@@ -92,6 +93,8 @@ jobs:
             --neo-password=env:NEO4J_PASSWORD \
             --neo-auth=env:NEO4J_AUTH \
             --open-router-api-key=env:OPENROUTER_API_KEY
+
+          echo "GRAPH_BUILT=1" >> "$GITHUB_ENV"
 
       - name: Build Graph (attached mode)
         if: ${{ inputs.mode == 'attached' }}
@@ -106,6 +109,7 @@ jobs:
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
           dagger call --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
+            --neo-data=./tmp/neo4j-data \
             build-graph-for-directory \
             --github-access-token=env:GH_PAT \
             --local-path="${{ github.workspace }}/${{ inputs.attached_path }}" \
@@ -113,8 +117,11 @@ jobs:
             --neo-auth=env:NEO4J_AUTH \
             --open-router-api-key=env:OPENROUTER_API_KEY
 
+          echo "GRAPH_BUILT=1" >> "$GITHUB_ENV"
+
       - name: Analyze Smells (always-verbose report with links)
         id: smell
+        if: ${{ env.GRAPH_BUILT == '1' }}
         env:
           GITHUB_REPO_URL: ${{ inputs.mode == 'remote' && (inputs.target_repo_url || github.event.pull_request.head.repo.html_url) || (format('https://github.com/{0}', inputs.attached_repository) || github.event.pull_request.head.repo.html_url) }}
           GITHUB_BRANCH: ${{ inputs.mode == 'remote' && (inputs.target_branch || github.event.pull_request.head.ref) || (inputs.attached_ref || github.event.pull_request.head.ref) }}
@@ -131,7 +138,7 @@ jobs:
 
           dagger call --mod $GITHUB_WORKSPACE/workflows/smell \
             --config-file=demo/agencyservices.yaml \
-            --neo-data=cache:neo4j-data \
+            --neo-data=./tmp/neo4j-data \
             analyze-codebase \
             > smell_report.txt
 
