@@ -83,7 +83,7 @@ jobs:
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
-          dagger call --mod $GITHUB_WORKSPACE/workflows/graph \
+          dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
             build-graph-for-repository \
@@ -125,12 +125,14 @@ jobs:
         env:
           GITHUB_REPO_URL: ${{ inputs.mode == 'remote' && (inputs.target_repo_url || github.event.pull_request.head.repo.html_url) || (format('https://github.com/{0}', inputs.attached_repository) || github.event.pull_request.head.repo.html_url) }}
           GITHUB_BRANCH: ${{ inputs.mode == 'remote' && (inputs.target_branch || github.event.pull_request.head.ref) || (inputs.attached_ref || github.event.pull_request.head.ref) }}
+          NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
         working-directory: workflows/smell
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/smell/dagger.json" && echo "Found smell dagger.json" || (echo "Missing smell dagger.json" && exit 1)
 
-          dagger call --mod $GITHUB_WORKSPACE/workflows/smell \
+          dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/smell \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
             analyze-codebase \
