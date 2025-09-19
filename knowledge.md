@@ -112,21 +112,23 @@ python scripts/run_tests.py --type unit --module neo
 
 ## Common Commands
 
+Important: Run dagger calls from the module directory that contains its dagger.json (e.g., workflows/graph, workflows/smell) or pass --mod <module-dir>. In CI, either set working-directory or use --mod $GITHUB_WORKSPACE/<module-dir>. Also ensure repo URLs are unquoted (e.g., https://github.com/org/repo without quotes).
+
 ```bash
 # Build and test an agent
 dagger call <agent> create --config-file=config.yaml
 
 # Run complete feature development
-dagger call codebuff orchestrate-feature-development \
+dagger call --mod agents/codebuff orchestrate-feature-development \
   --task-description="Feature description" \
   --openai-api-key=env:OPENAI_API_KEY
 
 # Analyze codebase
-dagger call graph build-graph-for-repository \
+dagger call --mod workflows/graph build-graph-for-repository \
   --repository-url="https://github.com/user/repo"
 
 # Generate tests with coverage
-dagger call cover generate-tests \
+dagger call --mod workflows/cover generate-tests \
   --config-file=config.yaml
 ```
 
@@ -193,3 +195,20 @@ How to customize:
   - remote mode (repository_url/branch)
   - attached mode (checkout external repo to path and analyze)
 - Posts a PR comment with a detailed report and GitHub links (if configured)
+
+## Troubleshooting Dagger module errors
+- Symptom: Error: module not found the commands need to be executed in the root folder containing the dagger.json file
+- Cause: dagger call was run from the wrong directory (not the module containing dagger.json)
+- Fix (local):
+  - cd workflows/graph && dagger call build-graph-for-repository ...
+  - or dagger call --mod workflows/graph build-graph-for-repository ...
+- Fix (CI):
+  - Set working-directory to the module directory, or
+  - Use --mod $GITHUB_WORKSPACE/<module-dir>
+- Quick preflight (optional):
+  - test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" || exit 1
+  - test -f "$GITHUB_WORKSPACE/workflows/smell/dagger.json" || exit 1
+
+Local examples:
+- dagger call --mod workflows/graph build-graph-for-repository --repository-url=https://github.com/org/repo --branch=main
+- dagger call --mod workflows/smell analyze-codebase --config-file=demo/agencyservices.yaml --neo-data=cache:neo4j-data

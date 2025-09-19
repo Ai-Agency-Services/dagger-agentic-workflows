@@ -77,9 +77,12 @@ jobs:
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
           NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        working-directory: workflows/graph
         run: |
-          dagger call graph build-graph-for-repository \
-            --config-file=workflows/graph/demo/agencyservices.yaml \
+          echo "CWD=$(pwd)" && ls -la
+          test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
+          dagger call --mod $GITHUB_WORKSPACE/workflows/graph build-graph-for-repository \
+            --config-file=demo/agencyservices.yaml \
             --github-access-token=env:GH_PAT \
             --repository-url="${{ inputs.target_repo_url || github.event.pull_request.head.repo.clone_url }}" \
             --branch="${{ inputs.target_branch || github.event.pull_request.head.ref }}" \
@@ -94,11 +97,14 @@ jobs:
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
           NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        working-directory: workflows/graph
         run: |
-          dagger call graph build-graph-for-directory \
-            --config-file=workflows/graph/demo/agencyservices.yaml \
+          echo "CWD=$(pwd)" && ls -la
+          test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
+          dagger call --mod $GITHUB_WORKSPACE/workflows/graph build-graph-for-directory \
+            --config-file=demo/agencyservices.yaml \
             --github-access-token=env:GH_PAT \
-            --local-path="${{ inputs.attached_path }}" \
+            --local-path="${{ github.workspace }}/${{ inputs.attached_path }}" \
             --neo-password=env:NEO4J_PASSWORD \
             --neo-auth=env:NEO4J_AUTH \
             --open-router-api-key=env:OPENROUTER_API_KEY
@@ -108,16 +114,19 @@ jobs:
         env:
           GITHUB_REPO_URL: ${{ inputs.mode == 'remote' && (inputs.target_repo_url || github.event.pull_request.head.repo.html_url) || (format('https://github.com/{0}', inputs.attached_repository) || github.event.pull_request.head.repo.html_url) }}
           GITHUB_BRANCH: ${{ inputs.mode == 'remote' && (inputs.target_branch || github.event.pull_request.head.ref) || (inputs.attached_ref || github.event.pull_request.head.ref) }}
+        working-directory: workflows/smell
         run: |
+          echo "CWD=$(pwd)" && ls -la
+          test -f "$GITHUB_WORKSPACE/workflows/smell/dagger.json" && echo "Found smell dagger.json" || (echo "Missing smell dagger.json" && exit 1)
           # Optional: inject repo_url/branch into smell config for link generation
           # If your smell config already sets git.repo_url/branch, you can skip this step.
           # sudo apt-get update && sudo apt-get install -y jq || true
           # yq -iy \
           #   ".git.repo_url = env(GITHUB_REPO_URL) | .git.branch = env(GITHUB_BRANCH)" \
-          #   workflows/smell/demo/agencyservices.yaml || true
+          #   demo/agencyservices.yaml || true
 
-          dagger call smell analyze-codebase \
-            --config-file=workflows/smell/demo/agencyservices.yaml \
+          dagger call --mod $GITHUB_WORKSPACE/workflows/smell analyze-codebase \
+            --config-file=demo/agencyservices.yaml \
             --neo-data=cache:neo4j-data \
             > smell_report.txt
 
