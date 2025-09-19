@@ -298,3 +298,15 @@ How to customize:
 Local examples:
 - dagger call --mod workflows/graph build-graph-for-repository --repository-url=https://github.com/org/repo --branch=main
 - dagger call --mod workflows/smell analyze-codebase --config-file=demo/agencyservices.yaml --neo-data=cache:neo4j-data
+
+### GitHub Actions multiline outputs
+- Symptom: Error: Invalid value. Matching delimiter not found '__EOF__'
+- Cause: Mismatched/unterminated heredoc when writing to $GITHUB_OUTPUT
+- Fix: Use a safe heredoc block and append in one group, e.g.:
+```bash
+{
+  echo 'report<<EOF'
+  cat smell_report.txt
+  echo 'EOF'
+} >> "$GITHUB_OUTPUT"
+```

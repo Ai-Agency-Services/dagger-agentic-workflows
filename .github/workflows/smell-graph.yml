@@ -40,6 +40,8 @@ permissions:
 jobs:
   smell-graph:
     runs-on: ubuntu-latest
+    env:
+      DAGGER_NO_NAG: '1'
     steps:
       - name: Checkout this repository (workflow code)
         uses: actions/checkout@v4
@@ -62,7 +64,7 @@ jobs:
 
       - name: Install Dagger CLI
         run: |
-          curl -L https://dl.dagger.io/dagger/install.sh | DAGGER_VERSION=v0.18.18 sh
+          curl -L https://dl.dagger.io/dagger/install.sh | DAGGER_VERSION=v0.18.19 sh
           echo "$PWD/bin" >> $GITHUB_PATH
 
       - name: Verify tools
@@ -133,9 +135,11 @@ jobs:
             analyze-codebase \
             > smell_report.txt
 
-          echo "report<<__EOF__" >> $GITHUB_OUTPUT
-          cat smell_report.txt >> $GITHUB_OUTPUT
-          echo "__EOF__" >> $GITHUB_OUTPUT
+          {
+            echo 'report<<EOF'
+            cat smell_report.txt
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload Smell Report
         uses: actions/upload-artifact@v4
