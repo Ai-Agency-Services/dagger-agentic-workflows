@@ -10,8 +10,8 @@
       "source": "../../agents/builder"
     },
     {
-      "name": "dagger-agents-utils",
-      "source": "../../shared/dagger-agents-utils"
+      "name": "neo_service",
+      "source": "../../services/neo"
     }
   ]
 }

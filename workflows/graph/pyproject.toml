@@ -1,0 +1,40 @@
+[project]
+name = "graph"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "dagger-io",
+    "pyyaml>=6.0.2",
+    "ais-dagger-agents-config>=0.1.0,<0.2.0",
+    "pydantic[email]>=2.11.7",
+]
+
+[build-system]
+requires = ["hatchling==1.25.0"]
+build-backend = "hatchling.build"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+    "pytest-cov>=5.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/"]
+addopts = [
+    "--strict-markers",
+    "--verbose",
+    "--tb=short",
+]
+markers = [
+    "graph: marks tests for graph building functionality",
+    "neo4j: marks tests that require Neo4j database",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+asyncio_mode = "auto"
+
+[tool.uv.sources]
+dagger-io = { path = "sdk", editable = true }

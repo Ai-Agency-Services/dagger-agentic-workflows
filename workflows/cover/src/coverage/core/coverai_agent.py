@@ -11,10 +11,13 @@ from coverage.models.code_module import CodeModule
 from coverage.models.coverage_report import CoverageReport
 from coverage.template import get_system_template
 from coverage.utils import get_code_under_test_directory
+from dagger import dag
 from opentelemetry import trace
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
-from simple_chalk import blue, red, yellow
+from simple_chalk import blue, red, yellow, green
+
+from dagger.client.gen import NeoService, AgentUtilsCodeClientService
 
 # Initialize tracer for OpenTelemetry
 tracer = trace.get_tracer(__name__)
@@ -32,6 +35,8 @@ class CoverAgentDependencies:
     report: CoverageReport
     reporter: 'Reporter'
     current_code_module: Optional[CodeModule] = field(default=None)
+    neo_service: Optional[NeoService] = field(default=None)
+    query_service: Optional[AgentUtilsCodeClientService] = field(default=None)
 
 
 async def add_coverage_report_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
@@ -282,6 +287,38 @@ async def write_test_file_tool(ctx: RunContext[CoverAgentDependencies], contents
         traceback.print_exc()
         return f"Error writing test file: {e}"
 
+
+async def query_codebase_tool(ctx: RunContext[CoverAgentDependencies], question: str, similarity_threshold: float = 0.7) -> str:
+    """Tool: Query the codebase using both semantic and structural information
+    
+    Args:
+        question: The natural language question about the codebase
+        similarity_threshold: Threshold for semantic similarity (0.0-1.0)
+    
+    Returns:
+        Structured results combining semantic search and graph relationships
+    """
+    print(blue(f"🔍 Querying codebase: {question}"))
+
+    if not ctx.deps.query_service:
+        return "Error: Code query service is not available. Make sure it's configured properly."
+
+    try:
+        # Use the query service
+        results = await ctx.deps.query_service.query(
+            question=question,
+            similarity_threshold=similarity_threshold,
+            max_results=5
+        )
+
+        return results
+
+    except Exception as e:
+        error_msg = f"Error querying codebase: {e}"
+        print(red(f"❌ {error_msg}"))
+        import traceback
+        traceback.print_exc()
+        return error_msg
 
 async def run_all_tests_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
     """Tool: Attempt to run all of the unit tests in the container using the configured command.
@@ -586,6 +623,211 @@ async def run_test_tool(ctx: RunContext[CoverAgentDependencies]) -> str:
             print("")  # Extra newline for better separation in logs
 
 
+async def run_cypher_query_tool(ctx: RunContext[CoverAgentDependencies], query: str) -> str:
+    """Tool: Run a Cypher query against the Neo4j database."""
+    # Add full query logging (not truncated)
+    print(yellow(f"=== FULL QUERY ===\n{query}\n=== END QUERY ==="))
+
+    print(
+        blue(f"🔍 Running Neo4j query: {query[:100]}{'...' if len(query) > 100 else ''}"))
+
+    if not ctx.deps.neo_service:
+        error_msg = "Neo4j client is not available. Cannot run Cypher query."
+        print(red(f"❌ {error_msg}"))
+        return error_msg
+
+    try:
+        # Execute query
+        print(blue(f"⚙️ Executing query with cypher-shell..."))
+        result = await ctx.deps.neo_service.run_query(query=query)
+
+        # Log results
+        print(
+            green(f"✅ Query executed successfully! Result length: {len(result)}"))
+        print(blue(f"📊 First 200 chars of result: {result[:200]}"))
+        return result
+    except Exception as e:
+        error_msg = f"Error executing Neo4j query: {e}"
+        print(red(f"❌ {error_msg}"))
+        return error_msg
+
+
+async def analyze_imports_tool(ctx: RunContext[CoverAgentDependencies], filepath: str) -> str:
+    """Tool: Analyze the imports for a specific file.
+    
+    Args:
+        filepath: The path to the file to analyze.
+    """
+    print(yellow(f"=== START: analyze_imports_tool for {filepath} ==="))
+
+    if not ctx.deps.neo_service:
+        error_msg = "Neo4j client is not available. Cannot analyze imports."
+        print(red(f"❌ {error_msg}"))
+        return error_msg
+
+    try:
+        print(blue(f"📊 Analyzing imports for file: {filepath}"))
+
+        # Get working directory from config
+        config = ctx.deps.config
+        work_dir = getattr(config.container, 'work_dir', '/app')
+        print(blue(f"🔧 Using work directory from config: {work_dir}"))
+
+        # FIXED: Convert relative paths to absolute container paths using config work_dir
+        def normalize_filepath(path: str) -> str:
+            """Convert relative paths to absolute container paths using config work_dir"""
+            if path.startswith(work_dir + '/'):
+                return path  # Already absolute with work_dir
+            elif path.startswith('./'):
+                return f"{work_dir}/{path[2:]}"  # Remove ./ and add work_dir/
+            elif path.startswith('/'):
+                # If it's absolute but not in work_dir, assume it's meant to be
+                if not path.startswith(work_dir):
+                    return f"{work_dir}{path}"
+                return path
+            else:
+                return f"{work_dir}/{path}"  # Add work_dir/ prefix
+
+        normalized_filepath = normalize_filepath(filepath)
+        print(blue(f"🔧 Normalized filepath: {normalized_filepath}"))
+
+        # Query 1: Direct imports
+        print(blue(f"🔍 Finding files imported by {normalized_filepath}..."))
+        imports_query = f"""
+        MATCH (f:File {{filepath: "{normalized_filepath}"}})-[:IMPORTS]->(imported:File)
+        RETURN imported.filepath as imported_file, imported.language as language
+        """
+        imports_result = await run_cypher_query_tool(ctx, imports_query)
+        print(green(f"✅ Imports query complete"))
+
+        # Query 2: Files that import this file
+        print(blue(f"🔍 Finding files that import {normalized_filepath}..."))
+        dependents_query = f"""
+        MATCH (f:File)-[:IMPORTS]->(target:File {{filepath: "{normalized_filepath}"}})
+        RETURN f.filepath as dependent_file, f.language as language
+        """
+        dependents_result = await run_cypher_query_tool(ctx, dependents_query)
+        print(green(f"✅ Dependents query complete"))
+
+        # Query 3: Check if file exists in database
+        print(blue(f"🔍 Verifying file exists in database..."))
+        exists_query = f"""
+        MATCH (f:File {{filepath: "{normalized_filepath}"}})
+        RETURN f.filepath, f.language
+        """
+        exists_result = await run_cypher_query_tool(ctx, exists_query)
+
+        # Format output
+        result = f"""
+=== Imports Analysis for {filepath} ===
+Work directory from config: {work_dir}
+Normalized path: {normalized_filepath}
+
+File exists in database:
+{exists_result}
+
+Files imported by {filepath}:
+{imports_result}
+
+Files that import {filepath}:
+{dependents_result}
+"""
+        print(green(f"✅ Analysis complete for {filepath}"))
+        return result
+
+    except Exception as e:
+        error_msg = f"Error analyzing imports: {e}"
+        print(red(f"❌ {error_msg}"))
+        import traceback
+        traceback.print_exc()
+        return error_msg
+    finally:
+        print(yellow(f"=== END: analyze_imports_tool for {filepath} ==="))
+        print("")  # Extra newline for better separation in logs
+
+
+async def add_neo4j_usage_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
+    # Get working directory from config
+    config = ctx.deps.config
+    work_dir = getattr(config.container, 'work_dir', '/app')
+
+    return f"""
+\n ------- \n
+<neo4j_usage>
+IMPORTANT: Before writing tests, analyze imports to understand dependencies!
+
+The codebase has been indexed in a Neo4j graph database. To write effective tests, 
+you should first understand what modules the code depends on and what other modules 
+depend on it.
+
+IMPORTANT PATH FORMAT: All file paths in the database use absolute container paths starting with "{work_dir}/".
+- Correct: "{work_dir}/src/hooks/use-toast.ts"
+- Incorrect: "./src/hooks/use-toast.ts" or "src/hooks/use-toast.ts"
+
+Working directory from config: {work_dir}
+
+For example, if you're testing module X that imports module Y, you'll need to mock Y's behavior.
+Similarly, if module Z imports X, you'll need test cases covering X's public API.
+
+Follow these steps:
+
+1. First run this query to see what the file you're testing imports:
+```
+MATCH (f:File {{filepath: "path/to/your/file.js"}})-[:IMPORTS]->(imported:File)
+RETURN imported.filepath
+```
+    
+2. Then check what files depend on the one you're testing:
+```
+MATCH (f:File)-[:IMPORTS]->(target:File {{filepath: "path/to/your/file.js"}})
+RETURN f.filepath
+```
+    
+3. Finally, check for internal dependencies between functions/classes:
+```
+MATCH (s1:Symbol)-[:CALLS|REFERENCES]->(s2:Symbol)
+WHERE s1.filepath = "path/to/your/file.js" AND s2.filepath = "path/to/your/file.js"
+RETURN s1.name, s2.name, type((s1)-[r]->(s2))
+```
+    
+You can use analyze_imports_tool(filepath) for a quick overview or run_cypher_query_tool(query) for custom queries.
+</neo4j_usage>
+\n ------- \n
+    """
+
+
+async def add_query_service_prompt(ctx: RunContext[CoverAgentDependencies]) -> str:
+    return """
+\n ------- \n
+<query_service_usage>
+POWERFUL CODEBASE SEARCH: You have access to a unified query service that combines semantic search with graph relationships.
+
+Use query_codebase_tool(question, similarity_threshold=0.7) to ask natural language questions about the codebase like:
+- "How are error states handled in the authentication flow?"
+- "Where is the main data fetching logic implemented?"
+- "Find code related to form validation"
+- "Show me examples of API calls to external services"
+
+The query service will:
+1. Find semantically relevant code snippets across the codebase
+2. Enrich results with graph relationships (imports, references, dependencies)
+3. Present both code content and structural information
+
+This is especially valuable for:
+- Understanding unfamiliar code patterns
+- Finding similar implementations to reference
+- Identifying dependencies that need mocking in tests
+- Discovering code that interacts with the module you're testing
+
+Example: `query_codebase_tool("How are API errors handled?", 0.8)`
+
+The query service complements the more structured Neo4j queries by providing a natural language interface
+to the codebase when you don't know exactly what to look for.
+</query_service_usage>
+\n ------- \n
+"""
+
+
 def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     """
     Creates and configures the CoverAI agent instance.
@@ -616,10 +858,15 @@ def create_coverai_agent(pydantic_ai_model: OpenAIModel) -> Agent:
     agent.system_prompt(add_directories_prompt)
     agent.system_prompt(add_current_code_module_prompt)
     agent.system_prompt(add_dependency_files_prompt)
+    agent.system_prompt(add_neo4j_usage_prompt)
+    agent.system_prompt(add_query_service_prompt)  # Register the new prompt
 
     agent.tool(read_file_tool)
     agent.tool(run_test_tool)
     agent.tool(write_test_file_tool)
+    agent.tool(run_cypher_query_tool)
+    agent.tool(analyze_imports_tool)
+    agent.tool(query_codebase_tool)  # Register the new tool
 
     print(f"CoverAI Agent created with model: {pydantic_ai_model.model_name}")
     return agent

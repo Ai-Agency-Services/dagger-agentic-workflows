@@ -1,0 +1,21 @@
+{
+  "name": "graph",
+  "engineVersion": "v0.18.14",
+  "sdk": {
+    "source": "python"
+  },
+  "dependencies": [
+    {
+      "name": "agent-utils",
+      "source": "../../shared/agent-utils"
+    },
+    {
+      "name": "builder",
+      "source": "../../agents/builder"
+    },
+    {
+      "name": "neo_service",
+      "source": "../../services/neo"
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+# Codebuff Agents Demo Configuration
+# Example configuration for feature development workflow
+
+container:
+    work_dir: "/app"
+    docker_file_path: "./dockerfile"
+
+core_api:
+    model: "openai/gpt-4o"
+    fallback_models:
+        - "openai/gpt-4o-mini"
+        - "openai/gpt-3.5-turbo"
+    provider: "openai"  # or "openrouter"
+
+git:
+    user_email: "dev@example.com"
+    user_name: "Feature Developer"
+    base_pull_request_branch: "feature-dev"
+
+# Agent-specific settings
+agents:
+    file_explorer:
+        model: "anthropic/claude-3.5-sonnet"
+        focus_areas:
+            - "API endpoints"
+            - "database models"
+            - "authentication"
+            - "user management"
+    
+    file_picker:
+        model: "google/gemini-flash-1.5"
+        max_files: 10
+    
+    thinker:
+        model: "openai/gpt-4o"
+        planning_depth: "detailed"
+    
+    implementation:
+        model: "anthropic/claude-3.5-sonnet"
+        safety_checks: true
+    
+    reviewer:
+        model: "openai/gpt-4o"
+        check_syntax: true
+        run_tests: true
+    
+    context_pruner:
+        model: "openai/gpt-4o-mini"
+        default_strategy: "smart"
+        max_tokens: 4000
+
+# Feature development settings
+feature_development:
+    workflow:
+        - "explore"
+        - "pick_files"
+        - "plan"
+        - "implement"
+        - "review"
+    
+    safety:
+        backup_before_changes: true
+        require_review: true
+        test_after_implementation: true
+
+# Integration with existing workflows
+integrations:
+    cover_workflow: true
+    graph_workflow: true
+    smell_detection: true

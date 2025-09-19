@@ -1,0 +1,103 @@
+$schema: http://json-schema.org/draft-07/schema#
+
+container:
+    work_dir: "/app"
+    docker_file_path: "./dockerfile"
+
+core_api:
+    provider: "openrouter"
+    model: "x-ai/grok-3-mini-beta"
+
+git:
+    user_email: "AiTestGen@users.noreply.github.com"
+    user_name: "Ai-TestGen[bot]"
+
+test_generation:
+    limit: 5
+    save_next_to_code_under_test: false
+    test_directory: "tests"
+    test_suffix: "test"
+
+# Add dedicated concurrency section
+concurrency:
+    max_concurrent: 5      # Process 5 files simultaneously
+    batch_size: 10         # Batch size for Neo4j operations
+
+indexing:
+    clear_on_start: true
+    skip_indexing: false
+    chunk_size: 50
+    max_semantic_chunk_lines: 200
+    batch_size: 2          # Keep for backward compatibility
+    similarity_threshold: 0.80
+    results_limit: 10
+    file_extensions:
+        # Code files
+        - py
+        - js
+        - ts
+        - tsx
+        - jsx
+        - java
+        - c
+        - cpp
+        - h
+        - sh
+        - go
+        - rs
+        - php
+        - rb
+        - cs
+        - kt
+        - swift
+        - scala
+        - clj
+        - elm
+        - dart
+        - vue
+        - svelte
+        # Config files
+        - yaml
+        - yml
+        - json
+        - toml
+        - xml
+        # Documentation
+        - md
+        # Scripts
+        - sh
+
+agents:
+    builder_model: "x-ai/grok-3-mini-beta"
+
+neo4j:
+    uri: "neo4j://neo:7687"
+    user: "neo4j"
+    database: "neo4j"
+    
+    http_port: 7474
+    bolt_port: 7687
+    
+    cypher_shell_repo: "https://github.com/Ai-Agency-Services/cypher-shell.git"
+    
+    image: "neo4j:2025.05"
+    container_name: "neo4j-db"
+    data_volume_path: "/data"
+    cache_volume_name: "neo4j-data"
+    
+    enabled: true
+    clear_on_start: false
+    
+    # Plugin settings
+    plugins: 
+        - "apoc"
+    
+    # APOC settings
+    apoc_export_file_enabled: "true"
+    apoc_import_file_enabled: "true"
+    apoc_import_file_use_neo4j_config: "true"
+
+    # Server memory settings
+    memory_pagecache_size: "1G"
+    memory_heap_initial_size: "1G"
+    memory_heap_max_size: "1G"

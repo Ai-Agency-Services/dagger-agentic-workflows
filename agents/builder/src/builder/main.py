@@ -373,6 +373,31 @@ class Builder:
             return self.base_container
 
     @function
+    def build_cypher_shell(
+        self, source: dagger.Directory
+    ) -> dagger.Container:
+        """
+        Builds a container with a Cypher shell for Neo4j operations.
+
+        Args:
+            base_container: The container already built with user and agent dependencies.
+
+        Returns:
+            A container configured for Cypher shell operations.
+        """
+        print("Configuring container for Cypher shell...")
+        self._setup_logging()
+        container = (
+            dag.container()
+            .build(
+                context=source,
+                dockerfile="Dockerfile"
+            )
+        )
+        print(green("Cypher shell container setup complete."))
+        return container
+
+    @function
     def setup_pull_request_container(
         self, base_container: dagger.Container, token: dagger.Secret
     ) -> dagger.Container:
