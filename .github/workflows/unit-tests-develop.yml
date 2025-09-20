@@ -43,9 +43,18 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+      - name: Install Dagger CLI
+        run: |
+          curl -L https://dl.dagger.io/dagger/install.sh | DAGGER_VERSION=v0.18.19 sh
+          echo "$PWD/bin" >> $GITHUB_PATH
+
       - name: Install test dependencies (matrix module)
         working-directory: ${{ matrix.module }}
         run: |
+          if [ -f dagger.json ]; then
+            echo "Found dagger.json in $PWD; running 'dagger develop' to generate local sdk"
+            dagger develop
+          fi
           if [ -f pyproject.toml ]; then
             uv sync --extra test || uv sync
           else
