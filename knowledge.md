@@ -165,6 +165,19 @@ Notes:
 - Mirrors CI: per-module uv environments, excludes markers (integration, neo4j, llm, dagger, slow)
 - For modules with dagger.json, runs `dagger develop` first (if dagger is installed)
 - PYTHONPATH is set to the repo root so shared fixtures are importable
+- Coverage: generated per-module by default (HTML at `htmlcov/index.html`, XML at `coverage.xml`). Set `COVERAGE=0` to disable:
+
+```bash
+COVERAGE=0 make test-local
+MODULES="services/query" COVERAGE=0 make test-local
+```
+
+- Aggregated coverage (default ON): all module .coverage.* files are combined into one report at `coverage_html/index.html` and `coverage.xml`. Disable with `AGGREGATE=0`:
+
+```bash
+AGGREGATE=0 make test-local
+MODULES="agents/codebuff" AGGREGATE=0 make test-local
+```
 
 ## Common Commands (constructor-first order)
 
@@ -312,3 +325,4 @@ Tips: expose ports before `.as_service()`, bind via `.with_service_binding("name
 - Export errors: function must return File/Directory; use `export --path`
 - GHA multiline output: avoid big content in GITHUB_OUTPUT—export artifacts instead
 - Debug: `await c.stdout()/stderr()`, Dagger Cloud trace URL, `DAGGER_LOG_LEVEL=debug`
+
