@@ -19,7 +19,7 @@ async def scan_directory_structure(ctx: RunContext[FileExplorerDependencies], pa
         exclude_args = " ".join([f"-not -path '*/{dir}/*'" for dir in EXCLUDED_DIRS])
         
         tree_output = await ctx.deps.container.with_exec([
-            "bash", "-c", f"find {path} -type f {exclude_args} \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.jsx' -o -name '*.tsx' -o -name '*.java' -o -name '*.go' -o -name '*.rs' -o -name '*.cpp' -o -name '*.c' -o -name '*.h' \) | head -50"
+            "bash", "-c", rf"find {path} -type f {exclude_args} \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.jsx' -o -name '*.tsx' -o -name '*.java' -o -name '*.go' -o -name '*.rs' -o -name '*.cpp' -o -name '*.c' -o -name '*.h' \) | head -50"
         ]).stdout()
         print(green("✅ Directory scan completed"))
         return f"Directory scan results:\n{tree_output}"

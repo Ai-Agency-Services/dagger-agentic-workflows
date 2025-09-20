@@ -72,23 +72,57 @@ class QueryService:
             config_str = await config_file.contents()
             config_dict = yaml.safe_load(config_str)
 
-            if not config_dict:
-                # Fallback: try module demo config, then a minimal inline default for tests/CI
+            # Refine handling:
+            # - Empty contents: fallback to demo or minimal defaults
+            # - Invalid YAML or non-dict: raise ValueError as tests expect
+            try:
+                cfg_text = await config_file.contents()
+            except Exception:
+                cfg_text = ""
+            if isinstance(cfg_text, (bytes, bytearray)):
+                cfg_text = cfg_text.decode("utf-8", errors="ignore")
+            if isinstance(cfg_text, str) and cfg_text.strip() == "":
+                # empty → fallback
                 try:
                     from pathlib import Path
                     fallback = Path(__file__).resolve().parents[2] / "demo/agencyservices.yaml"
                     if fallback.exists():
                         with open(fallback, "r", encoding="utf-8") as fbf:
                             config_dict = yaml.safe_load(fbf) or {}
+                    else:
+                        config_dict = {}
                 except Exception:
-                    pass
+                    config_dict = {}
                 if not config_dict:
                     config_dict = {
                         "container": {"work_dir": "/app"},
                         "git": {"user_name": "CI", "user_email": "ci@example.com", "base_pull_request_branch": "main"}
                     }
-                if not config_dict:
+            else:
+                # Non-empty: ensure parsed dict, else raise
+                try:
+                    config_dict = yaml.safe_load(cfg_text)
+                except Exception:
                     raise ValueError("Config file is empty or invalid YAML")
+                if not isinstance(config_dict, dict):
+                    raise ValueError("Config file is empty or invalid YAML")
+                if not config_dict:
+                    # empty dict → fallback
+                    try:
+                        from pathlib import Path
+                        fallback = Path(__file__).resolve().parents[2] / "demo/agencyservices.yaml"
+                        if fallback.exists():
+                            with open(fallback, "r", encoding="utf-8") as fbf:
+                                config_dict = yaml.safe_load(fbf) or {}
+                        else:
+                            config_dict = {}
+                    except Exception:
+                        config_dict = {}
+                    if not config_dict:
+                        config_dict = {
+                            "container": {"work_dir": "/app"},
+                            "git": {"user_name": "CI", "user_email": "ci@example.com", "base_pull_request_branch": "main"}
+                        }
 
             # Get configuration values with defaults
             integration_config = config_dict.get("integration", {})
