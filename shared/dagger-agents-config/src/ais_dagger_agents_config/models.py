@@ -144,6 +144,29 @@ class ReporterConfig(BaseModel):
     )
 
 
+# --- Add Smell configuration models ---
+class SmellThresholdsConfig(BaseModel):
+    """Global thresholds for smell detectors."""
+    long_function_lines: int = Field(default=120, description="Minimum span (lines) for Long Functions")
+    long_param_count: int = Field(default=6, description="Minimum param count for Long Parameter List")
+    large_class_loc: int = Field(default=200, description="Minimum LOC for Large Class by LOC")
+    god_class_methods: int = Field(default=20, description="Minimum methods for God Class by methods")
+    high_fan_out: int = Field(default=20, description="Minimum imports for High Fan-Out")
+    high_fan_in: int = Field(default=10, description="Minimum inbound imports for High Fan-In")
+
+
+class SmellDetectorsConfig(BaseModel):
+    """Include/exclude configuration for smell detectors."""
+    include: List[str] = Field(default_factory=list, description="Only run these detectors (empty = all)")
+    exclude: List[str] = Field(default_factory=list, description="Always exclude these detectors")
+
+
+class SmellConfig(BaseModel):
+    """Top-level smell configuration."""
+    thresholds: SmellThresholdsConfig = Field(default_factory=SmellThresholdsConfig)
+    detectors: SmellDetectorsConfig = Field(default_factory=SmellDetectorsConfig)
+
+
 class CoreAPIConfig(BaseModel):
     """Core API configuration with optional fields."""
     model: Optional[str] = Field(
@@ -219,7 +242,10 @@ class YAMLConfig(BaseModel):
     reporter: Optional[ReporterConfig] = Field(default=None)
     core_api: Optional[CoreAPIConfig] = Field(default=None)
     neo4j: Optional[Neo4jConfig] = Field(default=None)
+    # Add smell configuration (optional)
+    smell: Optional[SmellConfig] = Field(default=None, description="Smell detection thresholds and detector filters")
 
     class Config:
         """Pydantic configuration."""
         extra = "allow"  # Allow extra fields for flexibility
+

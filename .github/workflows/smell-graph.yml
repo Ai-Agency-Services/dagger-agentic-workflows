@@ -33,6 +33,11 @@ on:
         description: "Skip graph build and run smell only (workflow_dispatch only)"
         required: false
         default: "false"
+      # NEW: severity gate input
+      fail_on_severity:
+        description: "Fail job when severity >= this level (none|high|critical)"
+        required: false
+        default: "none"
 
   pull_request:
     types: [opened, synchronize, reopened]
@@ -147,6 +152,7 @@ jobs:
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/smell/dagger.json" && echo "Found smell dagger.json" || (echo "Missing smell dagger.json" && exit 1)
 
+          # Export HTML report (pretty)
           dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/smell \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
@@ -156,15 +162,60 @@ jobs:
             --neo-auth=env:NEO4J_AUTH \
             --format html \
             export --path smell_report.html
+
+          # Export text report (parsable for gating)
+          dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/smell \
+            --config-file=demo/agencyservices.yaml \
+            --neo-data=./tmp/neo4j-data \
+            analyze-codebase-export \
+            --github-access-token=env:GH_PAT \
+            --neo-password=env:NEO4J_PASSWORD \
+            --neo-auth=env:NEO4J_AUTH \
+            --format text \
+            export --path smell_report.txt
+
       - name: Verify Smell Report Path
         run: |
           test -f workflows/smell/smell_report.html && ls -lh workflows/smell/smell_report.html || (echo 'Report not found at workflows/smell/smell_report.html' && exit 1)
+          test -f workflows/smell/smell_report.txt && ls -lh workflows/smell/smell_report.txt || (echo 'Report not found at workflows/smell/smell_report.txt' && exit 1)
+
+      # NEW: Severity Gate (optional)
+      - name: Severity Gate
+        if: ${{ inputs.fail_on_severity && (inputs.fail_on_severity != 'none') }}
+        run: |
+          set -euo pipefail
+          file="workflows/smell/smell_report.txt"
+          # Extract counts from the Severity Breakdown in the text report
+          # Expected lines like: "- CRITICAL: 2", "- HIGH: 3"
+          critical=$(grep -A5 "Severity Breakdown:" "$file" | awk '/CRITICAL/ {print $2+0}' || true)
+          high=$(grep -A5 "Severity Breakdown:" "$file" | awk '/HIGH/ {print $2+0}' || true)
+          critical=${critical:-0}
+          high=${high:-0}
+          mode="${{ inputs.fail_on_severity }}"
+          echo "Mode=$mode CRITICAL=$critical HIGH=$high"
+          if [ "$mode" = "critical" ] && [ "$critical" -gt 0 ]; then
+            echo "Failing: CRITICAL smells present: $critical"; exit 1; fi
+          if [ "$mode" = "high" ] && { [ "$high" -gt 0 ] || [ "$critical" -gt 0 ]; }; then
+            echo "Failing: HIGH/CRITICAL smells present: high=$high critical=$critical"; exit 1; fi
+          echo "Severity gate passed."
+
+      # NEW: Job Summary (Markdown)
+      - name: Job Summary
+        run: |
+          {
+            echo "# Code Smell Report"
+            echo "- Repo: ${GITHUB_REPO_URL:-N/A}"
+            echo "- Branch: ${GITHUB_BRANCH:-N/A}"
+            echo "- Artifact: smell-report (HTML & text)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Smell Report
         uses: actions/upload-artifact@v4
         with:
           name: smell-report
-          path: workflows/smell/smell_report.html
+          path: |
+            workflows/smell/smell_report.html
+            workflows/smell/smell_report.txt
 
       - name: Comment on PR with Smell Report
         if: ${{ github.event_name == 'pull_request' && inputs.post_comment == 'true' }}
@@ -172,7 +223,7 @@ jobs:
         with:
           script: |
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            const body = `### Code Smell Report\n\nA full report (HTML and text) has been uploaded as the workflow artifact \"smell-report\".\n\n- Repo: ${process.env.GITHUB_REPO_URL || 'N/A'}\n- Branch: ${process.env.GITHUB_BRANCH || 'N/A'}\n- Run: ${runUrl}\n\nDownload the artifact from this run to view the report.`;
+            const body = `### Code Smell Report\n\nA full report (HTML and text) has been uploaded as the workflow artifact "smell-report".\n\n- Repo: ${process.env.GITHUB_REPO_URL || 'N/A'}\n- Branch: ${process.env.GITHUB_BRANCH || 'N/A'}\n- Run: ${runUrl}\n\nDownload the artifact from this run to view the report.`;
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,

@@ -1,0 +1,93 @@
+name: Publish shared config to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI"
+        required: true
+        default: "true"
+      version:
+        description: "Expected version to publish (optional; validates pyproject/__init__)"
+        required: false
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'config-v*'
+      - 'ais-dagger-agents-config-*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build & Publish ais-dagger-agents-config
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE_DIR: shared/dagger-agents-config
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip build twine
+
+      - name: Preflight — Validate version & files
+        working-directory: ${{ env.PACKAGE_DIR }}
+        run: |
+          set -euo pipefail
+          test -f pyproject.toml || { echo 'pyproject.toml missing'; exit 1; }
+          test -f src/ais_dagger_agents_config/__init__.py || { echo '__init__ missing'; exit 1; }
+          # Extract versions
+          PYPROJECT_VER=$(python - <<'PY'
+import re
+import sys
+p = 'pyproject.toml'
+with open(p,'r') as f:
+    t=f.read()
+m=re.search(r"^version\s*=\s*\"([^\"]+)\"", t, re.M)
+print(m.group(1) if m else '')
+PY)
+          INIT_VER=$(python - <<'PY'
+import re
+with open('src/ais_dagger_agents_config/__init__.py','r') as f:
+    t=f.read()
+m=re.search(r"__version__\s*=\s*\"([^\"]+)\"", t)
+print(m.group(1) if m else '')
+PY)
+          echo "pyproject: $PYPROJECT_VER"
+          echo "__init__:  $INIT_VER"
+          test -n "$PYPROJECT_VER" && test "$PYPROJECT_VER" = "$INIT_VER" || { echo 'Version mismatch!'; exit 1; }
+          # If caller provided an expected version, verify it
+          if [ -n "${{ github.event.inputs.version || '' }}" ]; then
+            test "$PYPROJECT_VER" = "${{ github.event.inputs.version }}" || { echo "Provided version doesn't match $PYPROJECT_VER"; exit 1; }
+          fi
+
+      - name: Build package
+        working-directory: ${{ env.PACKAGE_DIR }}
+        run: |
+          python -m build
+          ls -lh dist/
+
+      - name: Verify PYPI_TOKEN present
+        run: |
+          if [ -z "${{ secrets.PYPI_TOKEN }}" ]; then
+            echo 'PYPI_TOKEN secret is missing. Please add it in repo settings.' >&2
+            exit 1
+          fi
+
+      - name: Publish to PyPI
+        if: ${{ github.event_name == 'release' || github.event.inputs.publish == 'true' }}
+        working-directory: ${{ env.PACKAGE_DIR }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          python -m twine upload dist/*

@@ -101,3 +101,23 @@ neo4j:
     memory_pagecache_size: "1G"
     memory_heap_initial_size: "1G"
     memory_heap_max_size: "1G"
+
+# Smell configuration (global thresholds and detector filters)
+smell:
+  thresholds:
+    # Long function threshold (lines)
+    long_function_lines: 150
+    # Long parameter list threshold (params)
+    long_param_count: 6
+    # Large class by LOC threshold (lines)
+    large_class_loc: 300
+    # God class by methods threshold (methods)
+    god_class_methods: 25
+    # Coupling thresholds
+    high_fan_out: 20
+    high_fan_in: 10
+  detectors:
+    # When include is empty, all detectors are enabled unless excluded below
+    include: []
+    # Examples: ["DeadCodeDetector", "BarrelFileDetector"] to silence noise
+    exclude: []
