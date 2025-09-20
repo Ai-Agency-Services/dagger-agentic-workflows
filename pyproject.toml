@@ -60,6 +60,7 @@ markers = [
     "neo4j: marks tests that require Neo4j database",
     "llm: marks tests that require LLM API access",
     "dagger: marks tests that require Dagger runtime",
+    "graph: marks tests for graph workflow",
 ]
 filterwarnings = [
     "error",
