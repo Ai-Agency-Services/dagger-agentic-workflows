@@ -156,11 +156,15 @@ jobs:
             --neo-auth=env:NEO4J_AUTH \
             --format html \
             export --path smell_report.html
+      - name: Verify Smell Report Path
+        run: |
+          test -f workflows/smell/smell_report.html && ls -lh workflows/smell/smell_report.html || (echo 'Report not found at workflows/smell/smell_report.html' && exit 1)
+
       - name: Upload Smell Report
         uses: actions/upload-artifact@v4
         with:
           name: smell-report
-          path: ./smell_report.html
+          path: workflows/smell/smell_report.html
 
       - name: Comment on PR with Smell Report
         if: ${{ github.event_name == 'pull_request' && inputs.post_comment == 'true' }}
