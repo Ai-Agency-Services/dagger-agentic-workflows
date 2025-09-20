@@ -129,6 +129,7 @@ jobs:
         env:
           GITHUB_REPO_URL: ${{ inputs.mode == 'remote' && (inputs.target_repo_url || github.event.pull_request.head.repo.html_url) || (format('https://github.com/{0}', inputs.attached_repository) || github.event.pull_request.head.repo.html_url) }}
           GITHUB_BRANCH: ${{ inputs.mode == 'remote' && (inputs.target_branch || github.event.pull_request.head.ref) || (inputs.attached_ref || github.event.pull_request.head.ref) }}
+          GH_PAT: ${{ secrets.GH_PAT || github.token }}
           NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
         working-directory: workflows/smell
@@ -139,72 +140,17 @@ jobs:
           dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/smell \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
-            analyze-codebase \
+            analyze-codebase-export \
             --github-access-token=env:GH_PAT \
             --neo-password=env:NEO4J_PASSWORD \
             --neo-auth=env:NEO4J_AUTH \
-            > smell_report.txt
-
-          # Build a polished HTML report (brand + toggles + metadata)
-          awk 'BEGIN{f=0} /📚 === DETAILED FINDINGS ===/{f=1;next} f{print > "details.txt"; next} {print > "summary.txt"}' smell_report.txt || true
-
-          REPO_URL="${GITHUB_REPO_URL:-N/A}"
-          BRANCH="${GITHUB_BRANCH:-N/A}"
-
-          cat > smell_report.html <<EOF
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Code Smell Report</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    :root {
-      --bg:#0b1020; --panel:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --border:#1f2937; --link:#93c5fd;
-    }
-    html,body { background:var(--bg); color:var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    body { padding: 24px; line-height: 1.45; }
-    h1 { margin: 0 0 12px 0; font-size: 20px; }
-    .meta { color: var(--muted); margin: 0 0 16px 0; }
-    .badge { display:inline-block; padding: 2px 8px; border-radius: 9999px; border: 1px solid var(--border); color:#e2e8f0; font-size: 12px; margin-right: 8px; }
-    details { margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; overflow:hidden; background: var(--panel); }
-    summary { cursor:pointer; padding: 10px 14px; font-weight: 600; }
-    pre { margin: 0; padding: 14px; background: var(--bg); white-space: pre-wrap; }
-    a { color: var(--link); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-  </style>
-</head>
-<body>
-  <h1>Code Smell Report</h1>
-  <div class="meta">Repo: <a href="$REPO_URL">$REPO_URL</a> • Branch: $BRANCH</div>
-  <div class="meta"><span class="badge">Smell Workflow</span><span class="badge">HTML Artifact</span></div>
-  <details open>
-    <summary>Summary</summary>
-    <pre>
-EOF
-          sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' summary.txt 2>/dev/null >> smell_report.html || true
-          cat >> smell_report.html <<'EOF'
-    </pre>
-  </details>
-  <details>
-    <summary>Detailed Findings</summary>
-    <pre>
-EOF
-          sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' details.txt 2>/dev/null >> smell_report.html || true
-          cat >> smell_report.html <<'EOF'
-    </pre>
-  </details>
-</body>
-</html>
-EOF
-
+            --format html \
+            --export smell_report.html
       - name: Upload Smell Report
         uses: actions/upload-artifact@v4
         with:
           name: smell-report
-          path: |
-            smell_report.txt
-            smell_report.html
+          path: smell_report.html
 
       - name: Comment on PR with Smell Report
         if: ${{ github.event_name == 'pull_request' && inputs.post_comment == 'true' }}

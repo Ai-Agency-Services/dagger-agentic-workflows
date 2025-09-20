@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -1527,3 +1528,59 @@ No code smells detected
             logger.error(error_msg)
             return error_msg
 
+    @function
+    async def analyze_codebase_export(
+        self,
+        github_access_token: Annotated[Optional[dagger.Secret], Doc("GitHub access token")] = None,
+        neo_password: Annotated[Optional[dagger.Secret], Doc("Neo4j password")] = None,
+        neo_auth: Annotated[Optional[dagger.Secret], Doc("Neo4j auth token")] = None,
+        format: Annotated[Optional[str], Doc("Report format: 'html' or 'text'")] = "html",
+    ) -> dagger.File:
+        """Generate a smell report and return it as a File so callers can --export to host.
+        Uses analyze_codebase for content, wraps as HTML when format='html'.
+        """
+        report_text = await self.analyze_codebase(
+            github_access_token=github_access_token,
+            neo_password=neo_password,
+            neo_auth=neo_auth,
+        )
+
+        fmt = (format or "html").lower()
+        if fmt == "html":
+            # Split Summary vs Detailed Findings
+            summary_lines: list[str] = []
+            details_lines: list[str] = []
+            in_details = False
+            for line in (report_text or "").splitlines():
+                if "📚 === DETAILED FINDINGS ===" in line:
+                    in_details = True
+                    continue
+                (details_lines if in_details else summary_lines).append(line)
+
+            def esc(s: str) -> str:
+                return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+            summary_html = esc("\n".join(summary_lines))
+            details_html = esc("\n".join(details_lines))
+
+            html = (
+                "<!doctype html><html><head><meta charset=\"utf-8\">"
+                "<title>Code Smell Report</title>"
+                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                "<style>:root{--bg:#0b1020;--panel:#0f172a;--text:#e5e7eb;--muted:#94a3b8;--border:#1f2937;--link:#93c5fd}"
+                "html,body{background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,\"Liberation Mono\",\"Courier New\",monospace}"
+                "body{padding:24px;line-height:1.45}h1{margin:0 0 12px 0;font-size:20px}.meta{color:var(--muted);margin:0 0 16px 0}"
+                ".badge{display:inline-block;padding:2px 8px;border-radius:9999px;border:1px solid var(--border);color:#e2e8f0;font-size:12px;margin-right:8px}"
+                "details{margin:10px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--panel)}"
+                "summary{cursor:pointer;padding:10px 14px;font-weight:600}pre{margin:0;padding:14px;background:var(--bg);white-space:pre-wrap}"
+                "a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}</style></head><body><h1>Code Smell Report</h1>"
+                "<div class='meta'><span class='badge'>Smell Workflow</span><span class='badge'>HTML Artifact</span></div>"
+                f"<details open><summary>Summary</summary><pre>{summary_html}</pre></details>"
+                f"<details><summary>Detailed Findings</summary><pre>{details_html}</pre></details>"
+                "</body></html>"
+            )
+            # Return as dagger.File via an in-memory directory
+            return dag.directory().with_new_file("smell_report.html", html).file("smell_report.html")
+
+        # Text mode
+        return dag.directory().with_new_file("smell_report.txt", report_text).file("smell_report.txt")

@@ -287,6 +287,18 @@ How to customize:
 - HTML artifact report (smell_report.html) is generated and uploaded (no GITHUB_OUTPUT usage)
 - skip_graph input: set to true in workflow_dispatch to run Smell only while troubleshooting
 - PR comment includes a link to the workflow run; download the smell-report artifact to view
+- Export API: you can write the report directly to the host via export:
+  ```bash
+  dagger call --mod workflows/smell \
+    --config-file demo/agencyservices.yaml \
+    --neo-data ./tmp/neo4j-data \
+    analyze-codebase-export \
+    --github-access-token=env:GITHUB_TOKEN \
+    --neo-password=env:NEO4J_PASSWORD \
+    --neo-auth=env:NEO_AUTH \
+    --format html \
+    --export smell_report.html
+  ```
 
 ## Troubleshooting Dagger module errors
 - Symptom: Error: module not found the commands need to be executed in the root folder containing the dagger.json file
