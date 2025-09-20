@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DAGGER_NO_NAG: '1'
-      DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN || secrets.DAGGER_TOKEN }}
+      DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
     steps:
       - name: Checkout this repository (workflow code)
         uses: actions/checkout@v4
@@ -62,10 +62,10 @@ jobs:
         if: ${{ inputs.mode == 'attached' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.attached_repository || format('{0}/{1}', github.repository_owner, github.event.pull_request.head.repo.name) }}
-          ref: ${{ inputs.attached_ref || github.event.pull_request.head.ref }}
+          repository: ${{ inputs.attached_repository }}
+          ref: ${{ inputs.attached_ref }}
           path: ${{ inputs.attached_path }}
-          token: ${{ secrets.GH_PAT || github.token }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Install uv
         run: |
@@ -82,6 +82,29 @@ jobs:
           dagger version
           uv --version
 
+      - name: Derive target variables
+        id: derive
+        env:
+          INPUT_TARGET_REPO_URL: ${{ inputs.target_repo_url }}
+          INPUT_TARGET_BRANCH: ${{ inputs.target_branch }}
+          PR_REPO_URL: ${{ github.event.pull_request.head.repo.clone_url }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          TARGET_REPO_URL="${INPUT_TARGET_REPO_URL:-}"
+          TARGET_BRANCH="${INPUT_TARGET_BRANCH:-}"
+          # If not provided via workflow_dispatch inputs, fall back to PR context
+          if [ -z "${TARGET_REPO_URL}" ] && [ -n "${PR_REPO_URL:-}" ]; then
+            TARGET_REPO_URL="$PR_REPO_URL"
+          fi
+          if [ -z "${TARGET_BRANCH}" ] && [ -n "${PR_BRANCH:-}" ]; then
+            TARGET_BRANCH="$PR_BRANCH"
+          fi
+          echo "TARGET_REPO_URL=$TARGET_REPO_URL" >> "$GITHUB_ENV"
+          echo "TARGET_BRANCH=$TARGET_BRANCH" >> "$GITHUB_ENV"
+          echo "repo_url=$TARGET_REPO_URL" >> "$GITHUB_OUTPUT"
+          echo "branch=$TARGET_BRANCH" >> "$GITHUB_OUTPUT"
+
       - name: Verify Dagger Cloud token
         run: |
           if [ -z "${DAGGER_CLOUD_TOKEN}" ]; then
@@ -94,7 +117,8 @@ jobs:
       - name: Build Graph (remote mode)
         if: ${{ inputs.mode != 'attached' && inputs.skip_graph != 'true' }}
         env:
-          GH_PAT: ${{ secrets.GH_PAT || github.token }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
           NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -102,13 +126,15 @@ jobs:
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
+          # Fallback to GITHUB_TOKEN if GH_PAT not provided
+          export GH_PAT="${GH_PAT:-$GITHUB_TOKEN}"
           dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
             build-graph-for-repository \
             --github-access-token=env:GH_PAT \
-            --repository-url="${{ inputs.target_repo_url || github.event.pull_request.head.repo.clone_url }}" \
-            --branch="${{ inputs.target_branch || github.event.pull_request.head.ref }}" \
+            --repository-url="$TARGET_REPO_URL" \
+            --branch="$TARGET_BRANCH" \
             --neo-password=env:NEO4J_PASSWORD \
             --neo-auth=env:NEO4J_AUTH \
             --open-router-api-key=env:OPENROUTER_API_KEY
@@ -118,7 +144,8 @@ jobs:
       - name: Build Graph (attached mode)
         if: ${{ inputs.mode == 'attached' && inputs.skip_graph != 'true' }}
         env:
-          GH_PAT: ${{ secrets.GH_PAT || github.token }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
           NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -126,6 +153,8 @@ jobs:
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
+          # Fallback to GITHUB_TOKEN if GH_PAT not provided
+          export GH_PAT="${GH_PAT:-$GITHUB_TOKEN}"
           dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
@@ -142,9 +171,9 @@ jobs:
         id: smell
         if: ${{ env.GRAPH_BUILT == '1' || inputs.skip_graph == 'true' }}
         env:
-          GITHUB_REPO_URL: ${{ inputs.mode == 'remote' && (inputs.target_repo_url || github.event.pull_request.head.repo.html_url) || (format('https://github.com/{0}', inputs.attached_repository) || github.event.pull_request.head.repo.html_url) }}
-          GITHUB_BRANCH: ${{ inputs.mode == 'remote' && (inputs.target_branch || github.event.pull_request.head.ref) || (inputs.attached_ref || github.event.pull_request.head.ref) }}
-          GH_PAT: ${{ secrets.GH_PAT || github.token }}
+          GITHUB_REPO_URL: ${{ steps.derive.outputs.repo_url }}
+          GITHUB_BRANCH: ${{ steps.derive.outputs.branch }}
+          GH_PAT: ${{ secrets.GH_PAT }}
           NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
         working-directory: workflows/smell
