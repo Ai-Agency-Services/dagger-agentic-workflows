@@ -284,7 +284,9 @@ How to customize:
 - See .github/workflows/smell-graph.yml for running Graph + Smell against:
   - remote mode (repository_url/branch)
   - attached mode (checkout external repo to path and analyze)
-- Posts a PR comment with a detailed report and GitHub links (if configured)
+- HTML artifact report (smell_report.html) is generated and uploaded (no GITHUB_OUTPUT usage)
+- skip_graph input: set to true in workflow_dispatch to run Smell only while troubleshooting
+- PR comment includes a link to the workflow run; download the smell-report artifact to view
 
 ## Troubleshooting Dagger module errors
 - Symptom: Error: module not found the commands need to be executed in the root folder containing the dagger.json file
