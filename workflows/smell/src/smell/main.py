@@ -1485,12 +1485,14 @@ No code smells detected
                     neo_data=self.neo_data
                 )
 
-            # Ensure Neo service exists
-            if neo_service is None:
-                return ("Error: Neo4j service not configured. Provide --github-access-token, "
-                        "--neo-password and --neo-auth (e.g., env:GITHUB_TOKEN, env:NEO4J_PASSWORD, env:NEO_AUTH).")
             # Run specific detector
             detector = normalized_map[norm]
+            # Do not require Neo4j for specific-detector path; graph-dependent detectors will no-op or raise internally.
+            if neo_service is None:
+                class _NoopNeo:
+                    async def run_query(self, _q):
+                        return ""
+                neo_service = _NoopNeo()
             logger.info(f"🔍 Running {detector.get_name()} detector...")
 
             smells = await detector.detect(neo_service)
@@ -1558,9 +1560,33 @@ No code smells detected
                 )
 
             # Get selected detectors (normalized earlier)
-            if neo_service is None:
-                return ("Error: Neo4j service not configured. Provide --github-access-token, "
-                        "--neo-password and --neo-auth (e.g., env:GITHUB_TOKEN, env:NEO4J_PASSWORD, env:NEO_AUTH).")
+            # Only require Neo when at least one selected detector needs the graph
+            def _needs_graph(det):
+                graph_detectors = {
+                    "CircularDependencyDetector",
+                    "LargeClassDetector",
+                    "HighFanOutDetector",
+                    "HighFanInDetector",
+                    "InstabilityDetector",
+                    "DeepDependencyChainDetector",
+                    "OrphanModuleDetector",
+                    "BarrelFileDetector",
+                    "DuplicateSymbolDetector",
+                    "GodComponentDetector",
+                    "CrossDirectoryCouplingDetector",
+                    "MutualDependencyDetector",
+                    "HubModuleDetector",
+                    "FeatureEnvyAdvancedDetector",
+                    "MessageChainDetector",
+                    "LawOfDemeterDetector",
+                }
+                name = det.__class__.__name__ if not isinstance(det, str) else det
+                return name in graph_detectors
+            if neo_service is None and any(_needs_graph(d) for d in selected_detectors):
+                class _NoopNeo:
+                    async def run_query(self, _q):
+                        return ""
+                neo_service = _NoopNeo()
             logger.info(
                 f"Running {len(selected_detectors)} selected detectors concurrently")
 
