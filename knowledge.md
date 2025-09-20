@@ -281,6 +281,11 @@ How to customize:
 - Expand to matrix strategy if you want multiple OS/Python versions
 
 ### Smell Graph Report
+
+Dagger Cloud auth:
+- Set repo secret DAGGER_CLOUD_TOKEN (or DAGGER_TOKEN)
+- The workflow exports it to the job as env DAGGER_CLOUD_TOKEN
+- Calls use `--cloud` and are authenticated automatically
 - See .github/workflows/smell-graph.yml for running Graph + Smell against:
   - remote mode (repository_url/branch)
   - attached mode (checkout external repo to path and analyze)

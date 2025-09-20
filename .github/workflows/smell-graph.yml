@@ -46,6 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DAGGER_NO_NAG: '1'
+      DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN || secrets.DAGGER_TOKEN }}
     steps:
       - name: Checkout this repository (workflow code)
         uses: actions/checkout@v4
@@ -75,6 +76,15 @@ jobs:
         run: |
           dagger version
           uv --version
+
+      - name: Verify Dagger Cloud token
+        run: |
+          if [ -z "${DAGGER_CLOUD_TOKEN}" ]; then
+            echo "DAGGER_CLOUD_TOKEN is not set. Please set repo secret DAGGER_CLOUD_TOKEN (or DAGGER_TOKEN)." >&2
+            exit 1
+          else
+            echo "Dagger Cloud token detected (masked)"
+          fi
 
       - name: Build Graph (remote mode)
         if: ${{ inputs.mode != 'attached' && inputs.skip_graph != 'true' }}
@@ -145,7 +155,7 @@ jobs:
             --neo-password=env:NEO4J_PASSWORD \
             --neo-auth=env:NEO4J_AUTH \
             --format html \
-            export --path smell_report.html
+            --export smell_report.html
       - name: Upload Smell Report
         uses: actions/upload-artifact@v4
         with:
