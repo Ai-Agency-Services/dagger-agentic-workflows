@@ -68,7 +68,7 @@ jobs:
         run: |
           if [ -f pyproject.toml ] || [ -d tests ]; then
             set +e
-            PYTHONPATH="${GITHUB_WORKSPACE}:${PYTHONPATH:-}" uv run pytest -c "${GITHUB_WORKSPACE}/pyproject.toml" -m "not integration and not neo4j and not llm and not dagger and not slow" --maxfail=1 --tb=short -v
+            PYTHONPATH="${GITHUB_WORKSPACE}:${PYTHONPATH:-}" uv run pytest -c "${GITHUB_WORKSPACE}/pyproject.toml" -p shared.pytest_plugins.fixtures -m "not integration and not neo4j and not llm and not dagger and not slow" --maxfail=1 --tb=short -v
             rc=$?
             set -e
             if [ "$rc" -eq 5 ]; then
