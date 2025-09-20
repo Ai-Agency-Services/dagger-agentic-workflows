@@ -29,6 +29,10 @@ on:
         description: "Post PR comment with report (when on pull_request)"
         required: false
         default: "true"
+      skip_graph:
+        description: "Skip graph build and run smell only (workflow_dispatch only)"
+        required: false
+        default: "false"
 
   pull_request:
     types: [opened, synchronize, reopened]
@@ -42,6 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DAGGER_NO_NAG: '1'
+      DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN || secrets.DAGGER_TOKEN }}
     steps:
       - name: Checkout this repository (workflow code)
         uses: actions/checkout@v4
@@ -72,8 +77,17 @@ jobs:
           dagger version
           uv --version
 
+      - name: Verify Dagger Cloud token
+        run: |
+          if [ -z "${DAGGER_CLOUD_TOKEN}" ]; then
+            echo "DAGGER_CLOUD_TOKEN is not set. Please set repo secret DAGGER_CLOUD_TOKEN (or DAGGER_TOKEN)." >&2
+            exit 1
+          else
+            echo "Dagger Cloud token detected (masked)"
+          fi
+
       - name: Build Graph (remote mode)
-        if: ${{ inputs.mode != 'attached' }}
+        if: ${{ inputs.mode != 'attached' && inputs.skip_graph != 'true' }}
         env:
           GH_PAT: ${{ secrets.GH_PAT || github.token }}
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
@@ -83,7 +97,7 @@ jobs:
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
-          dagger call --mod $GITHUB_WORKSPACE/workflows/graph \
+          dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
             build-graph-for-repository \
@@ -97,7 +111,7 @@ jobs:
           echo "GRAPH_BUILT=1" >> "$GITHUB_ENV"
 
       - name: Build Graph (attached mode)
-        if: ${{ inputs.mode == 'attached' }}
+        if: ${{ inputs.mode == 'attached' && inputs.skip_graph != 'true' }}
         env:
           GH_PAT: ${{ secrets.GH_PAT || github.token }}
           NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
@@ -107,7 +121,7 @@ jobs:
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
-          dagger call --mod $GITHUB_WORKSPACE/workflows/graph \
+          dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
             build-graph-for-directory \
@@ -121,45 +135,44 @@ jobs:
 
       - name: Analyze Smells (always-verbose report with links)
         id: smell
-        if: ${{ env.GRAPH_BUILT == '1' }}
+        if: ${{ env.GRAPH_BUILT == '1' || inputs.skip_graph == 'true' }}
         env:
           GITHUB_REPO_URL: ${{ inputs.mode == 'remote' && (inputs.target_repo_url || github.event.pull_request.head.repo.html_url) || (format('https://github.com/{0}', inputs.attached_repository) || github.event.pull_request.head.repo.html_url) }}
           GITHUB_BRANCH: ${{ inputs.mode == 'remote' && (inputs.target_branch || github.event.pull_request.head.ref) || (inputs.attached_ref || github.event.pull_request.head.ref) }}
+          GH_PAT: ${{ secrets.GH_PAT || github.token }}
+          NEO4J_AUTH: ${{ secrets.NEO4J_AUTH }}
+          NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
         working-directory: workflows/smell
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/smell/dagger.json" && echo "Found smell dagger.json" || (echo "Missing smell dagger.json" && exit 1)
-          # Optional: inject repo_url/branch into smell config for link generation
-          # If your smell config already sets git.repo_url/branch, you can skip this step.
-          # sudo apt-get update && sudo apt-get install -y jq || true
-          # yq -iy \
-          #   ".git.repo_url = env(GITHUB_REPO_URL) | .git.branch = env(GITHUB_BRANCH)" \
-          #   demo/agencyservices.yaml || true
 
-          dagger call --mod $GITHUB_WORKSPACE/workflows/smell \
+          dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/smell \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
-            analyze-codebase \
-            > smell_report.txt
-
-          {
-            echo 'report<<EOF'
-            cat smell_report.txt
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
+            analyze-codebase-export \
+            --github-access-token=env:GH_PAT \
+            --neo-password=env:NEO4J_PASSWORD \
+            --neo-auth=env:NEO4J_AUTH \
+            --format html \
+            export --path smell_report.html
+      - name: Verify Smell Report Path
+        run: |
+          test -f workflows/smell/smell_report.html && ls -lh workflows/smell/smell_report.html || (echo 'Report not found at workflows/smell/smell_report.html' && exit 1)
 
       - name: Upload Smell Report
         uses: actions/upload-artifact@v4
         with:
           name: smell-report
-          path: smell_report.txt
+          path: workflows/smell/smell_report.html
 
       - name: Comment on PR with Smell Report
         if: ${{ github.event_name == 'pull_request' && inputs.post_comment == 'true' }}
         uses: actions/github-script@v7
         with:
           script: |
-            const body = `### Code Smell Report\n\n<details>\n<summary>Click to expand</summary>\n\n${{ steps.smell.outputs.report }}\n\n</details>`;
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const body = `### Code Smell Report\n\nA full report (HTML and text) has been uploaded as the workflow artifact \"smell-report\".\n\n- Repo: ${process.env.GITHUB_REPO_URL || 'N/A'}\n- Branch: ${process.env.GITHUB_BRANCH || 'N/A'}\n- Run: ${runUrl}\n\nDownload the artifact from this run to view the report.`;
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,

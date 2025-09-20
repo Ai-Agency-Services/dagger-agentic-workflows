@@ -77,6 +77,7 @@ def detect_language(filepath: str) -> str:
     return language_map.get(ext, 'unknown')
 
 
+# TODO: Fix Python parsing with Tree-sitter
 @object_type
 class AgentUtils:
     """Enhanced utility class using Tree-sitter for accurate code parsing"""

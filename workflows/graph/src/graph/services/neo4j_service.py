@@ -82,20 +82,32 @@ class Neo4jService:
         return self.client_container
 
     async def run_query(self, query: str) -> str:
-        """Run a query against the Neo4j service"""
+        """Run a query against the Neo4j service with readiness probe"""
         # Create client with service binding if not already created
         if not self.client_container:
             self.client_container = await self.create_neo4j_client()
 
         # Write query to file
-        client = (
-            self.client_container.with_new_file(
-                "/tmp/query.cypher", query)
-        )
+        client = self.client_container.with_new_file("/tmp/query.cypher", query)
 
+        # Readiness probe: retry for ~30s until service resolves & accepts connections
+        client = client.with_exec([
+            "sh", "-lc",
+            (
+                "for i in $(seq 1 30); do "
+                "  cypher-shell -a \"%s\" -d \"%s\" -u \"$NEO4J_USERNAME\" -p \"$NEO4J_PASSWORD\" 'RETURN 1' >/dev/null 2>&1 && exit 0; "
+                "  sleep 1; "
+                "done; echo 'neo not ready' >&2; exit 1"
+            ) % (self.uri, self.database)
+        ])
+
+        # Execute the actual query
         return await client.with_exec([
             "cypher-shell",
             "-a", self.uri,
+            "-d", self.database,
+            "-u", "$NEO4J_USERNAME",
+            "-p", "$NEO4J_PASSWORD",
             "--non-interactive",
             "-f", "/tmp/query.cypher"
         ]).stdout()
