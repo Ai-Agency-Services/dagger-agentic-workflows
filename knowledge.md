@@ -262,6 +262,18 @@ dagger call --cloud --mod workflows/graph \
 
 ## CI Workflows
 
+### Publish shared config to PyPI
+- Workflow: .github/workflows/publish-config.yml
+- Triggers: release published or manual dispatch
+- Secret required: PYPI_TOKEN (PyPI API token)
+- Manual run parameters:
+  - publish: true (default)
+  - version: optional sanity check against pyproject/__init__
+- Steps:
+  - Builds package in shared/dagger-agents-config
+  - Validates version consistency
+  - Uploads with twine to PyPI
+
 ### Unit Tests (develop)
 Runs unit tests automatically on:
 - push to develop (covers merges into develop)
@@ -289,7 +301,10 @@ Dagger Cloud auth:
   - remote mode (repository_url/branch)
   - attached mode (checkout external repo to path and analyze)
 - HTML artifact report (smell_report.html) is generated and uploaded (no GITHUB_OUTPUT usage)
+- Text artifact (smell_report.txt) is exported for gating/parse
 - skip_graph input: set to true in workflow_dispatch to run Smell only while troubleshooting
+- fail_on_severity input: none|high|critical — optionally fail the job when HIGH/CRITICAL smells exist
+- Job Summary: adds a short Markdown summary with repo/branch and artifact pointer
 - PR comment includes a link to the workflow run; download the smell-report artifact to view
 - Export API: you can write the report directly to the host via export:
   ```bash
@@ -322,6 +337,29 @@ dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/smell \
 ```
 
 Reference: https://docs.dagger.io/cookbook/filesystems
+
+### Smell configuration (thresholds and detectors)
+Add a smell block to your YAML (used by workflows/smell). Global thresholds apply to all languages; include/exclude lets you tune signal.
+
+Example (demo):
+```yaml
+smell:
+  thresholds:
+    long_function_lines: 150      # lines
+    long_param_count: 6           # params
+    large_class_loc: 300          # lines
+    god_class_methods: 25         # methods
+    high_fan_out: 20              # files
+    high_fan_in: 10               # files
+  detectors:
+    include: []                   # empty means all enabled
+    exclude: []                   # e.g., ["DeadCodeDetector", "BarrelFileDetector"]
+```
+Notes:
+- Detector names are class names (e.g., LongFunctionDetector). Case/spacing is normalized.
+- If include is non-empty, only listed detectors run (minus any excluded).
+- Threshold keys map directly to detectors wired in the Smell service.
+
 
 ### Dagger Filesystems (Python) quick reference
 
