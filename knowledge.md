@@ -324,6 +324,122 @@ dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/smell \
 
 Reference: https://docs.dagger.io/cookbook/filesystems
 
+### Dagger Filesystems (Python SDK) quick reference
+
+- Access host filesystem
+  - Host directory: `dag.host().directory("./some/dir")`
+  - Host file: `dag.host().file("./path/to/file.txt")`
+
+- Create in-pipeline files/directories (virtual, content-addressed)
+  - New file: `dag.directory().with_new_file("path/in/dir.txt", "content").file("path/in/dir.txt")`
+  - Include a host file: `dag.directory().with_file("dst/name.txt", dag.host().file("./src/name.txt")).file("dst/name.txt")`
+  - Include a directory: `dag.directory().with_directory("dst/", dag.host().directory("./src"))`
+  - Select subpaths: `directory.file("sub/file.ext")`, `directory.directory("sub/folder")`
+
+- Mount directories into a container
+  - `container.with_mounted_directory("/work", dag.host().directory("."))`
+  - Combine with `with_exec()` to process files inside the container
+
+- Read content during a run
+  - File contents: `await file.contents()`
+  - Directory entries: `await directory.entries()`
+
+- Return files/directories from functions
+  - Return a single file: annotate return type as `dagger.File` and return `dag.directory().with_new_file("out/report.html", html).file("out/report.html")`
+  - Return a directory: annotate return type as `dagger.Directory` and return a directory node
+  - CLI export (recommended): use the `export` subcommand to write to the host
+
+- CLI export (constructor-first order + export subcommand)
+  - Example (Smell report):
+    ```bash
+    dagger call --cloud --mod workflows/smell \
+      --config-file=demo/agencyservices.yaml \
+      --neo-data=./tmp/neo4j-data \
+      analyze-codebase-export \
+      --github-access-token=env:GH_PAT \
+      --neo-password=env:NEO4J_PASSWORD \
+      --neo-auth=env:NEO_AUTH \
+      --format html \
+      export --path smell_report.html
+    ```
+
+- Best practices
+  - Keep constructor args (e.g., `--config-file`, `--neo-data`) before the function; method args after
+  - Return `dagger.File`/`dagger.Directory` to enable `export --path` via the CLI
+  - Prefer `--mod <module-dir>` in CI/local so Dagger finds the correct module dagger.json
+  - For Dagger Cloud, set `DAGGER_CLOUD_TOKEN` and call with `--cloud`
+
+- Troubleshooting
+  - “Cannot export”: ensure your function returns a `File` or `Directory` (not a string), then call with `export --path <dest>`
+  - “Module not found”: run from the module dir or pass `--mod $GITHUB_WORKSPACE/<module-dir>`
+  - “Login/token errors”: set `DAGGER_CLOUD_TOKEN` (or `DAGGER_TOKEN`) as a repo secret; we export it to the job in CI
+
+
+### Filesystems (Python) examples
+
+Return a file from a function and export to host:
+```python
+from dagger import function, dag
+
+@function
+async def build_report(self) -> dagger.File:
+    content = "Hello from Dagger!\n"
+    # Create a virtual directory, add a file, return it as dagger.File
+    return (
+        dag.directory()
+          .with_new_file("out/report.txt", content)
+          .file("out/report.txt")
+    )
+```
+CLI (constructor-first + export subcommand):
+```bash
+dagger call --mod <module-dir> --config-file config.yaml build-report \
+  export --path report.txt
+```
+
+Return a directory of results and export it:
+```python
+@function
+async def build_bundle(self) -> dagger.Directory:
+    d = (dag.directory()
+          .with_new_file("bundle/a.txt", "A")
+          .with_new_file("bundle/b.txt", "B"))
+    # Return the sub-directory that contains the files
+    return d.directory("bundle")
+```
+CLI:
+```bash
+dagger call --mod <module-dir> --config-file config.yaml build-bundle \
+  export --path out-dir
+```
+
+Read host files and list entries:
+```python
+host_readme = dag.host().file("README.md")
+text = await host_readme.contents()
+
+root = dag.host().directory(".")
+entries = await root.entries()  # list[str]
+```
+
+Mount a host directory into a container and produce output:
+```python
+@function
+async def process_repo(self) -> dagger.File:
+    src = dag.host().directory(".")
+    c = (dag.container().from_("alpine:3.20")
+           .with_mounted_directory("/src", src)
+           .with_workdir("/src")
+           .with_exec(["sh", "-lc", "mkdir -p out && echo ok > out/result.txt"]))
+    return c.file("/src/out/result.txt")
+```
+
+Notes:
+- Constructor args (e.g., --config-file, --neo-data) go before the function; method args after the function.
+- To export to the host, your function must return dagger.File or dagger.Directory; then use the CLI export subcommand with --path.
+- Prefer --mod <module-dir> in CI/local so Dagger finds the module’s dagger.json.
+- Dagger Cloud: set DAGGER_CLOUD_TOKEN in repo secrets and use --cloud.
+
 ## Troubleshooting Dagger module errors
 - Symptom: Error: module not found the commands need to be executed in the root folder containing the dagger.json file
 - Cause: dagger call was run from the wrong directory (not the module containing dagger.json)
