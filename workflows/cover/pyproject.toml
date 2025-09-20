@@ -1,5 +1,5 @@
 [project]
-name = "coverage"
+name = "dagger-cover-wf"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,6 +15,9 @@ dependencies = [
 [build-system]
 requires = ["hatchling==1.25.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reporter"]
 
 [project.optional-dependencies]
 test = [

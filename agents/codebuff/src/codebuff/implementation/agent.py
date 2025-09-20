@@ -124,7 +124,7 @@ Implementation guidelines:
         model=model,
         system_prompt=system_prompt,
         deps_type=ImplementationDependencies,
-        instrument=True,
+        instrument=False,
         end_strategy="exhaustive",
         retries=5
     )

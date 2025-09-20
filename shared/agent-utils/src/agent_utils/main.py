@@ -77,17 +77,42 @@ def detect_language(filepath: str) -> str:
     return language_map.get(ext, 'unknown')
 
 
+def should_ignore_path(filepath: str, ignore_dirs: Optional[List[str]]) -> bool:
+    """Return True if filepath contains any ignored directory segment.
+    Matches on path segments (e.g., node_modules, .venv, dist, build).
+    """
+    if not ignore_dirs:
+        return False
+    # Normalize
+    parts = [p for p in filepath.replace("\\", "/").split("/") if p]
+    ignore_set = set((d or "").strip() for d in ignore_dirs if d and d.strip())
+    return any(seg in ignore_set for seg in parts)
+
+
 # TODO: Fix Python parsing with Tree-sitter
 @object_type
 class AgentUtils:
     """Enhanced utility class using Tree-sitter for accurate code parsing"""
 
     @function
-    async def parse_code_file_to_json(self, content: str, filepath: str) -> dagger.File:
-        """Parse a code file using Tree-sitter and return JSON with extracted symbols."""
+    async def parse_code_file_to_json(self, content: str, filepath: str, ignore_dirs: Optional[List[str]] = None) -> dagger.File:
+        """Parse a code file using Tree-sitter and return JSON with extracted symbols.
+        If filepath contains any directory listed in ignore_dirs, return an empty result immediately.
+        """
         if not isinstance(content, str):
             raise TypeError(
                 f"Expected content to be str, got {type(content).__name__}")
+
+        # Honor directory ignore list (short-circuit, no container work)
+        if should_ignore_path(filepath, ignore_dirs):
+            empty_json = json.dumps({
+                "content": content,
+                "filepath": filepath,
+                "language": detect_language(filepath),
+                "symbols": [],
+                "imports": []
+            }, indent=2)
+            return dag.directory().with_new_file("result.json", empty_json).file("result.json")
 
         language = detect_language(filepath)
 

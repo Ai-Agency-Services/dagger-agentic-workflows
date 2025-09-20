@@ -173,7 +173,7 @@ Provide clear, actionable feedback with specific recommendations for improvement
         model=model,
         system_prompt=system_prompt,
         deps_type=ReviewerDependencies,
-        instrument=True,
+        instrument=False,
         end_strategy="exhaustive",
         retries=3
     )

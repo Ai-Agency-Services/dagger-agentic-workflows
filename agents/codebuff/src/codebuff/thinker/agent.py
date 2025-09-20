@@ -169,7 +169,7 @@ Always provide:
         model=model,
         system_prompt=system_prompt,
         deps_type=ThinkerDependencies,
-        instrument=True,
+        instrument=False,
         end_strategy="exhaustive",
         retries=3
     )

@@ -14,7 +14,7 @@ Provides common code parsing utilities using Tree-sitter for extracting structur
 ## Core Functions
 
 ### Main API
-- `parse_code_file_to_json()`: Primary entry point for code parsing
+- `parse_code_file_to_json(content, filepath, ignore_dirs=None)`: Primary entry point for code parsing; when `ignore_dirs` contains any directory segment present in `filepath`, parsing is skipped and an empty result is returned immediately.
 - `detect_language()`: Identifies programming language from file extension
 - `_parse_with_tree_sitter()`: Internal Tree-sitter parsing logic
 
@@ -177,6 +177,10 @@ elif language == "javascript":
 
 ## Testing
 - Unit tests: `shared/agent-utils/tests/`
+- New tests cover:
+  - `should_ignore_path`
+  - `detect_language`
+  - `parse_code_file_to_json` short-circuit when `ignore_dirs` matches
 - Markers: `@pytest.mark.utils`, `@pytest.mark.parsing`
 - Test files for each supported language
 - Edge case handling validation

@@ -1,6 +1,7 @@
 """Comprehensive unit tests for Codebuff agent functionality."""
 
 import pytest
+from unittest import mock
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 import sys
