@@ -302,8 +302,27 @@ Dagger Cloud auth:
     --neo-password=env:NEO4J_PASSWORD \
     --neo-auth=env:NEO_AUTH \
     --format html \
-    --export smell_report.html
+    export --path smell_report.html
   ```
+
+## Exporting files to host with Dagger (export --path)
+
+Use the export subcommand to write files returned by a function directly to the host runner. Constructor args (e.g., --config-file, --neo-data) come before the function; method args come after. Then append the export subcommand:
+
+Smell report (HTML) — export to host runner:
+```bash
+dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/smell \
+  --config-file=demo/agencyservices.yaml \
+  --neo-data=./tmp/neo4j-data \
+  analyze-codebase-export \
+  --github-access-token=env:GH_PAT \
+  --neo-password=env:NEO4J_PASSWORD \
+  --neo-auth=env:NEO_AUTH \
+  --format html \
+  export --path smell_report.html
+```
+
+Reference: https://docs.dagger.io/cookbook/filesystems
 
 ## Troubleshooting Dagger module errors
 - Symptom: Error: module not found the commands need to be executed in the root folder containing the dagger.json file
