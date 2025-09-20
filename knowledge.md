@@ -150,64 +150,34 @@ python scripts/run_tests.py --type unit --module neo
 
 ## Common Commands
 
-Important: Run dagger calls from the module directory that contains its dagger.json (e.g., workflows/graph, workflows/smell) or pass --mod <module-dir>. In CI, either set working-directory or use --mod $GITHUB_WORKSPACE/<module-dir>. Also ensure repo URLs are unquoted (e.g., https://github.com/org/repo without quotes).
+Important: Run dagger calls from the module directory that contains its dagger.json (e.g., workflows/graph, workflows/smell) or pass --mod <module-dir>. Constructor args (e.g., --config-file, --neo-data) come before the function; method args come after.
 
 ```bash
 # Build and test an agent
+# (constructor-first + --mod)
 dagger call --mod <module-dir> --config-file=config.yaml create
 
 # Run complete feature development
+# (constructor-first + --mod)
 dagger call --mod agents/codebuff \
   --config-file config.yaml \
   orchestrate-feature-development \
   --task-description="Feature description" \
   --openai-api-key=env:OPENAI_API_KEY
 
-# Analyze codebase
+# Analyze codebase (Graph build for a repository)
+# (constructor-first + --mod)
 dagger call --mod workflows/graph \
   --config-file demo/agencyservices.yaml \
   build-graph-for-repository \
   --repository-url https://github.com/user/repo
 
 # Generate tests with coverage
+# (constructor-first + --mod)
 dagger call --mod workflows/cover \
   --config-file=config.yaml \
   generate-tests
 ```
-
-## Neo4j cache volume path (OCI containers)
-
-Dagger executes inside an OCI container. The graph step creates Neo4j data at a path inside the container. When you pass `--neo-data` to Smell, you must pass the same in-container path.
-
-From the module directory (constructor-first order):
-
-Graph (build-graph-for-repository):
-```bash
-dagger call --cloud --config-file ./demo/agencyservices.yaml \
-  --neo-data ./tmp/neo4j-data \
-  build-graph-for-repository \
-  --github-access-token=env:GITHUB_TOKEN \
-  --repository-url https://github.com/Ai-Agency-Services/web.git \
-  --branch feat/loveable-pairing \
-  --neo-auth=env:NEO_AUTH \
-  --neo-password=env:NEO4J_PASSWORD \
-  --open-router-api-key=env:OPEN_ROUTER_API_KEY
-```
-
-Smell (analyze-codebase):
-```bash
-dagger call --config-file ./demo/agencyservices.yaml \
-  --neo-data ./tmp/neo4j-data \
-  analyze-codebase \
-  --github-access-token=env:GITHUB_TOKEN \
-  --neo-password=env:NEO4J_PASSWORD \
-  --neo-auth=env:NEO_AUTH
-```
-
-Notes:
-- `--neo-data` points to the in-container path used by the graph builder (e.g., `./tmp/neo4j-data`).
-- Use the same path for Smell so it connects to the same Neo4j data.
-- You can also use a named cache volume if both steps share it, but when passing a path, it refers to the container filesystem.
 
 ## Dagger CLI quick reference (constructor-first order)
 

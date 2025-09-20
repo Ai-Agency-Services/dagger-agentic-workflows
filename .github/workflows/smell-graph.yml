@@ -141,24 +141,80 @@ jobs:
             --neo-auth=env:NEO4J_AUTH \
             > smell_report.txt
 
-          {
-            echo 'report<<EOF'
-            cat smell_report.txt
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
+          # Build a polished HTML report (brand + toggles + metadata)
+          awk 'BEGIN{f=0} /📚 === DETAILED FINDINGS ===/{f=1;next} f{print > "details.txt"; next} {print > "summary.txt"}' smell_report.txt || true
+
+          REPO_URL="${GITHUB_REPO_URL:-N/A}"
+          BRANCH="${GITHUB_BRANCH:-N/A}"
+
+          cat > smell_report.html <<EOF
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Code Smell Report</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --bg:#0b1020; --panel:#0f172a; --text:#e5e7eb; --muted:#94a3b8; --border:#1f2937; --link:#93c5fd;
+    }
+    html,body { background:var(--bg); color:var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    body { padding: 24px; line-height: 1.45; }
+    h1 { margin: 0 0 12px 0; font-size: 20px; }
+    .meta { color: var(--muted); margin: 0 0 16px 0; }
+    .badge { display:inline-block; padding: 2px 8px; border-radius: 9999px; border: 1px solid var(--border); color:#e2e8f0; font-size: 12px; margin-right: 8px; }
+    details { margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; overflow:hidden; background: var(--panel); }
+    summary { cursor:pointer; padding: 10px 14px; font-weight: 600; }
+    pre { margin: 0; padding: 14px; background: var(--bg); white-space: pre-wrap; }
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>Code Smell Report</h1>
+  <div class="meta">Repo: <a href="$REPO_URL">$REPO_URL</a> • Branch: $BRANCH</div>
+  <div class="meta"><span class="badge">Smell Workflow</span><span class="badge">HTML Artifact</span></div>
+  <details open>
+    <summary>Summary</summary>
+    <pre>
+EOF
+          sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' summary.txt 2>/dev/null >> smell_report.html || true
+          cat >> smell_report.html <<'EOF'
+    </pre>
+  </details>
+  <details>
+    <summary>Detailed Findings</summary>
+    <pre>
+EOF
+          sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' details.txt 2>/dev/null >> smell_report.html || true
+          cat >> smell_report.html <<'EOF'
+    </pre>
+  </details>
+</body>
+</html>
+EOF
 
       - name: Upload Smell Report
         uses: actions/upload-artifact@v4
         with:
           name: smell-report
-          path: smell_report.txt
+          path: |
+            smell_report.txt
+            smell_report.html
 
       - name: Comment on PR with Smell Report
         if: ${{ github.event_name == 'pull_request' && inputs.post_comment == 'true' }}
         uses: actions/github-script@v7
         with:
           script: |
-            const body = `### Code Smell Report\n\n<details>\n<summary>Click to expand</summary>\n\n${{ steps.smell.outputs.report }}\n\n</details>`;
+            const body = `### Code Smell Report
+
+A full report (HTML and text) has been uploaded as the workflow artifact "smell-report".
+
+- Repo: ${process.env.GITHUB_REPO_URL || 'N/A'}
+- Branch: ${process.env.GITHUB_BRANCH || 'N/A'}
+
+Download the artifact from this run to view the report.`;
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
