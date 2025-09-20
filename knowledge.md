@@ -147,6 +147,25 @@ make test-llm
 python scripts/run_tests.py --type unit --module neo
 ```
 
+### Run tests locally like CI
+- Prereqs: uv installed (and dagger if you want to run 'develop' for modules with a dagger.json)
+- One-liner:
+
+```bash
+bash scripts/run_tests_local.sh
+```
+
+- Limit to specific modules:
+
+```bash
+MODULES="services/query agents/codebuff" bash scripts/run_tests_local.sh
+```
+
+Notes:
+- Mirrors CI: per-module uv environments, excludes markers (integration, neo4j, llm, dagger, slow)
+- For modules with dagger.json, runs `dagger develop` first (if dagger is installed)
+- PYTHONPATH is set to the repo root so shared fixtures are importable
+
 ## Common Commands (constructor-first order)
 
 ```bash

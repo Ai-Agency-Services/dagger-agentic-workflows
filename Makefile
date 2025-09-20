@@ -13,6 +13,7 @@ help:
 	@echo "  lint             - Run linting"
 	@echo "  format           - Format code"
 	@echo "  clean            - Clean up generated files"
+	@echo "  test-local       - Run CI-style tests locally (matrix across modules)"
 
 install:
 	uv sync --extra test --extra dev
@@ -136,3 +137,6 @@ test-neo4j:
 # LLM tests (requires API keys)
 test-llm:
 	uv run pytest -m "llm" --tb=short -v
+
+test-local:
+	bash scripts/run_tests_local.sh

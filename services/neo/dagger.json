@@ -1,6 +1,6 @@
 {
   "name": "neo_service",
-  "engineVersion": "v0.18.5",
+  "engineVersion": "v0.18.18",
   "sdk": {
     "source": "python"
   },
