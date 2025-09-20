@@ -155,7 +155,7 @@ jobs:
             --neo-password=env:NEO4J_PASSWORD \
             --neo-auth=env:NEO4J_AUTH \
             --format html \
-            export --./path smell_report.html
+            export -- ./path smell_report.html
       - name: Upload Smell Report
         uses: actions/upload-artifact@v4
         with:
