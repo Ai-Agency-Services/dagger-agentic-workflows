@@ -8,6 +8,7 @@ from typing import NamedTuple, Optional, List, Any, Dict
 import dagger
 from dagger import dag, field, function, object_type
 from pydantic import BaseModel
+import yaml
 
 class SymbolType(Enum):
     VARIABLE = "variable"
@@ -122,6 +123,30 @@ class AgentUtils:
         # else:
         #     # Fallback to regex-based parsing for unsupported languages
         #     return await self._parse_with_fallback(content, filepath, language)
+
+    @function
+    async def parse_code_file_to_json_with_config(self, content: str, filepath: str, config_file: dagger.File) -> dagger.File:
+        """Parse a code file using ignore directories from a shared YAML config.
+        Loads indexing.ignore_directories from the YAML config and forwards to parse_code_file_to_json.
+        """
+        cfg_text = ""
+        try:
+            cfg_text = await config_file.contents()
+        except Exception:
+            cfg_text = ""
+        if isinstance(cfg_text, (bytes, bytearray)):
+            cfg_text = cfg_text.decode("utf-8", errors="ignore")
+        ignore_dirs: List[str] = []
+        if isinstance(cfg_text, str) and cfg_text.strip():
+            try:
+                data = yaml.safe_load(cfg_text) or {}
+                indexing = data.get("indexing") or {}
+                ignore = indexing.get("ignore_directories") or []
+                if isinstance(ignore, list):
+                    ignore_dirs = [str(d).strip() for d in ignore if str(d).strip()]
+            except Exception:
+                ignore_dirs = []
+        return await self.parse_code_file_to_json(content=content, filepath=filepath, ignore_dirs=ignore_dirs)
 
     @function
     async def _parse_with_tree_sitter(self, content: str, filepath: str, language: str) -> dagger.File:

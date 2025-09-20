@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import pytest
+import yaml
 from unittest.mock import MagicMock
 
 # Ensure module src is on sys.path when running tests locally
@@ -71,3 +72,54 @@ async def test_parse_code_file_to_json_respects_ignore_dirs(monkeypatch):
     assert data['language'] == 'python'
     assert data['symbols'] == []
     assert data['imports'] == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_parse_with_config_uses_ignore_dirs(monkeypatch):
+    # Patch dag.directory() so we don't need a Dagger engine
+    class FakeFile:
+        def __init__(self, content):
+            self._content = content
+        async def contents(self):
+            return self._content
+
+    class FakeDir:
+        def __init__(self):
+            self._content = None
+        def with_new_file(self, _path, content):
+            self._content = content
+            return self
+        def file(self, _path):
+            return FakeFile(self._content)
+
+    fake_dag = MagicMock()
+    fake_dag.directory.return_value = FakeDir()
+
+    import agent_utils.main as mod
+    monkeypatch.setattr(mod, 'dag', fake_dag)
+
+    # Build a YAML config with ignore directories
+    cfg = {"indexing": {"ignore_directories": ["node_modules", ".venv"]}}
+    cfg_text = yaml.safe_dump(cfg)
+
+    class FakeConfigFile:
+        async def contents(self):
+            return cfg_text
+
+    utils = AgentUtils()
+    content = "def foo():\n    return 1\n"
+    filepath = "some/node_modules/ignored.py"
+
+    # Call the config-aware parser
+    result_file = await utils.parse_code_file_to_json_with_config(
+        content=content,
+        filepath=filepath,
+        config_file=FakeConfigFile()
+    )
+
+    text = await result_file.contents()
+    data = json.loads(text)
+    assert data["filepath"] == filepath
+    assert data["symbols"] == []  # Ignored due to config
+    assert data["imports"] == []

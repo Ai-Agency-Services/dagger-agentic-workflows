@@ -167,9 +167,9 @@ class Index:
             )
 
             # Get file list
-            file_extensions = getattr(
-                config_obj.indexing, 'file_extensions')
-            files = await FileProcessor.get_filtered_files(container, file_extensions)
+            file_extensions = getattr(config_obj.indexing, 'file_extensions')
+            ignore_dirs = getattr(getattr(config_obj, 'indexing', None), 'ignore_directories', []) or []
+            files = await FileProcessor.get_filtered_files(container, file_extensions, ignore_dirs=ignore_dirs)
 
             return container, files
 

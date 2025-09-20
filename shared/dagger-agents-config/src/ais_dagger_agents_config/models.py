@@ -84,6 +84,14 @@ class IndexingConfig(BaseModel):
         description="File extensions to process"
     )
     max_files: int = Field(default=50, description="Maximum files to process")
+    ignore_directories: List[str] = Field(
+        default_factory=lambda: [
+            "node_modules", "build", "dist", "target", ".git", "bin", "obj",
+            "__pycache__", ".venv", "venv", "vendor", "out", ".idea",
+            ".vscode", "coverage", "sdk"
+        ],
+        description="Directory names to ignore during scanning and parsing"
+    )
     skip_indexing: bool = Field(
         default=False, description="Skip indexing if true"
     )

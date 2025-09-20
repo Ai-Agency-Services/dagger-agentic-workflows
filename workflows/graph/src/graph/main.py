@@ -390,6 +390,14 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                         f"Skipping non-code file: {filepath} (extension: {ext})")
                     return {"success": True, "queries": [], "imports": [], "symbols": [], "symbol_relationships": []}
 
+            # Resolve ignore directories from config (optional)
+            ignore_dirs = []
+            try:
+                if hasattr(config_obj, 'indexing') and hasattr(config_obj.indexing, 'ignore_directories'):
+                    ignore_dirs = list(config_obj.indexing.ignore_directories or [])
+            except Exception:
+                ignore_dirs = []
+
             queries = []
             imports = []
             symbols = []
@@ -399,7 +407,7 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
             # Parse code file using the agent_utils parser
             try:
                 agent_utils = dag.agent_utils()
-                code_file_json = await agent_utils.parse_code_file_to_json(content, filepath)
+                code_file_json = await agent_utils.parse_code_file_to_json(content, filepath, ignore_dirs=ignore_dirs)
                 json_content = await code_file_json.contents()
                 code_file_dict = json.loads(json_content)
 
@@ -661,6 +669,17 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                 "!", "-name", "*.yaml",
                 "!", "-name", "*.yml"
             ])
+            # Exclude user-configured ignore directories
+            try:
+                cfg_obj = YAMLConfig(**self.config) if isinstance(self.config, dict) else self.config
+                user_ignores = list(getattr(getattr(cfg_obj, 'indexing', None), 'ignore_directories', []) or [])
+                for d in user_ignores:
+                    d = str(d).strip()
+                    if not d:
+                        continue
+                    find_cmd.extend(["!", "-path", f"*/{d}/*"])
+            except Exception:
+                pass
 
             logger.info(f"Running find command: {' '.join(find_cmd)}")
             file_list = await container.with_exec(find_cmd).stdout()
@@ -890,6 +909,17 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                 "!", "-name", "*.yaml",
                 "!", "-name", "*.yml"
             ])
+            # Exclude user-configured ignore directories
+            try:
+                cfg_obj = YAMLConfig(**self.config) if isinstance(self.config, dict) else self.config
+                user_ignores = list(getattr(getattr(cfg_obj, 'indexing', None), 'ignore_directories', []) or [])
+                for d in user_ignores:
+                    d = str(d).strip()
+                    if not d:
+                        continue
+                    find_cmd.extend(["!", "-path", f"*/{d}/*"])
+            except Exception:
+                pass
 
             logger.info(f"Running find command: {' '.join(find_cmd)}")
             file_list = await container.with_exec(find_cmd).stdout()
