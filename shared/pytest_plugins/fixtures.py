@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Shared pytest plugin: fixtures usable across all modules
 import os
 import pytest
@@ -27,6 +28,21 @@ def sample_yaml_config():
             "username": "neo4j",
             "database": "test"
         }
+    }
+
+@pytest.fixture
+def sample_structural_data():
+    """Sample structural data matching the expected shape in QueryService structural tests."""
+    return {
+        "symbols": [
+            {"name": "test_func", "type": "function", "filepath": "test.py"}
+        ],
+        "imports": [
+            {"source_file": "test.py", "imported_file": "utils.py"}
+        ],
+        "references": [
+            {"symbol_name": "test_func", "symbol_type": "function", "defined_in": "test.py"}
+        ]
     }
 
 # Add additional shared fixtures (moved from tests/conftest.py)
@@ -114,3 +130,16 @@ class AsyncContextManager:
 def async_context_manager():
     """Factory for creating async context managers in tests."""
     return AsyncContextManager
+
+@pytest.fixture
+def mock_supabase_client():
+    # Basic Supabase client mock; tests will configure .rpc return values
+    return MagicMock()
+
+@pytest.fixture
+def mock_openai_client():
+    # OpenAI client mock with embeddings.create available; tests set return_value
+    client = MagicMock()
+    client.embeddings = MagicMock()
+    client.embeddings.create = MagicMock()
+    return client
