@@ -143,3 +143,11 @@ def mock_openai_client():
     client.embeddings = MagicMock()
     client.embeddings.create = MagicMock()
     return client
+
+@pytest.fixture
+def sample_semantic_results():
+    """Sample semantic search results for QueryService.search tests."""
+    return [
+        {"filepath": "test/file1.py", "score": 0.95, "content": "def a(): pass", "language": "python"},
+        {"filepath": "test/file2.ts", "score": 0.90, "content": "export const x = 1", "language": "typescript"},
+    ]

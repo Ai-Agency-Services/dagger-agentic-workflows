@@ -215,3 +215,81 @@ dagger call --mod workflows/cover \
 - Limit container permissions appropriately
 - Review AI-generated code before deployment
 
+## Smell configuration (thresholds and detectors)
+
+Add a smell block in your YAML (used by workflows/smell). Global thresholds apply; include/exclude tunes signal.
+
+```yaml
+smell:
+  thresholds:
+    long_function_lines: 150      # lines
+    long_param_count: 6           # params
+    large_class_loc: 300          # lines
+    god_class_methods: 25         # methods
+    high_fan_out: 20              # files
+    high_fan_in: 10               # files
+  detectors:
+    include: []                   # empty means all enabled
+    exclude: []                   # e.g., ["DeadCodeDetector", "BarrelFileDetector"]
+```
+
+Notes:
+- Detector names are class names (normalized). If include is non‑empty, only those run (minus excluded).
+
+---
+
+## Dagger Filesystems (Python SDK) quick reference
+- Host access: `dag.host().directory("./path")`, `dag.host().file("./file.txt")`
+- Create in-pipeline: `dag.directory().with_new_file("out/a.txt","A").file("out/a.txt")`
+- Mount into container: `.with_mounted_directory("/work", dag.host().directory("."))`
+- Return artifacts: return dagger.File/Directory and export via CLI `export --path`
+- Read: `await file.contents()`, `await directory.entries()`
+
+## Dagger Containers (Python SDK) quick reference
+- Start/run:
+  ```python
+  c = dag.container().from_("alpine:3.20").with_exec(["sh","-lc","echo ok"])  # await c.stdout()
+  ```
+- Workdir/env: `.with_workdir("/work").with_env_variable("APP_ENV","dev")`
+- Mounts: dir/file/temp dir; secrets via `.with_secret_variable("TOKEN", token)`
+- Immutability: every `.with_*` returns a new container; reassign each step
+- Debug: `await c.stdout()/stderr()`, `pwd && ls -la`, `env | sort`
+
+## Dagger Services (Python SDK) quick reference
+- Service + client:
+  ```python
+  pg = (dag.container().from_("postgres:16")
+          .with_env_variable("POSTGRES_PASSWORD","pass")
+          .with_exposed_port(5432)
+          .as_service())
+  client = (dag.container().from_("postgres:16")
+              .with_service_binding("db", pg)
+              .with_exec(["sh","-lc","pg_isready -h db -p 5432"]))
+  ```
+Tips: expose ports before `.as_service()`, bind via `.with_service_binding("name", svc)`, use app‑native readiness checks.
+
+## Dagger Builds (Python SDK) quick reference
+- Host context:
+  ```python
+  context = dag.host().directory(".")
+  img = dag.container().build(context)
+  file_out = img.file("/app/out/report.txt")  # export via CLI
+  ```
+- Git context:
+  ```python
+  src = dag.git("https://github.com/org/repo").branch("main").tree()
+  img = dag.container().build(src.directory(""))
+  ```
+- Publish: `ref = await img.publish("ttl.sh/your-image:1h")`
+
+## Dagger Secrets (Python SDK) quick reference
+- CLI sources: `secret:NAME`, `env:NAME`, `file:./path`
+- Inject: `.with_secret_variable("TOKEN", token)` (avoid writing secrets to disk)
+
+## Dagger Errors (Python SDK) quick reference
+- Cloud auth: set DAGGER_CLOUD_TOKEN; use --cloud
+- Module not found: run from module dir or pass --mod <module-dir>
+- Constructor vs method: constructor first, then function, then method args
+- Export errors: function must return File/Directory; use `export --path`
+- GHA multiline output: avoid big content in GITHUB_OUTPUT—export artifacts instead
+- Debug: `await c.stdout()/stderr()`, Dagger Cloud trace URL, `DAGGER_LOG_LEVEL=debug`
