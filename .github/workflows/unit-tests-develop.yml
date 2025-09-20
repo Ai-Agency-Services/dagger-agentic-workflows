@@ -13,6 +13,24 @@ permissions:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - .
+          - services/neo
+          - services/query
+          - workflows/graph
+          - workflows/index
+          - workflows/smell
+          - workflows/cover
+          - workflows/cover/plugins/reporter
+          - workflows/cover/plugins/reporter/pytest
+          - workflows/cover/plugins/reporter/jest
+          - agents/codebuff
+          - agents/builder
+          - agents/pull_request
+          - shared/agent-utils
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,8 +42,40 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Install test dependencies
-        run: make install
+      - name: Install Dagger CLI
+        run: |
+          curl -L https://dl.dagger.io/dagger/install.sh | DAGGER_VERSION=v0.18.19 sh
+          echo "$PWD/bin" >> $GITHUB_PATH
 
-      - name: Run unit tests
-        run: make test-unit
+      - name: Install test dependencies (matrix module)
+        working-directory: ${{ matrix.module }}
+        run: |
+          if [ -f dagger.json ]; then
+            echo "Found dagger.json in $PWD; running 'dagger develop' to generate local sdk"
+            dagger develop
+          fi
+          if [ -f pyproject.toml ]; then
+            uv sync --extra test || uv sync
+            # Ensure pytest-timeout and pytest-cov are available because root pytest config sets 'timeout' and coverage addopts
+            uv pip install -q pytest-timeout pytest-cov || true
+          else
+            echo "No pyproject.toml in $PWD; skipping sync"
+          fi
+
+      - name: Run unit tests (matrix module)
+        working-directory: ${{ matrix.module }}
+        run: |
+          if [ -f pyproject.toml ] || [ -d tests ]; then
+            set +e
+            PYTHONPATH="${GITHUB_WORKSPACE}:${PYTHONPATH:-}" uv run pytest -c "${GITHUB_WORKSPACE}/pyproject.toml" -p shared.pytest_plugins.fixtures -m "not integration and not neo4j and not llm and not dagger and not slow" --maxfail=1 --tb=short -v
+            rc=$?
+            set -e
+            if [ "$rc" -eq 5 ]; then
+              echo "No unit tests collected in $PWD; continuing"
+              exit 0
+            fi
+            exit $rc
+          else
+            echo "No tests found in $PWD; skipping"
+          fi
+

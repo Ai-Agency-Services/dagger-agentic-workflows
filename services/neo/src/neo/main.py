@@ -5,7 +5,11 @@ from typing import Annotated, Any, Dict, List, Optional
 
 import dagger
 from dagger import Doc, dag, field, function, object_type
-from simple_chalk import green
+try:
+    from simple_chalk import green  # optional; may fail on Py3.12 in older versions
+except Exception:  # Fallback: no-color output
+    def green(msg):
+        return msg
 import yaml
 from ais_dagger_agents_config import YAMLConfig
 

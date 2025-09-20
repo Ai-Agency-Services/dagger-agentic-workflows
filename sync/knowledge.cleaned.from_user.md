@@ -1,42 +1,5 @@
 # Dagger Agents Knowledge Base
 
-## Quick Start
-
-Build Graph (remote clone):
-```bash
-dagger call --cloud --mod workflows/graph \
-  --config-file demo/agencyservices.yaml \
-  build-graph-for-repository \
-  --github-access-token=env:GITHUB_TOKEN \
-  --repository-url https://github.com/Ai-Agency-Services/web.git \
-  --branch feat/loveable-pairing \
-  --neo-auth=env:NEO_AUTH \
-  --neo-password=env:NEO4J_PASSWORD \
-  --open-router-api-key=env:OPEN_ROUTER_API_KEY
-```
-
-Analyze Smells (always-verbose):
-```bash
-dagger call --cloud --mod workflows/smell \
-  --config-file demo/agencyservices.yaml \
-  --neo-data ./tmp/neo4j-data \
-  analyze-codebase \
-  --github-access-token=env:GITHUB_TOKEN \
-  --neo-password=env:NEO4J_PASSWORD \
-  --neo-auth=env:NEO_AUTH
-```
-
-Attached Directory (Graph only):
-```bash
-dagger call --cloud --mod workflows/graph \
-  --config-file demo/agencyservices.yaml \
-  build-graph-for-directory \
-  --github-access-token=env:GITHUB_TOKEN \
-  --local-path /absolute/path/to/target-repo \
-  --neo-auth=env:NEO_AUTH \
-  --neo-password=env:NEO4J_PASSWORD
-```
-
 ## Project Overview
 
 This repository contains AI-powered development automation agents built with Dagger. The system provides end-to-end automation for software development workflows including code analysis, feature development, testing, and pull request creation.
@@ -149,6 +112,8 @@ python scripts/run_tests.py --type unit --module neo
 
 ## Common Commands
 
+Important: constructor args (e.g., `--config-file`, `--neo-data`) come before the function; method args come after. Use `--mod <module-dir>` so Dagger finds the module’s dagger.json.
+
 ```bash
 # Build and test an agent (constructor-first + --mod)
 dagger call --mod <module-dir> --config-file=config.yaml create
@@ -160,7 +125,7 @@ dagger call --mod agents/codebuff \
   --task-description="Feature description" \
   --openai-api-key=env:OPENAI_API_KEY
 
-# Analyze codebase (constructor-first + --mod)
+# Analyze codebase (build graph from a repository URL) (constructor-first + --mod)
 dagger call --mod workflows/graph \
   --config-file demo/agencyservices.yaml \
   build-graph-for-repository \
@@ -170,49 +135,6 @@ dagger call --mod workflows/graph \
 dagger call --mod workflows/cover \
   --config-file=config.yaml \
   generate-tests
-```
-
-## Dagger CLI quick reference (constructor-first order)
-
-- Constructor args (module-level), e.g. --config-file, --neo-data, come before the function
-- Method args (function params) come after the function
-- Run from module dir or pass --mod <module-dir>
-
-Examples (robust: use --mod from repo root)
-
-Smell (analyze-codebase):
-```bash
-dagger call --cloud --mod workflows/smell \
-  --config-file demo/agencyservices.yaml \
-  --neo-data ./tmp/neo4j-data \
-  analyze-codebase \
-  --github-access-token=env:GITHUB_TOKEN \
-  --neo-password=env:NEO4J_PASSWORD \
-  --neo-auth=env:NEO_AUTH
-```
-
-Graph (build-graph-for-repository):
-```bash
-dagger call --cloud --mod workflows/graph \
-  --config-file demo/agencyservices.yaml \
-  build-graph-for-repository \
-  --github-access-token=env:GITHUB_TOKEN \
-  --repository-url https://github.com/Ai-Agency-Services/web.git \
-  --branch feat/loveable-pairing \
-  --neo-auth=env:NEO_AUTH \
-  --neo-password=env:NEO4J_PASSWORD \
-  --open-router-api-key=env:OPEN_ROUTER_API_KEY
-```
-
-Graph (attached directory mode):
-```bash
-dagger call --cloud --mod workflows/graph \
-  --config-file demo/agencyservices.yaml \
-  build-graph-for-directory \
-  --github-access-token=env:GITHUB_TOKEN \
-  --local-path /absolute/path/to/target-repo \
-  --neo-auth=env:NEO_AUTH \
-  --neo-password=env:NEO4J_PASSWORD
 ```
 
 ## Development Notes
@@ -254,3 +176,4 @@ dagger call --cloud --mod workflows/graph \
 - Limit container permissions appropriately
 - Review AI-generated code before deployment
 
+# Note: Removed erroneous web_scraped_content block

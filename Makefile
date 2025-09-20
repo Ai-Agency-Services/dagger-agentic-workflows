@@ -43,7 +43,7 @@ test-workflows/graph-coverage:
 	cd workflows/graph && uv run --extra test pytest tests/test_graph_basic_working.py --cov=graph --cov-report=html:htmlcov --cov-report=term-missing && echo "✅ Graph coverage: workflows/graph/htmlcov/index.html"
 
 test-workflows/smell-coverage:
-    cd workflows/smell && uv run --extra test pytest tests/ --cov=smell --cov-report=html:htmlcov --cov-report=term-missing && echo "✅ Smell coverage: workflows/smell/htmlcov/index.html"
+	cd workflows/smell && uv run --extra test pytest tests/ --cov=smell --cov-report=html:htmlcov --cov-report=term-missing && echo "✅ Smell coverage: workflows/smell/htmlcov/index.html"
 
 test-all:
 	uv run pytest --maxfail=1 --tb=short -v -m "not slow" 
