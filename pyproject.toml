@@ -61,6 +61,8 @@ markers = [
     "llm: marks tests that require LLM API access",
     "dagger: marks tests that require Dagger runtime",
     "graph: marks tests for graph workflow",
+    "utils: marks tests for agent-utils",
+    "parsing: marks parsing-related tests",
 ]
 filterwarnings = [
     "error",

@@ -40,3 +40,12 @@ Thumbs.db
 
 .nx/cache
 .nx/workspace-data
+
+# Coverage artifacts (Python/pytest-cov)
+.coverage
+.coverage.*
+coverage.xml
+**/coverage.xml
+htmlcov/
+**/htmlcov/
+
