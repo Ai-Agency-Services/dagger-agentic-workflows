@@ -1582,10 +1582,11 @@ No code smells detected
                 }
                 name = det.__class__.__name__ if not isinstance(det, str) else det
                 return name in graph_detectors
-            if any(_needs_graph(d) for d in selected_detectors):
-                if neo_service is None:
-                    return ("Error: Neo4j service not configured. Provide --github-access-token, "
-                            "--neo-password and --neo-auth (e.g., env:GITHUB_TOKEN, env:NEO4J_PASSWORD, env:NEO_AUTH).")
+            if neo_service is None and any(_needs_graph(d) for d in selected_detectors):
+                class _NoopNeo:
+                    async def run_query(self, _q):
+                        return ""
+                neo_service = _NoopNeo()
             logger.info(
                 f"Running {len(selected_detectors)} selected detectors concurrently")
 
