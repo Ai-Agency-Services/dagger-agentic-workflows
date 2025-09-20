@@ -111,7 +111,7 @@ jobs:
         run: |
           echo "CWD=$(pwd)" && ls -la
           test -f "$GITHUB_WORKSPACE/workflows/graph/dagger.json" && echo "Found graph dagger.json" || (echo "Missing graph dagger.json" && exit 1)
-          dagger call --mod $GITHUB_WORKSPACE/workflows/graph \
+          dagger call --cloud --mod $GITHUB_WORKSPACE/workflows/graph \
             --config-file=demo/agencyservices.yaml \
             --neo-data=./tmp/neo4j-data \
             build-graph-for-directory \
@@ -145,7 +145,7 @@ jobs:
             --neo-password=env:NEO4J_PASSWORD \
             --neo-auth=env:NEO4J_AUTH \
             --format html \
-            --export smell_report.html
+            export --path smell_report.html
       - name: Upload Smell Report
         uses: actions/upload-artifact@v4
         with:
