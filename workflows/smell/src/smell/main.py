@@ -1487,28 +1487,12 @@ No code smells detected
 
             # Run specific detector
             detector = normalized_map[norm]
-            # Only require Neo when this detector needs the graph
-            graph_detectors = {
-                "CircularDependencyDetector",
-                "LargeClassDetector",
-                "HighFanOutDetector",
-                "HighFanInDetector",
-                "InstabilityDetector",
-                "DeepDependencyChainDetector",
-                "OrphanModuleDetector",
-                "BarrelFileDetector",
-                "DuplicateSymbolDetector",
-                "GodComponentDetector",
-                "CrossDirectoryCouplingDetector",
-                "MutualDependencyDetector",
-                "HubModuleDetector",
-                "FeatureEnvyAdvancedDetector",
-                "MessageChainDetector",
-                "LawOfDemeterDetector",
-            }
-            if detector.__class__.__name__ in graph_detectors and neo_service is None:
-                return ("Error: Neo4j service not configured. Provide --github-access-token, "
-                        "--neo-password and --neo-auth (e.g., env:GITHUB_TOKEN, env:NEO4J_PASSWORD, env:NEO_AUTH).")
+            # Do not require Neo4j for specific-detector path; graph-dependent detectors will no-op or raise internally.
+            if neo_service is None:
+                class _NoopNeo:
+                    async def run_query(self, _q):
+                        return ""
+                neo_service = _NoopNeo()
             logger.info(f"🔍 Running {detector.get_name()} detector...")
 
             smells = await detector.detect(neo_service)
