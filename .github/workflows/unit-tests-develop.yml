@@ -13,6 +13,25 @@ permissions:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - .
+          - services/neo
+          - services/query
+          - workflows/graph
+          - workflows/index
+          - workflows/smell
+          - workflows/cover
+          - workflows/cover/plugins/reporter
+          - workflows/cover/plugins/reporter/pytest
+          - workflows/cover/plugins/reporter/jest
+          - agents/codebuff
+          - agents/builder
+          - agents/pull_request
+          - shared/agent-utils
+          - shared/dagger-agents-config
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,8 +43,29 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Install test dependencies
-        run: make install
+      - name: Install test dependencies (matrix module)
+        working-directory: ${{ matrix.module }}
+        run: |
+          if [ -f pyproject.toml ]; then
+            uv sync --extra test || uv sync
+          else
+            echo "No pyproject.toml in $PWD; skipping sync"
+          fi
 
-      - name: Run unit tests
-        run: make test-unit
+      - name: Run unit tests (matrix module)
+        working-directory: ${{ matrix.module }}
+        run: |
+          if [ -f pyproject.toml ] || [ -d tests ]; then
+            set +e
+            PYTHONPATH="${GITHUB_WORKSPACE}:${PYTHONPATH:-}" uv run pytest -c "${GITHUB_WORKSPACE}/pyproject.toml" -m "not integration and not neo4j and not llm and not dagger and not slow" --maxfail=1 --tb=short -v
+            rc=$?
+            set -e
+            if [ "$rc" -eq 5 ]; then
+              echo "No unit tests collected in $PWD; continuing"
+              exit 0
+            fi
+            exit $rc
+          else
+            echo "No tests found in $PWD; skipping"
+          fi
+
