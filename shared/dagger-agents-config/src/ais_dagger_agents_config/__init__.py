@@ -12,10 +12,13 @@ from .models import (
     LLMCredentials,
     SymbolProperties,
     Neo4jConfig,
+    SmellConfig,
+    SmellThresholdsConfig,
+    SmellDetectorsConfig,
 )
 
 
-__version__ = "0.1.19"
+__version__ = "0.1.20"
 
 __all__ = [
     "YAMLConfig",
@@ -29,4 +32,7 @@ __all__ = [
     "ReporterConfig",
     "CoreAPIConfig",
     "Neo4jConfig",
+    "SmellConfig",
+    "SmellThresholdsConfig",
+    "SmellDetectorsConfig",
 ]

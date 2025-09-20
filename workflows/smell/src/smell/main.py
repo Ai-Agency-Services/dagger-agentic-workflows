@@ -4,7 +4,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Dict, List, Optional, Tuple
 import re
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -323,13 +323,15 @@ class ShotgunSurgeryDetector(CodeSmellDetector):
 
 class HighFanOutDetector(CodeSmellDetector):
     """Modules that depend on many files (high efferent coupling)"""
+    def __init__(self, threshold: int = 12):
+        self.threshold = threshold
 
     async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
-        query = """
+        query = f"""
         MATCH (f:File)
         OPTIONAL MATCH (f)-[:IMPORTS]->(dep:File)
         WITH f, count(DISTINCT dep) AS fan_out
-        WHERE fan_out > 12
+        WHERE fan_out > {self.threshold}
         RETURN f.filepath AS file, fan_out
         ORDER BY fan_out DESC
         LIMIT 20
@@ -366,12 +368,15 @@ class HighFanOutDetector(CodeSmellDetector):
 class HighFanInDetector(CodeSmellDetector):
     """Modules that many other files depend on (high afferent coupling)"""
 
+    def __init__(self, threshold: int = 12):
+        self.threshold = threshold
+
     async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
-        query = """
+        query = f"""
         MATCH (f:File)
         OPTIONAL MATCH (imp:File)-[:IMPORTS]->(f)
         WITH f, count(DISTINCT imp) AS fan_in
-        WHERE fan_in > 12
+        WHERE fan_in > {self.threshold}
         RETURN f.filepath AS file, fan_in
         ORDER BY fan_in DESC
         LIMIT 20
@@ -448,9 +453,11 @@ class InstabilityDetector(CodeSmellDetector):
 
 class LongFunctionDetector(CodeSmellDetector):
     """Functions/methods with large line spans"""
+    def __init__(self, threshold: int = 120):
+        self.threshold = threshold
 
     async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
-        threshold = 120
+        threshold = self.threshold
         query = f"""
         MATCH (fn)-[:DEFINED_IN]->(f:File)
         WHERE (fn:Function OR fn:Method)
@@ -748,7 +755,7 @@ class MutualDependencyDetector(CodeSmellDetector):
         """
         result = await neo_service.run_query(query)
         smells: List[CodeSmell] = []
-        lines = [l.strip() for l in result.strip().split("\n") if l.strip()]
+        lines = [line.strip() for line in result.strip().split("\n") if line.strip()]
         for line in lines[1:]:
             parts = line.split()
             if len(parts) >= 2:
@@ -814,9 +821,11 @@ class HubModuleDetector(CodeSmellDetector):
 # New class: LargeClassByLinesDetector
 class LargeClassByLinesDetector(CodeSmellDetector):
     """Detects classes with excessive lines of code (true Large Class smell)"""
+    def __init__(self, threshold: int = 200):
+        self.threshold = threshold
 
     async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
-        threshold = 200
+        threshold = self.threshold
         query = f"""
         MATCH (c:Class)-[:DEFINED_IN]->(f:File)
         WITH c, f, coalesce(c.end_line, -1) - coalesce(c.start_line, 0) AS lines
@@ -860,9 +869,11 @@ class LargeClassByLinesDetector(CodeSmellDetector):
 # New class: LongParameterListDetector
 class LongParameterListDetector(CodeSmellDetector):
     """Detects functions/methods with long parameter lists (Clean Code: avoid long parameter lists)"""
+    def __init__(self, min_params: int = 6):
+        self.min_params = min_params
 
     async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
-        min_params = 6
+        min_params = self.min_params
         query = f"""
         MATCH (fn)-[:DEFINED_IN]->(f:File)
         WHERE any(l IN labels(fn) WHERE l IN ['Function','Method']) AND fn.signature IS NOT NULL
@@ -909,9 +920,11 @@ class LongParameterListDetector(CodeSmellDetector):
 # New class: GodClassByMethodsDetector
 class GodClassByMethodsDetector(CodeSmellDetector):
     """Detects classes with too many methods (God Class tendency)"""
+    def __init__(self, threshold: int = 20):
+        self.threshold = threshold
 
     async def detect(self, neo_service: NeoService) -> List[CodeSmell]:
-        threshold = 20
+        threshold = self.threshold
         query = f"""
         MATCH (c:Class)-[:DEFINED_IN]->(f:File)
         OPTIONAL MATCH (m:Method {{filepath: f.filepath, parent: c.name}})
@@ -1091,6 +1104,19 @@ class Smell:
     config_file: dagger.File
     neo_data: Optional[dagger.CacheVolume] = None
 
+    def _get_smell_config(self) -> dict:
+        """Return smell configuration block from YAML if present (safe defaults)."""
+        try:
+            if isinstance(self.config, dict):
+                # Expect shape like:
+                # smell:
+                #   thresholds: { long_function_lines: 120, long_param_count: 6, large_class_loc: 200, god_class_methods: 20, high_fan_out: 20, high_fan_in: 10 }
+                #   detectors: { include: ["LongFunctionDetector", "HighFanOutDetector"], exclude: ["DeadCodeDetector"] }
+                return (self.config.get("smell") or {})
+        except Exception:
+            pass
+        return {}
+
     @classmethod
     async def create(cls,
                      config_file: Annotated[dagger.File, Doc("Path to the YAML config file")],
@@ -1144,33 +1170,60 @@ class Smell:
         }
 
     def _get_all_detectors(self) -> List[CodeSmellDetector]:
-        """Get all available code smell detectors"""
-        return [
-            CircularDependencyDetector(),
-            LargeClassDetector(),
-            FeatureEnvyDetector(),
-            DeadCodeDetector(),
-            ShotgunSurgeryDetector(),
-            HighFanOutDetector(),
-            HighFanInDetector(),
-            InstabilityDetector(),
-            LongFunctionDetector(),
-            DeepDependencyChainDetector(),
-            OrphanModuleDetector(),
-            BarrelFileDetector(),
-            DuplicateSymbolDetector(),
-            GodComponentDetector(),
-            CrossDirectoryCouplingDetector(),
-            MutualDependencyDetector(),
-            HubModuleDetector(),
-            LargeClassByLinesDetector(),
-            LongParameterListDetector(),
-            GodClassByMethodsDetector(),
-            # New cross-file symbol detectors
-            FeatureEnvyAdvancedDetector(),
-            MessageChainDetector(),
-            LawOfDemeterDetector(),
+        """Get all available code smell detectors, honoring YAML include/exclude and thresholds"""
+        import re
+        cfg = self._get_smell_config()
+        thresholds = (cfg.get("thresholds") if isinstance(cfg, dict) else None) or {}
+        detectors_cfg = (cfg.get("detectors") if isinstance(cfg, dict) else None) or {}
+        include = set([s.strip() for s in (detectors_cfg.get("include") or []) if isinstance(s, str)])
+        exclude = set([s.strip() for s in (detectors_cfg.get("exclude") or []) if isinstance(s, str)])
+
+        def t(key: str, default: int) -> int:
+            try:
+                val = thresholds.get(key)
+                return int(val) if val is not None else default
+            except Exception:
+                return default
+
+        # Instantiate detectors, applying thresholds where applicable
+        detector_entries: List[Tuple[str, CodeSmellDetector]] = [
+            ("CircularDependencyDetector", CircularDependencyDetector()),
+            ("LargeClassDetector", LargeClassDetector()),
+            ("FeatureEnvyDetector", FeatureEnvyDetector()),
+            ("DeadCodeDetector", DeadCodeDetector()),
+            ("ShotgunSurgeryDetector", ShotgunSurgeryDetector()),
+            ("HighFanOutDetector", HighFanOutDetector(threshold=t("high_fan_out", 20))),
+            ("HighFanInDetector", HighFanInDetector(threshold=t("high_fan_in", 10))),
+            ("InstabilityDetector", InstabilityDetector()),
+            ("LongFunctionDetector", LongFunctionDetector(threshold=t("long_function_lines", 120))),
+            ("DeepDependencyChainDetector", DeepDependencyChainDetector()),
+            ("OrphanModuleDetector", OrphanModuleDetector()),
+            ("BarrelFileDetector", BarrelFileDetector()),
+            ("DuplicateSymbolDetector", DuplicateSymbolDetector()),
+            ("GodComponentDetector", GodComponentDetector()),
+            ("CrossDirectoryCouplingDetector", CrossDirectoryCouplingDetector()),
+            ("MutualDependencyDetector", MutualDependencyDetector()),
+            ("HubModuleDetector", HubModuleDetector()),
+            ("LargeClassByLinesDetector", LargeClassByLinesDetector(threshold=t("large_class_loc", 200))),
+            ("LongParameterListDetector", LongParameterListDetector(min_params=t("long_param_count", 6))),
+            ("GodClassByMethodsDetector", GodClassByMethodsDetector(threshold=t("god_class_methods", 20))),
+            # Cross-file detectors (use graph edges)
+            ("FeatureEnvyAdvancedDetector", FeatureEnvyAdvancedDetector()),
+            ("MessageChainDetector", MessageChainDetector()),
+            ("LawOfDemeterDetector", LawOfDemeterDetector()),
         ]
+
+        def norm(s: str) -> str:
+            return re.sub(r"[^a-z0-9]", "", s.lower())
+
+        if include:
+            wanted = set(norm(x) for x in include)
+            detector_entries = [d for d in detector_entries if norm(d[0]) in wanted]
+        if exclude:
+            blocked = set(norm(x) for x in exclude)
+            detector_entries = [d for d in detector_entries if norm(d[0]) not in blocked]
+
+        return [inst for _, inst in detector_entries]
 
     async def _run_detectors_concurrently(
         self,
