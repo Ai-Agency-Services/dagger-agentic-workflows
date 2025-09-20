@@ -57,8 +57,8 @@ jobs:
           fi
           if [ -f pyproject.toml ]; then
             uv sync --extra test || uv sync
-            # Ensure pytest-timeout is available because root pytest config sets 'timeout'
-            uv pip install -q pytest-timeout || true
+            # Ensure pytest-timeout and pytest-cov are available because root pytest config sets 'timeout' and coverage addopts
+            uv pip install -q pytest-timeout pytest-cov || true
           else
             echo "No pyproject.toml in $PWD; skipping sync"
           fi
