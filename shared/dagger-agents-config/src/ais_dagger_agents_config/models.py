@@ -237,6 +237,9 @@ class Neo4jConfig(BaseModel):
         default="1G", description="Neo4j initial heap size")
     memory_heap_max_size: str = Field(
         default="1G", description="Neo4j maximum heap size")
+    # Transaction timeout (ISO-8601 duration, e.g., PT120S)
+    transaction_timeout: str = Field(
+        default="PT120S", description="Default transaction timeout (e.g., PT120S)")
 
 
 class YAMLConfig(BaseModel):
