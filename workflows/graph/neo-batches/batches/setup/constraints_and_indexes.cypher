@@ -1,0 +1,9 @@
+CREATE CONSTRAINT file_path_constraint IF NOT EXISTS FOR (file:File) REQUIRE file.path IS UNIQUE;
+CREATE CONSTRAINT file_filepath_unique IF NOT EXISTS FOR (f:File) REQUIRE f.filepath IS UNIQUE;
+CREATE CONSTRAINT function_name_path_line IF NOT EXISTS FOR (function:Function) REQUIRE (function.name, function.filepath, function.start_line) IS UNIQUE;
+CREATE CONSTRAINT class_name_path_line IF NOT EXISTS FOR (class:Class) REQUIRE (class.name, class.filepath, class.start_line) IS UNIQUE;
+CREATE CONSTRAINT variable_name_path_line IF NOT EXISTS FOR (variable:Variable) REQUIRE (variable.name, variable.filepath, variable.line_number) IS UNIQUE;
+CREATE CONSTRAINT method_name_path_line IF NOT EXISTS FOR (m:Method) REQUIRE (m.name, m.filepath, m.start_line) IS UNIQUE;
+CREATE INDEX function_name_idx IF NOT EXISTS FOR (f:Function) ON (f.name);
+CREATE INDEX file_language_idx IF NOT EXISTS FOR (f:File) ON (f.language);
+CREATE INDEX file_filepath_idx IF NOT EXISTS FOR (f:File) ON (f.filepath);

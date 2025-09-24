@@ -53,6 +53,7 @@ class Graph:
                         None) if indexing_config else None
             ) or 3,  # REDUCED from 5 to 3 for better performance
             'batch_size': 1,  # Always use individual queries for best performance
+            'throttle_ms': getattr(indexing_config, 'throttle_ms', None)
         }
 
     def _escape_cypher_string(self, value: str) -> str:
@@ -284,21 +285,26 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
             f"Completed {query_type} queries: {successful} successful, {failed} failed")
         return successful, failed
 
+    def _join_batches(self, batches: List[str]) -> str:
+        parts: List[str] = []
+        for i, b in enumerate(batches or [], 1):
+            parts.append(f"// BATCH {i:05d}\n{b}\n")
+        return "\n".join(parts)
+
     async def _execute_queries_in_concurrent_batches(
         self,
         queries: List[str],
         query_type: str,
         logger: logging.Logger,
         batch_size: int = 5,
-        max_concurrent_batches: int = 5
+        max_concurrent_batches: int = 5,
+        export_accumulator: Optional[Dict[str, List[str]]] = None,
+        exports: Optional[List[Tuple[str, str]]] = None,
+        export_prefix: Optional[str] = None,
+        execute: bool = True,
+        throttle_ms: Optional[int] = None,
     ) -> Tuple[int, int]:
-        """Execute queries in small concurrent batches for optimal performance."""
-        if not queries:
-            return 0, 0
-
-        # Split queries into small batches
-        batches = [queries[i:i + batch_size]
-                   for i in range(0, len(queries), batch_size)]
+        batches = [queries[i:i + batch_size] for i in range(0, len(queries), batch_size)]
         semaphore = anyio.Semaphore(max_concurrent_batches)
         total_successful = 0
         total_failed = 0
@@ -307,26 +313,79 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
             nonlocal total_successful, total_failed
             async with semaphore:
                 batch_query = "\n".join(batch)
+
+                if export_accumulator is not None:
+                    export_accumulator.setdefault(query_type, []).append(batch_query)
+                elif exports is not None:
+                    prefix = export_prefix or "batches"
+                    rel_path = f"{prefix}/{query_type}/batch_{batch_index + 1:05d}.cypher"
+                    exports.append((rel_path, batch_query))
+
+                async def _maybe_throttle():
+                    if throttle_ms and throttle_ms > 0:
+                        try:
+                            await anyio.sleep(throttle_ms / 1000.0)
+                        except Exception:
+                            pass
+
+                if not execute:
+                    logger.info(f"DRY-RUN captured {query_type} batch {batch_index + 1}/{len(batches)} ({len(batch)} queries)")
+                    total_successful += len(batch)
+                    await _maybe_throttle()
+                    return len(batch), 0
+
                 try:
                     await self.neo_service.run_query(batch_query)
                     total_successful += len(batch)
-                    logger.info(
-                        f"Executed {query_type} batch {batch_index + 1}/{len(batches)} ({len(batch)} queries)")
-                    return len(batch), 0  # successful, failed
+                    logger.info(f"Executed {query_type} batch {batch_index + 1}/{len(batches)} ({len(batch)} queries)")
+                    await _maybe_throttle()
+                    return len(batch), 0
                 except Exception as e:
-                    total_failed += len(batch)
-                    logger.error(
-                        f"Failed to execute {query_type} batch {batch_index + 1}: {e}")
-                    return 0, len(batch)  # successful, failed
+                    logger.error(f"Failed {query_type} batch {batch_index + 1}: {e}. Retrying individually…")
+                    succ = 0
+                    fail = 0
+                    for qi, q in enumerate(batch):
+                        try:
+                            await self.neo_service.run_query(q)
+                            succ += 1
+                        except Exception as qe:
+                            fail += 1
+                            preview = (q[:240] + '…') if len(q) > 240 else q
+                            logger.error(f"{query_type} query failed in batch {batch_index + 1}, item {qi + 1}: {qe}. Query preview: {preview}")
+                    total_successful += succ
+                    total_failed += fail
+                    await _maybe_throttle()
+                    return succ, fail
 
-        # Execute batches concurrently
         async with anyio.create_task_group() as tg:
             for i, batch in enumerate(batches):
                 tg.start_soon(execute_batch_with_limit, batch, i)
 
-        logger.info(
-            f"Completed {query_type} batches: {total_successful} successful, {total_failed} failed")
+        logger.info(f"Completed {query_type} batches: {total_successful} successful, {total_failed} failed")
         return total_successful, total_failed
+
+    def _build_chunked_export_files(
+        self,
+        export_prefix: str,
+        export_acc: Dict[str, List[str]],
+        summary: dict,
+    ) -> List[Tuple[str, str]]:
+        files: List[Tuple[str, str]] = []
+        max_chunks = 20
+        for qtype, blist in (export_acc or {}).items():
+            if not blist:
+                continue
+            n = len(blist)
+            chunks = min(max_chunks, max(1, n))
+            size = max(1, (n + chunks - 1) // chunks)
+            for ci in range(chunks):
+                start = ci * size
+                end = min(n, start + size)
+                if start >= end:
+                    break
+                files.append((f"{export_prefix}/{qtype}_{ci + 1:04d}.cypher", self._join_batches(blist[start:end])))
+        files.append((f"{export_prefix}/summary.json", json.dumps(summary, indent=2)))
+        return files
 
     async def _safe_build_graph_data_for_file(
         self,
@@ -725,53 +784,37 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                 except Exception as e:
                     logger.warning(f"Could not create constraint/index: {e}")
 
-            # Execute queries using concurrent batches for maximum performance
-            logger.info(
-                f"Executing {len(all_queries)} node/symbol queries using concurrent batches")
-            node_successful, node_failed = await self._execute_queries_in_concurrent_batches(
+            # Execute file/symbol node queries
+            logger.info(f"Executing {len(all_queries)} node/symbol queries using concurrent batches")
+            await self._execute_queries_in_concurrent_batches(
                 all_queries, "node/symbol", logger, batch_size=5, max_concurrent_batches=8
             )
 
-            # Create DEFINED_IN relationships using concurrent batches
-            logger.info(
-                f"Creating {len(all_symbols)} DEFINED_IN relationships using concurrent batches")
+            # Create DEFINED_IN relationships
+            logger.info(f"Creating {len(all_symbols)} DEFINED_IN relationships using concurrent batches")
             relationship_queries = []
-            for filepath, symbol_type in set(all_symbols):  # Remove duplicates
-                rel_query = self._build_relationship_cypher(
-                    filepath, symbol_type)
-                relationship_queries.append(rel_query)
-
-            rel_successful, rel_failed = await self._execute_queries_in_concurrent_batches(
+            for filepath, symbol_type in set(all_symbols):
+                relationship_queries.append(self._build_relationship_cypher(filepath, symbol_type))
+            await self._execute_queries_in_concurrent_batches(
                 relationship_queries, "relationship", logger, batch_size=5, max_concurrent_batches=8
             )
 
-            # Execute import queries using concurrent batches
-            logger.info(
-                f"Creating {len(all_imports)} import relationships using concurrent batches")
-            import_queries = []
-            unique_imports = set(all_imports)  # Remove duplicates
-
-            for from_file, to_file in unique_imports:
-                import_query = self._build_import_cypher(from_file, to_file)
-                import_queries.append(import_query)
-
-            import_successful, import_failed = await self._execute_queries_in_concurrent_batches(
+            # Create IMPORTS relationships
+            logger.info(f"Creating {len(all_imports)} import relationships using concurrent batches")
+            import_queries = [self._build_import_cypher(frm, to) for frm, to in set(all_imports)]
+            await self._execute_queries_in_concurrent_batches(
                 import_queries, "import", logger, batch_size=5, max_concurrent_batches=8
             )
 
-            # Execute symbol relationship queries (within-file)
+            # Within-file symbol relationships
             if all_symbol_relationships:
-                logger.info(
-                    f"Creating {len(all_symbol_relationships)} symbol relationships using concurrent batches")
-                symbol_rel_successful, symbol_rel_failed = await self._execute_queries_in_concurrent_batches(
+                logger.info(f"Creating {len(all_symbol_relationships)} symbol relationships using concurrent batches")
+                await self._execute_queries_in_concurrent_batches(
                     all_symbol_relationships, "symbol-relationship", logger, batch_size=5, max_concurrent_batches=8
                 )
-            else:
-                symbol_rel_successful = symbol_rel_failed = 0
 
-            # Cross-file symbol resolution (post-processing)
+            # Cross-file symbol resolution (reuses same logic as repository mode)
             try:
-                # Build imports map and symbols map
                 file_to_imports: Dict[str, Set[str]] = {}
                 for frm, to in set(all_imports):
                     file_to_imports.setdefault(frm, set()).add(to)
@@ -779,27 +822,21 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                 for f, n in all_symbol_names:
                     symbols_by_file.setdefault(f, set()).add(n)
 
-                # Generate cross-file symbol relationship queries
                 cross_file_queries: List[str] = []
                 agent_utils = dag.agent_utils()
                 for a_file, imported_files in file_to_imports.items():
                     try:
                         a_content = await container.file(a_file).contents()
-                        # Parse A's symbols for scope detection
                         code_file_json = await agent_utils.parse_code_file_to_json(a_content, a_file)
-                        json_content = await code_file_json.contents()
-                        a_dict = json.loads(json_content)
-                        a_symbols = a_dict.get("symbols", []) or []
-                        a_symbol_map = {s.get("name"): s for s in a_symbols if s.get("name")}
+                        a_dict = json.loads(await code_file_json.contents())
+                        a_symbol_map = {s.get("name"): s for s in a_dict.get("symbols", []) if s.get("name")}
                         a_lines = a_content.split('\n')
 
                         for b_file in imported_files:
                             for name in symbols_by_file.get(b_file, set()):
-                                # Scan for occurrences in A
                                 for i, line in enumerate(a_lines, 1):
                                     if name not in line:
                                         continue
-                                    # Identify containing symbol in A
                                     container_symbol = self._find_containing_symbol(i, a_symbol_map)
                                     if not container_symbol or container_symbol == name:
                                         continue
@@ -812,7 +849,6 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                     except Exception as cf_err:
                         logger.debug(f"Cross-file resolution skipped for {a_file}: {cf_err}")
 
-                # De-dup and limit to reasonable size
                 if cross_file_queries:
                     logger.info(f"Creating {len(cross_file_queries)} cross-file symbol relationships")
                     await self._execute_queries_in_concurrent_batches(
@@ -821,13 +857,12 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
             except Exception as e:
                 logger.warning(f"Cross-file symbol resolution encountered an issue: {e}")
 
-            logger.info(
-                "Successfully executed all concurrent batch Cypher queries")
-
-            # Verify the results
+            # Verify connection
             test_result = await self.neo_service.test_connection()
-
-            return f"Graph built successfully: {processed} files processed, {failed} file failures, {node_successful} nodes created, {rel_successful} relationships created, {import_successful} imports created, {symbol_rel_successful} symbol relationships created. Database status: {test_result}"
+            return (
+                f"Graph built successfully: {processed} files processed, {failed} file failures, {len(all_queries)} nodes created."
+                f" Database status: {test_result}"
+            )
 
         except Exception as e:
             logger.error(f"Graph building failed: {e}")
@@ -1000,7 +1035,7 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
                     symbols_by_file.setdefault(f, set()).add(n)
 
                 cross_file_queries: List[str] = []
-                agent_utils = dag.agent_utils()
+                agent_utils = dagger.agent_utils()
                 for a_file, imported_files in file_to_imports.items():
                     try:
                         a_content = await container.file(a_file).contents()
@@ -1044,4 +1079,284 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
         except Exception as e:
             logger.error(f"Graph building (directory) failed: {e}")
             raise
+
+    @function
+    async def build_graph_for_repository_export(
+        self,
+        github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
+        repository_url: Annotated[str, Doc("Repository URL to analyze")],
+        branch: Annotated[str, Doc("Branch to analyze")],
+        neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
+        neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
+        open_router_api_key: Annotated[dagger.Secret, Doc("OpenRouter API key")],
+        dry_run: Annotated[bool, Doc("If true, export batches without executing")] = True,
+    ) -> dagger.Directory:
+        """Export chunked Cypher batches for a remote repo; when dry_run is True, do not execute queries."""
+        logger = self._setup_logging()
+        processing_config = self._get_processing_config()
+
+        # Clone repository tree
+        source = (
+            await dag.git(url=repository_url, keep_git_dir=True)
+            .with_auth_token(github_access_token)
+            .branch(branch)
+            .tree()
+        )
+
+        # Build analysis container (no Neo connection required for dry-run)
+        cfg: YAMLConfig = YAMLConfig(**self.config) if isinstance(self.config, dict) else self.config
+        container = await dag.builder(self.config_file).build_test_environment(
+            source=source,
+            dockerfile_path=cfg.container.docker_file_path,
+            open_router_api_key=open_router_api_key,
+            provider=(cfg.core_api.provider if getattr(cfg, 'core_api', None) else None),
+            openai_api_key=open_router_api_key
+        )
+        work_dir = getattr(cfg.container, 'work_dir', '/app')
+
+        # Discover files by configured extensions
+        file_extensions = getattr(cfg.indexing, 'file_extensions', ['py', 'js', 'ts', 'tsx', 'jsx'])
+        find_cmd = ["find", work_dir, "-type", "f", "("]
+        for i, ext in enumerate(file_extensions):
+            ext = str(ext).strip('.')
+            if i > 0:
+                find_cmd.append("-o")
+            find_cmd.extend(["-name", f"*.{ext}"])
+        find_cmd.append(")")
+        # Basic excludes + user-configured ignore_directories
+        find_cmd.extend([
+            "!", "-path", "*/node_modules/*",
+            "!", "-path", r"*/\.*",
+            "!", "-path", "*/dist/*",
+            "!", "-path", "*/build/*",
+            "!", "-path", "*/tests/*",
+            "!", "-path", "*/test/*",
+            "!", "-path", "*/__tests__/*",
+            "!", "-path", "*/spec/*",
+            "!", "-path", "*/.pytest_cache/*",
+        ])
+        try:
+            ignores = list(getattr(getattr(cfg, 'indexing', None), 'ignore_directories', []) or [])
+            for d in ignores:
+                d = str(d).strip()
+                if d:
+                    find_cmd.extend(["!", "-path", f"*/{d}/*"])
+        except Exception:
+            pass
+        files = [f for f in (await container.with_exec(find_cmd).stdout()).strip().split("\n") if f.strip()]
+
+        # Parse & build queries
+        processed, failed, all_queries, all_imports, all_symbols, all_symbol_relationships, all_symbol_names = await self._process_files_with_semaphore(
+            files=files,
+            container=container,
+            logger=logger,
+            max_concurrent=processing_config['max_concurrent']
+        )
+
+        # Build relationship & import queries
+        relationship_queries = self._build_relationship_queries(all_symbols)
+        import_queries = self._build_import_queries(all_imports)
+
+        # Capture batches without executing when dry_run=True
+        export_acc: Dict[str, List[str]] = {}
+        throttle = processing_config.get('throttle_ms')
+        await self._execute_queries_in_concurrent_batches(
+            all_queries, "node-symbol", logger,
+            batch_size=processing_config.get('batch_size', 5),
+            max_concurrent_batches=processing_config.get('max_concurrent', 8),
+            export_accumulator=export_acc,
+            execute=(not dry_run),
+            throttle_ms=throttle,
+        )
+        await self._execute_queries_in_concurrent_batches(
+            relationship_queries, "defined-in", logger,
+            batch_size=processing_config.get('batch_size', 5),
+            max_concurrent_batches=processing_config.get('max_concurrent', 8),
+            export_accumulator=export_acc,
+            execute=(not dry_run),
+            throttle_ms=throttle,
+        )
+        await self._execute_queries_in_concurrent_batches(
+            import_queries, "import", logger,
+            batch_size=processing_config.get('batch_size', 5),
+            max_concurrent_batches=processing_config.get('max_concurrent', 8),
+            export_accumulator=export_acc,
+            execute=(not dry_run),
+            throttle_ms=throttle,
+        )
+        if all_symbol_relationships:
+            await self._execute_queries_in_concurrent_batches(
+                all_symbol_relationships, "symbol-relationship", logger,
+                batch_size=processing_config.get('batch_size', 5),
+                max_concurrent_batches=processing_config.get('max_concurrent', 8),
+                export_accumulator=export_acc,
+                execute=(not dry_run),
+                throttle_ms=throttle,
+            )
+
+        # Setup file (semicolon separated for Neo4j 5.x)
+        constraints_and_indexes = self._get_constraints_and_indexes()
+        export_prefix = "batches"
+        exports: List[Tuple[str, str]] = [
+            (f"{export_prefix}/setup/constraints_and_indexes.cypher", ";\n".join(constraints_and_indexes) + ";\n")
+        ]
+        summary = {
+            "processed_files": processed,
+            "failed_files": failed,
+            "batches_dir": export_prefix,
+            "dry_run": bool(dry_run),
+            "batch_counts": {qt: len(bl) for qt, bl in export_acc.items()},
+        }
+        # Add chunked files + summary
+        exports.extend(self._build_chunked_export_files(export_prefix, export_acc, summary))
+
+        # Materialize Directory
+        out_dir = dag.directory()
+        for rel_path, content in exports:
+            out_dir = out_dir.with_new_file(rel_path, content)
+        return out_dir
+
+    @function
+    async def build_graph_for_directory_export(
+        self,
+        github_access_token: Annotated[dagger.Secret, Doc("GitHub access token")],
+        local_path: Annotated[str, Doc("Local path to a checked-out repository")],
+        neo_password: Annotated[dagger.Secret, Doc("Neo4j password")],
+        neo_auth: Annotated[dagger.Secret, Doc("Neo4j auth token")],
+        open_router_api_key: Annotated[dagger.Secret, Doc("OpenRouter API key")],
+        dry_run: Annotated[bool, Doc("If true, export batches without executing")] = True,
+    ) -> dagger.Directory:
+        """Export chunked Cypher batches for a local directory; when dry_run is True, do not execute queries."""
+        logger = self._setup_logging()
+        processing_config = self._get_processing_config()
+
+        # Host directory source
+        source = dag.host().directory(local_path)
+        cfg: YAMLConfig = YAMLConfig(**self.config) if isinstance(self.config, dict) else self.config
+        container = await dag.builder(self.config_file).build_test_environment(
+            source=source,
+            dockerfile_path=cfg.container.docker_file_path,
+            open_router_api_key=open_router_api_key,
+            provider=(cfg.core_api.provider if getattr(cfg, 'core_api', None) else None),
+            openai_api_key=open_router_api_key
+        )
+        work_dir = getattr(cfg.container, 'work_dir', '/app')
+
+        # Discover files
+        file_extensions = getattr(cfg.indexing, 'file_extensions', ['py', 'js', 'ts', 'tsx', 'jsx'])
+        find_cmd = ["find", work_dir, "-type", "f", "("]
+        for i, ext in enumerate(file_extensions):
+            ext = str(ext).strip('.')
+            if i > 0:
+                find_cmd.append("-o")
+            find_cmd.extend(["-name", f"*.{ext}"])
+        find_cmd.append(")")
+        find_cmd.extend([
+            "!", "-path", "*/node_modules/*",
+            "!", "-path", r"*/\.*",
+            "!", "-path", "*/dist/*",
+            "!", "-path", "*/build/*",
+            "!", "-path", "*/tests/*",
+            "!", "-path", "*/test/*",
+            "!", "-path", "*/__tests__/*",
+            "!", "-path", "*/spec/*",
+            "!", "-path", "*/.pytest_cache/*",
+        ])
+        try:
+            ignores = list(getattr(getattr(cfg, 'indexing', None), 'ignore_directories', []) or [])
+            for d in ignores:
+                d = str(d).strip()
+                if d:
+                    find_cmd.extend(["!", "-path", f"*/{d}/*"])
+        except Exception:
+            pass
+        files = [f for f in (await container.with_exec(find_cmd).stdout()).strip().split("\n") if f.strip()]
+
+        # Parse & build queries
+        processed, failed, all_queries, all_imports, all_symbols, all_symbol_relationships, all_symbol_names = await self._process_files_with_semaphore(
+            files=files,
+            container=container,
+            logger=logger,
+            max_concurrent=processing_config['max_concurrent']
+        )
+
+        relationship_queries = self._build_relationship_queries(all_symbols)
+        import_queries = self._build_import_queries(all_imports)
+
+        export_acc: Dict[str, List[str]] = {}
+        throttle = processing_config.get('throttle_ms')
+        await self._execute_queries_in_concurrent_batches(
+            all_queries, "node-symbol", logger,
+            batch_size=processing_config.get('batch_size', 5),
+            max_concurrent_batches=processing_config.get('max_concurrent', 8),
+            export_accumulator=export_acc,
+            execute=(not dry_run),
+            throttle_ms=throttle,
+        )
+        await self._execute_queries_in_concurrent_batches(
+            relationship_queries, "defined-in", logger,
+            batch_size=processing_config.get('batch_size', 5),
+            max_concurrent_batches=processing_config.get('max_concurrent', 8),
+            export_accumulator=export_acc,
+            execute=(not dry_run),
+            throttle_ms=throttle,
+        )
+        await self._execute_queries_in_concurrent_batches(
+            import_queries, "import", logger,
+            batch_size=processing_config.get('batch_size', 5),
+            max_concurrent_batches=processing_config.get('max_concurrent', 8),
+            export_accumulator=export_acc,
+            execute=(not dry_run),
+            throttle_ms=throttle,
+        )
+        if all_symbol_relationships:
+            await self._execute_queries_in_concurrent_batches(
+                all_symbol_relationships, "symbol-relationship", logger,
+                batch_size=processing_config.get('batch_size', 5),
+                max_concurrent_batches=processing_config.get('max_concurrent', 8),
+                export_accumulator=export_acc,
+                execute=(not dry_run),
+                throttle_ms=throttle,
+            )
+
+        constraints_and_indexes = self._get_constraints_and_indexes()
+        export_prefix = "batches"
+        exports: List[Tuple[str, str]] = [
+            (f"{export_prefix}/setup/constraints_and_indexes.cypher", ";\n".join(constraints_and_indexes) + ";\n")
+        ]
+        summary = {
+            "processed_files": processed,
+            "failed_files": failed,
+            "batches_dir": export_prefix,
+            "dry_run": bool(dry_run),
+            "batch_counts": {qt: len(bl) for qt, bl in export_acc.items()},
+        }
+        exports.extend(self._build_chunked_export_files(export_prefix, export_acc, summary))
+
+        out_dir = dag.directory()
+        for rel_path, content in exports:
+            out_dir = out_dir.with_new_file(rel_path, content)
+        return out_dir
+
+    def _build_relationship_queries(self, symbols: List[Tuple[str, str]]) -> List[str]:
+        queries = []
+        for filepath, symbol_type in set(symbols):
+            queries.append(self._build_relationship_cypher(filepath, symbol_type))
+        return queries
+
+    def _build_import_queries(self, imports: List[Tuple[str, str]]) -> List[str]:
+        return [self._build_import_cypher(frm, to) for frm, to in set(imports)]
+
+    def _get_constraints_and_indexes(self) -> List[str]:
+        return [
+            "CREATE CONSTRAINT file_path_constraint IF NOT EXISTS FOR (file:File) REQUIRE file.path IS UNIQUE",
+            "CREATE CONSTRAINT file_filepath_unique IF NOT EXISTS FOR (f:File) REQUIRE f.filepath IS UNIQUE",
+            "CREATE CONSTRAINT function_name_path_line IF NOT EXISTS FOR (function:Function) REQUIRE (function.name, function.filepath, function.start_line) IS UNIQUE",
+            "CREATE CONSTRAINT class_name_path_line IF NOT EXISTS FOR (class:Class) REQUIRE (class.name, class.filepath, class.start_line) IS UNIQUE",
+            "CREATE CONSTRAINT variable_name_path_line IF NOT EXISTS FOR (variable:Variable) REQUIRE (variable.name, variable.filepath, variable.line_number) IS UNIQUE",
+            "CREATE CONSTRAINT method_name_path_line IF NOT EXISTS FOR (m:Method) REQUIRE (m.name, m.filepath, m.start_line) IS UNIQUE",
+            "CREATE INDEX function_name_idx IF NOT EXISTS FOR (f:Function) ON (f.name)",
+            "CREATE INDEX file_language_idx IF NOT EXISTS FOR (f:File) ON (f.language)",
+            "CREATE INDEX file_filepath_idx IF NOT EXISTS FOR (f:File) ON (f.filepath)"
+        ]
 

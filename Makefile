@@ -38,7 +38,7 @@ test-coverage-all:
 	@echo "  Smell:         make test-workflows/smell-coverage"
 
 test-services/neo-coverage:
-	cd services/neo && uv run --extra test pytest tests/test_neo_service_comprehensive.py::TestSymbolProperties --cov=neo --cov-report=html:htmlcov --cov-report=term-missing && echo "✅ Neo coverage: services/neo/htmlcov/index.html"
+	cd services/neo && PYTHONPATH=$(shell pwd):$PYTHONPATH uv run --extra test pytest tests/test_neo_service_comprehensive.py::TestSymbolProperties --cov=neo --cov-report=html:htmlcov --cov-report=term-missing && echo "✅ Neo coverage: services/neo/htmlcov/index.html"
 
 test-workflows/graph-coverage:
 	cd workflows/graph && uv run --extra test pytest tests/test_graph_basic_working.py --cov=graph --cov-report=html:htmlcov --cov-report=term-missing && echo "✅ Graph coverage: workflows/graph/htmlcov/index.html"
@@ -71,10 +71,10 @@ clean:
 
 # Module-specific testing
 test-neo:
-	cd services/neo && uv run --extra test pytest
+	cd services/neo && PYTHONPATH=$(shell pwd):$PYTHONPATH uv run --extra test pytest
 
 test-services/neo:
-	cd services/neo && uv run --extra test pytest
+	cd services/neo && PYTHONPATH=$(shell pwd):$PYTHONPATH uv run --extra test pytest
 
 test-query:
 	cd services/query && uv run --extra test pytest

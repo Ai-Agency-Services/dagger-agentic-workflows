@@ -37,6 +37,42 @@ dagger call --cloud --mod workflows/graph \
   --neo-password=env:NEO4J_PASSWORD
 ```
 
+### Export Cypher batches (dry-run; no execution)
+Repository (exports to ./neo-batches):
+```bash
+dagger call --cloud --mod workflows/graph \
+  --config-file demo/agencyservices.yaml \
+  build-graph-for-repository-export \
+  --github-access-token=env:GITHUB_TOKEN \
+  --repository-url https://github.com/user/repo \
+  --branch main \
+  --neo-auth=env:NEO_AUTH \
+  --neo-password=env:NEO4J_PASSWORD \
+  --open-router-api-key=env:OPEN_ROUTER_API_KEY \
+  --dry-run true \
+  export --path ./neo-batches
+```
+
+Attached directory (exports to ./neo-batches):
+```bash
+dagger call --cloud --mod workflows/graph \
+  --config-file demo/agencyservices.yaml \
+  build-graph-for-directory-export \
+  --github-access-token=env:GITHUB_TOKEN \
+  --local-path /absolute/path/to/target-repo \
+  --neo-auth=env:NEO_AUTH \
+  --neo-password=env:NEO4J_PASSWORD \
+  --open-router-api-key=env:OPEN_ROUTER_API_KEY \
+  --dry-run true \
+  export --path ./neo-batches
+```
+
+What gets exported:
+- batches/setup/constraints_and_indexes.cypher (semicolon-separated)
+- batches/node-symbol_*.cypher, defined-in_*.cypher, import_*.cypher, symbol-relationship_*.cypher
+  - Each file contains // BATCH headers and chunked statements (≤20 files per type)
+- batches/summary.json (includes batch_counts and dry_run)
+
 ## Project Overview
 
 This repository contains AI-powered development automation agents built with Dagger. The system provides end-to-end automation for software development workflows including code analysis, feature development, testing, and pull request creation.

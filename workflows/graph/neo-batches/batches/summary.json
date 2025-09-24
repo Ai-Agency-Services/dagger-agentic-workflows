@@ -1,0 +1,12 @@
+{
+  "processed_files": 92,
+  "failed_files": 1,
+  "batches_dir": "batches",
+  "dry_run": true,
+  "batch_counts": {
+    "node-symbol": 351,
+    "defined-in": 91,
+    "import": 285,
+    "symbol-relationship": 112
+  }
+}
