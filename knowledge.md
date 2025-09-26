@@ -110,6 +110,33 @@ This repository contains AI-powered development automation agents built with Dag
 - YAML configuration supports container, git, indexing, and LLM settings
 - API keys should be passed as Dagger secrets
 
+#### Code Map and File Picker
+- code_map:
+  - incremental: true|false (default true)
+  - verbose: true|false (default false)
+  - chunk_lines: int (default 100)
+  - cache_dir: string (optional host path to persist .code-map outputs)
+- file_picker:
+  - semantic_weight: 0..1 (default 1.0; blend semantic with lexical when < 1.0)
+  - fallback_when_empty: true|false (default true; use lexical when semantic is empty)
+
+Example YAML:
+```yaml
+code_map:
+  out_dir: .code-map
+  ignore_dirs: [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
+  max_file_size: 1000000
+  languages: ["python", "javascript", "typescript"]
+  incremental: true
+  verbose: false
+  chunk_lines: 120
+  cache_dir: ./tmp/code-map-cache
+
+file_picker:
+  semantic_weight: 0.8
+  fallback_when_empty: true
+```
+
 ## Best Practices
 
 ### Code Structure
@@ -123,6 +150,25 @@ This repository contains AI-powered development automation agents built with Dag
 - Use `@function` for exposed methods
 - Handle secrets properly with `dagger.Secret`
 - Leverage Dagger's caching for efficiency
+
+#### Module layout (Python)
+- src/<module>/main.py: define all `@object_type` classes and `@function` methods
+- src/<module>/__init__.py: must only import from `.main` and nothing else (no `__version__`, no constants, no helpers, no docstrings or comments)
+  - Keep it to just one or more lines like `from .main import <PublicObject>`; importing anything else breaks Dagger introspection
+
+Examples:
+- CodeMap
+  - src/code_map/main.py defines `@object_type class CodeMap`
+  - src/code_map/__init__.py contains exactly:
+    ```python
+    from .main import CodeMap
+    ```
+- Graph
+  - src/graph/main.py defines `@object_type class Graph`
+  - src/graph/__init__.py contains exactly:
+    ```python
+    from .main import Graph
+    ```
 
 ### LLM Integration
 - Support both OpenAI and OpenRouter providers
@@ -215,6 +261,211 @@ AGGREGATE=0 make test-local
 MODULES="agents/codebuff" AGGREGATE=0 make test-local
 ```
 
+## Dagger Config Injection Pattern (constructor-first)
+
+Use only Dagger-safe types in function signatures. Do NOT expose Pydantic models in @function params.
+
+Required for all @object_type modules:
+- Properties:
+  - config: dict (stores parsed YAML/JSON)
+  - config_file: dagger.File (optional)
+- Class methods:
+  - create(config_file: dagger.File) -> Self: reads contents and sets `config` via yaml.safe_load
+  - set_config_from_string(config_str: str) -> Self: parses YAML/JSON string to `config`
+- Function params must never require YAMLConfig (or other Pydantic types). Resolve defaults from `self.config` inside the function.
+- Non-nullable list params must not default to None. Use [] and resolve config defaults when empty.
+
+Example (object):
+- class MyModule:
+  - config: dict | None
+  - config_file: dagger.File | None
+  - create(config_file)
+  - set_config_from_string(config_str)
+  - do_work(...): merge function args with config defaults from self.config
+
+Consumers:
+- In modules, pass the raw config content as a string:
+  - await dag.my_module().set_config_from_string(json.dumps(config.model_dump()))
+  - Or use `.create(config_file)` when called from CLI with `--config-file`
+
+### Pattern example: Graph module create()
+
+```python
+from typing import Annotated, Optional
+import yaml
+import dagger
+from dagger import Doc, object_type, function
+
+@object_type
+class Graph:
+    # Dagger-safe properties
+    config: Optional[dict] = None
+    config_file: Optional[dagger.File] = None
+    neo_data: Optional[dagger.CacheVolume] = None
+
+    @classmethod
+    async def create(
+        cls,
+        config_file: Annotated[dagger.File, Doc("Path to the YAML config file")],
+        neo_data: Annotated[dagger.CacheVolume, Doc("Neo4j data cache volume")],
+    ) -> "Graph":
+        """Create a Graph object from a YAML config file."""
+        config_str = await config_file.contents()
+        config_dict = yaml.safe_load(config_str) if config_str else {}
+        return cls(config=config_dict or {}, config_file=config_file, neo_data=neo_data)
+```
+
+- Functions should ONLY use Dagger-safe parameters and read defaults from self.config.
+- For list parameters, never use `None` defaults. Use [] for lists then: `if not my_list: my_list = cm.get("my_list", ["default"])`
+
+### Pattern example: CodeMap module create()
+
+```python
+from typing import Annotated, Optional
+import yaml
+import dagger
+from dagger import Doc, object_type, function
+
+@object_type
+class CodeMap:
+    config: Optional[dict] = None
+    config_file: Optional[dagger.File] = None
+
+    @classmethod
+    async def create(
+        cls,
+        config_file: Annotated[dagger.File, Doc("Path to the YAML config file")],
+    ) -> "CodeMap":
+        cfg_str = await config_file.contents()
+        cfg = yaml.safe_load(cfg_str) if cfg_str else {}
+        return cls(config=cfg or {}, config_file=config_file)
+
+    @function
+    async def build(self,
+        source_dir: Annotated[dagger.Directory, Doc("Source to analyze")],
+        ignore_dirs: Annotated[list[str], Doc("Dirs to ignore")] = [],
+        languages: Annotated[list[str], Doc("Languages to parse")] = [],
+    ) -> dagger.Directory:
+        cfg = self.config or {}
+        cm = cfg.get("code_map", {})
+        if not ignore_dirs:
+            ignore_dirs = cm.get("ignore_dirs", [".git","node_modules","__pycache__", ".venv","dist","build"]) 
+        if not languages:
+            languages = cm.get("languages", ["python","javascript","typescript"]) 
+        # ... rest of function ...
+```
+
+### Pattern checklist (for every @object_type)
+- config and config_file properties exist on the @object_type
+- create classmethod loads YAML to dict and returns cls(...)
+- All functions accept only Dagger-safe types
+- Non-nullable list params default to [] (never None); merge from config when empty
+
+## Dagger Config Injection Pattern (constructor-first)
+
+Use only Dagger-safe types in function signatures. Do NOT expose Pydantic types in @function params.
+
+Pattern requirements for every @object_type:
+- Properties:
+  - config: dict | None
+  - config_file: dagger.File | None
+  - Module-specific resources (e.g., neo_data: dagger.CacheVolume | None)
+- Dagger-safe constructors:
+  - @classmethod async def create(cls, config_file: dagger.File, ...resources) -> Self
+    - Reads contents with await config_file.contents()
+    - Parses dict via yaml.safe_load(config_str)
+    - Returns cls(config=config_dict, config_file=config_file, ...)
+
+### Pattern example: Graph module
+```python
+from typing import Annotated, Optional
+import yaml
+import dagger
+from dagger import Doc, object_type
+
+@object_type
+class Graph:
+    config: Optional[dict] = None
+    config_file: Optional[dagger.File] = None
+    neo_data: Optional[dagger.CacheVolume] = None
+
+    @classmethod
+    async def create(
+        cls,
+        config_file: Annotated[dagger.File, Doc("Path to the YAML config file")],
+        neo_data: Annotated[dagger.CacheVolume, Doc("Neo4j data cache volume")],
+    ) -> "Graph":
+        config_str = await config_file.contents()
+        config_dict = yaml.safe_load(config_str) if config_str else {}
+        return cls(config=config_dict or {}, config_file=config_file, neo_data=neo_data)
+```
+
+Example: CodeMap module
+```python
+from typing import Annotated, Optional
+import yaml
+import dagger
+from dagger import Doc, object_type, function
+
+@object_type
+class CodeMap:
+    config: Optional[dict] = None
+    config_file: Optional[dagger.File] = None
+
+    @classmethod
+    async def create(
+        cls,
+        config_file: Annotated[dagger.File, Doc("Path to the YAML config file")],
+    ) -> "CodeMap":
+        cfg_str = await config_file.contents()
+        cfg = yaml.safe_load(cfg_str) if cfg_str else {}
+        return cls(config=cfg or {}, config_file=config_file)
+
+    @function
+    async def build(
+        self,
+        source_dir: Annotated[dagger.Directory, Doc("Source to analyze")],
+        ignore_dirs: Annotated[list[str], Doc("Dirs to ignore")] = [],
+        languages: Annotated[list[str], Doc("Languages to parse")] = [],
+    ) -> dagger.Directory:
+        cm = (self.config or {}).get("code_map", {})
+        if not ignore_dirs:
+            ignore_dirs = cm.get("ignore_dirs", [".git","node_modules","__pycache__", ".venv","dist","build"]) 
+        if not languages:
+            languages = cm.get("languages", ["python","javascript","typescript"]) 
+        # ... call engine with resolved defaults ...
+```
+
+Checklist
+- config and config_file properties present
+- classmethod create reads YAML and returns cls(...)
+- Functions accept only Dagger-safe types
+- List params default to [] and merge from config when empty
+
+Note: This is the canonical pattern. Older duplicate sections should be removed.
+
+### Dagger module verification vs install
+- Use `dagger functions --mod <module-dir>` to verify a module and list callable objects/functions (loads the module).
+- Use `dagger call --mod <module-dir> <object-or-function> ...` to execute functions.
+- Do NOT use `dagger install` to verify modules — it’s only for adding a module as a dependency to another module (updates dagger.json).
+
+Examples:
+```bash
+# Verify CodeMap module
+dagger functions --mod shared/code-map
+
+# Call a function (constructor-first)
+dagger call --mod shared/code-map create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml
+```
+
+### Verification checklist
+- List callable objects/functions (loads the module):
+  - dagger functions --mod shared/code-map
+  - dagger functions --mod agents/codebuff
+- Minimal end-to-end check (constructor-first):
+  - dagger call --mod shared/code-map create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml
+  - dagger call --mod shared/code-map build --source-dir . export --path ./.code-map
+
 ## Common Commands (constructor-first order)
 
 ```bash
@@ -235,7 +486,7 @@ dagger call --mod workflows/graph \
   build-graph-for-repository \
   --github-access-token=env:GITHUB_TOKEN \
   --repository-url https://github.com/user/repo \
-  --neo-auth=env:NEO4J_AUTH \
+  --neo-auth=env:NEO_AUTH \
   --neo-password=env:NEO4J_PASSWORD
 
 # Generate tests with coverage (constructor-first + --mod)
@@ -301,58 +552,30 @@ smell:
     exclude: []                   # e.g., ["DeadCodeDetector", "BarrelFileDetector"]
 ```
 
-Notes:
-- Detector names are class names (normalized). If include is non‑empty, only those run (minus excluded).
+## File Picker configuration (agents/codebuff)
 
----
+Control how semantic results (from CodeMap.query) are combined with lexical matches.
 
-## Dagger Filesystems (Python SDK) quick reference
-- Host access: `dag.host().directory("./path")`, `dag.host().file("./file.txt")`
-- Create in-pipeline: `dag.directory().with_new_file("out/a.txt","A").file("out/a.txt")`
-- Mount into container: `.with_mounted_directory("/work", dag.host().directory("."))`
-- Return artifacts: return dagger.File/Directory and export via CLI `export --path`
-- Read: `await file.contents()`, `await directory.entries()`
+- file_picker.semantic_weight: 0..1 (default 1.0)
+  - 1.0: use only semantic results
+  - 0.0: use only lexical (name/content) results
+  - between 0 and 1: blend results (filename matches weighted 0.6, content matches weighted 0.4)
+- file_picker.fallback_when_empty: bool (default true)
+  - If semantic results are empty/invalid, fall back to lexical results automatically
 
-## Dagger Containers (Python SDK) quick reference
-- Start/run:
-  ```python
-  c = dag.container().from_("alpine:3.20").with_exec(["sh","-lc","echo ok"])  # await c.stdout()
-  ```
-- Workdir/env: `.with_workdir("/work").with_env_variable("APP_ENV","dev")`
-- Mounts: dir/file/temp dir; secrets via `.with_secret_variable("TOKEN", token)`
-- Immutability: every `.with_*` returns a new container; reassign each step
-- Debug: `await c.stdout()/stderr()`, `pwd && ls -la`, `env | sort`
+YAML example:
+```yaml
+file_picker:
+  semantic_weight: 0.8        # blend in 20% lexical
+  fallback_when_empty: true   # if semantic produces no files, use lexical
 
-## Dagger Services (Python SDK) quick reference
-- Service + client:
-  ```python
-  pg = (dag.container().from_("postgres:16")
-          .with_env_variable("POSTGRES_PASSWORD","pass")
-          .with_exposed_port(5432)
-          .as_service())
-  client = (dag.container().from_("postgres:16")
-              .with_service_binding("db", pg)
-              .with_exec(["sh","-lc","pg_isready -h db -p 5432"]))
-  ```
-Tips: expose ports before `.as_service()`, bind via `.with_service_binding("name", svc)`, use app‑native readiness checks.
-
-## Dagger Builds (Python SDK) quick reference
-- Host context:
-  ```python
-  context = dag.host().directory(".")
-  img = dag.container().build(context)
-  file_out = img.file("/app/out/report.txt")  # export via CLI
-  ```
-- Git context:
-  ```python
-  src = dag.git("https://github.com/org/repo").branch("main").tree()
-  img = dag.container().build(src.directory(""))
-  ```
-- Publish: `ref = await img.publish("ttl.sh/your-image:1h")`
-
-## Dagger Secrets (Python SDK) quick reference
-- CLI sources: `secret:NAME`, `env:NAME`, `file:./path`
-- Inject: `.with_secret_variable("TOKEN", token)` (avoid writing secrets to disk)
+code_map:
+  out_dir: .code-map
+  incremental: true
+  verbose: false
+  chunk_lines: 120
+  cache_dir: ./tmp/code-map-cache
+```
 
 ## Dagger Errors (Python SDK) quick reference
 - Cloud auth: set DAGGER_CLOUD_TOKEN; use --cloud
@@ -361,4 +584,6 @@ Tips: expose ports before `.as_service()`, bind via `.with_service_binding("name
 - Export errors: function must return File/Directory; use `export --path`
 - GHA multiline output: avoid big content in GITHUB_OUTPUT—export artifacts instead
 - Debug: `await c.stdout()/stderr()`, Dagger Cloud trace URL, `DAGGER_LOG_LEVEL=debug`
+
+# Delete the trailing web_scraped_content blocks and any pasted HTML from here
 

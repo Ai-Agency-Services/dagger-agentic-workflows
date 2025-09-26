@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from typing import List
+import json
 
 import dagger
+from dagger import dag  # Added for cross-module Dagger calls
 from ais_dagger_agents_config import YAMLConfig
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
 from simple_chalk import blue, green, yellow
-from codebuff.constants import EXCLUDED_DIRS
+from ..constants import EXCLUDED_DIRS
 
 
 @dataclass
@@ -93,6 +95,33 @@ File types found:
         return error_msg
 
 
+async def semantic_query(
+    ctx: RunContext[FilePickerDependencies],
+    query: str,
+    top: int = 20
+) -> str:
+    """Semantic-lite ranking using the shared/code-map Dagger module (no CLI)."""
+    print(blue(f"🧭 Semantic query for: {query}"))
+    try:
+        # Build code map directory from current container files
+        src_dir = ctx.deps.container.directory(".")
+        import json
+        code_map = await dag.code_map().set_config_from_string(json.dumps(ctx.deps.config.model_dump()))
+        map_dir = await code_map.build(source_dir=src_dir)
+        # Query for relevant files
+        output = await code_map.query(
+            map_dir=map_dir,
+            query_text=query,
+            top_k=top
+        )
+        print(green("✅ Semantic query completed via code-map"))
+        return output
+    except Exception as e:
+        warning = f"Semantic query failed: {e}"
+        print(yellow(f"⚠️ {warning}"))
+        return json.dumps({"error": warning})
+
+
 def create_file_picker_agent(model: OpenAIModel) -> Agent:
     """Create the File Picker agent."""
     system_prompt = """
@@ -107,6 +136,7 @@ Your role:
 Your tools:
 1. search_relevant_files - Search for files by name and content
 2. analyze_file_relevance - Analyze files for task relevance
+3. semantic_query - Semantic-lite ranking using code-map
 
 Always provide:
 - A focused list of the most relevant files
@@ -126,6 +156,7 @@ Always provide:
     
     agent.tool(search_relevant_files)
     agent.tool(analyze_file_relevance)
+    agent.tool(semantic_query)
     
     print(f"File Picker Agent created with model: {model.model_name}")
     return agent

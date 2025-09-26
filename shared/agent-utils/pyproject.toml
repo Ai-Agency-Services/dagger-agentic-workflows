@@ -36,5 +36,6 @@ markers = [
 ]
 asyncio_mode = "auto"
 
-[tool.uv.sources]
-dagger-io = { path = "sdk", editable = true }
+[tool.hatch.build]
+packages = ["src/agent_utils"]
+

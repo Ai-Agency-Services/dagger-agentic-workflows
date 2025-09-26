@@ -15,6 +15,7 @@ from .models import (
     SmellConfig,
     SmellThresholdsConfig,
     SmellDetectorsConfig,
+    CodeMapConfig,
 )
 
 
@@ -35,4 +36,5 @@ __all__ = [
     "SmellConfig",
     "SmellThresholdsConfig",
     "SmellDetectorsConfig",
+    "CodeMapConfig",
 ]

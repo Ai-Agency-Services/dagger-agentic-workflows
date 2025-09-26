@@ -250,6 +250,30 @@ integration:
 - **YAML**: Configuration file parsing
 - **Dagger SDK**: Integration with Dagger modules
 
+## Code Map Configuration
+
+Add a `code_map` block to your YAML to drive shared/code-map defaults.
+
+```yaml
+code_map:
+  out_dir: .code-map
+  ignore_dirs: [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
+  max_file_size: 1000000
+  languages: ["python", "javascript", "typescript"]
+```
+
+- Fields (CodeMapConfig):
+  - out_dir: where map.json, files.jsonl, symbols.jsonl, chunks.jsonl are written
+  - ignore_dirs: directory names to skip when scanning
+  - max_file_size: maximum bytes per file
+  - languages: language IDs to parse
+
+Consumers can call constructor-first and let defaults flow:
+```python
+code_map = await dag.code_map().with_config(config)
+map_dir = await code_map.build(source_dir=container.directory("."))
+```
+
 ## Troubleshooting
 
 ### Configuration Errors

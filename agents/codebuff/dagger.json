@@ -12,6 +12,10 @@
     {
       "name": "pull_request_agent",
       "source": "../pull_request"
+    },
+    {
+      "name": "code_map",
+      "source": "../../shared/code-map"
     }
   ]
 }

@@ -242,19 +242,37 @@ class Neo4jConfig(BaseModel):
         default="PT120S", description="Default transaction timeout (e.g., PT120S)")
 
 
+# --- Code Map configuration ---
+class CodeMapConfig(BaseModel):
+    """Code-map module configuration."""
+    out_dir: str = Field(default=".code-map", description="Output directory for code map artifacts")
+    ignore_dirs: List[str] = Field(
+        default_factory=lambda: [
+            ".git", "node_modules", "__pycache__", ".venv", "dist", "build"
+        ],
+        description="Directories to ignore while scanning"
+    )
+    max_file_size: int = Field(default=1_000_000, description="Max file size to process (bytes)")
+    languages: List[str] = Field(
+        default_factory=lambda: ["python", "javascript", "typescript"],
+        description="Language IDs to parse"
+    )
+
+
 class YAMLConfig(BaseModel):
     """Main configuration model."""
     container: ContainerConfig
     git: GitConfig
-    concurrency: Optional[ConcurrencyConfig] = Field(
-        default_factory=ConcurrencyConfig)
+    concurrency: Optional[ConcurrencyConfig] = Field(default_factory=ConcurrencyConfig)
     indexing: Optional[IndexingConfig] = Field(default_factory=IndexingConfig)
     test_generation: Optional[TestGenerationConfig] = Field(default=None)
     reporter: Optional[ReporterConfig] = Field(default=None)
     core_api: Optional[CoreAPIConfig] = Field(default=None)
     neo4j: Optional[Neo4jConfig] = Field(default=None)
-    # Add smell configuration (optional)
+    # Smell configuration (optional)
     smell: Optional[SmellConfig] = Field(default=None, description="Smell detection thresholds and detector filters")
+    # Code-map configuration (optional)
+    code_map: Optional[CodeMapConfig] = Field(default_factory=CodeMapConfig, description="Code-map module configuration")
 
     class Config:
         """Pydantic configuration."""

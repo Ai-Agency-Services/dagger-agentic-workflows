@@ -120,9 +120,15 @@ class AgentUtils:
         # Use Tree-sitter for supported languages, fallback for others
         if language in ['python', 'javascript', 'typescript', 'java', 'go', 'rust', 'c', 'cpp']:
             return await self._parse_with_tree_sitter(content, filepath, language)
-        # else:
-        #     # Fallback to regex-based parsing for unsupported languages
-        #     return await self._parse_with_fallback(content, filepath, language)
+        # Fallback: return minimal JSON for unknown/unsupported languages (e.g., .toml, .sh)
+        empty_json = json.dumps({
+            "content": content,
+            "filepath": filepath,
+            "language": language,
+            "symbols": [],
+            "imports": []
+        }, indent=2)
+        return dag.directory().with_new_file("result.json", empty_json).file("result.json")
 
     @function
     async def parse_code_file_to_json_with_config(self, content: str, filepath: str, config_file: dagger.File) -> dagger.File:

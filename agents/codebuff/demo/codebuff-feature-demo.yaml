@@ -3,7 +3,7 @@
 
 container:
     work_dir: "/app"
-    docker_file_path: "./dockerfile"
+    docker_file_path: ""
 
 core_api:
     model: "openai/gpt-4o"
@@ -68,3 +68,18 @@ integrations:
     cover_workflow: true
     graph_workflow: true
     smell_detection: true
+
+# Code Map engine and File Picker tuning
+code_map:
+  out_dir: .code-map
+  ignore_dirs: [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
+  max_file_size: 1000000
+  languages: ["python", "javascript", "typescript"]
+  incremental: true
+  verbose: false
+  chunk_lines: 120
+  cache_dir: ./tmp/code-map-cache
+
+file_picker:
+  semantic_weight: 0.8
+  fallback_when_empty: true
