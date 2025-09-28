@@ -1,0 +1,70 @@
+diff --git a/agents/codebuff/src/codebuff/main.py b/agents/codebuff/src/codebuff/main.py
+index 0000000..1111111 100644
+--- a/agents/codebuff/src/codebuff/main.py
++++ b/agents/codebuff/src/codebuff/main.py
+@@ -1,30 +1,31 @@
+ import os
+ import json
+ import yaml
++import uuid
+ from dataclasses import dataclass
+ from simple_chalk import green, blue, yellow, red
+ 
+-from codebuff.context_pruner.agent import (ContextPrunerDependencies,
+-                                           create_context_pruner_agent)
+-from codebuff.file_explorer.agent import (FileExplorerDependencies,
+-                                          create_file_explorer_agent)
+-from codebuff.file_picker.agent import (FilePickerDependencies,
+-                                        create_file_picker_agent)
+-from codebuff.implementation.agent import (ImplementationDependencies,
+-                                           create_implementation_agent)
+-from codebuff.orchestrator.agent import create_orchestrator_agent
+-from codebuff.orchestrator.models import (OrchestrationState,
+-                                          OrchestratorDependencies, TaskSpec)
+-from codebuff.reviewer.agent import ReviewerDependencies, create_reviewer_agent
+-from codebuff.thinker.agent import ThinkerDependencies, create_thinker_agent
+-from codebuff.utils import create_llm_model, get_llm_credentials
++from .context_pruner.agent import (ContextPrunerDependencies,
++                                   create_context_pruner_agent)
++from .file_explorer.agent import (FileExplorerDependencies,
++                                  create_file_explorer_agent)
++from .file_picker.agent import (FilePickerDependencies,
++                                create_file_picker_agent)
++from .implementation.agent import (ImplementationDependencies,
++                                   create_implementation_agent)
++from .orchestrator.agent import create_orchestrator_agent
++from .orchestrator.models import (OrchestrationState,
++                                  OrchestratorDependencies, TaskSpec)
++from .reviewer.agent import ReviewerDependencies, create_reviewer_agent
++from .thinker.agent import ThinkerDependencies, create_thinker_agent
++from .utils import create_llm_model, get_llm_credentials
+@@ -610,12 +611,20 @@ async def orchestrate_feature_development(...):
+-            initial_state = OrchestrationState(
+-                task_spec=TaskSpec(description=task_description),
+-                current_step="start",
+-                history=[]
+-            )
++            # Build a valid initial state (TaskSpec requires id and goal)
++            initial_state = OrchestrationState(
++                task_spec=TaskSpec(
++                    id=str(uuid.uuid4()),
++                    goal=task_description,
++                    focus_area=focus_area
++                ),
++                current_step="start",
++                history=[]
++            )
+             deps = OrchestratorDependencies(
+                 config=config,
+                 source_dir=repo_dir,
+                 test_container=stored,
+                 state=initial_state,
+             )
+@@ -646,7 +655,9 @@ async def orchestrate_feature_development(...):
+-            print(green("🔧 DEBUG: About to run agent with workflow"))
+-            result = await agent.run(workflow_prompt)
+-            print(green("🔧 DEBUG: Agent workflow completed successfully"))
++            print(green("🔧 DEBUG: About to run agent with workflow"))
++            # Pass deps so ctx.deps is not None inside tools
++            result = await agent.run(workflow_prompt, deps=deps)
++            print(green("🔧 DEBUG: Agent workflow completed successfully"))

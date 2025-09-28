@@ -1,7 +1,7 @@
 from typing import NamedTuple, Optional
 
 import dagger
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from simple_chalk import red
 
@@ -65,7 +65,7 @@ async def create_llm_model(
     api_key: dagger.Secret,
     base_url: Optional[str],
     model_name: str
-) -> OpenAIModel:
+) -> OpenAIChatModel:
     """
     Creates the Pydantic AI model instance (currently OpenAIModel).
 
@@ -91,7 +91,7 @@ async def create_llm_model(
         llm_provider = OpenAIProvider(api_key=api_key_plain, base_url=base_url)
         # Determine effective base URL for logging
         effective_base_url = base_url if base_url else "https://api.openai.com/v1"
-        pydantic_ai_model = OpenAIModel(
+        pydantic_ai_model = OpenAIChatModel(
             model_name=model_name, provider=llm_provider)
         print(
             f"🔧 DEBUG: Pydantic AI Model created for '{model_name}' using effective base URL: {effective_base_url}")

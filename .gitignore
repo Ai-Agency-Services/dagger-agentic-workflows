@@ -58,4 +58,4 @@ neo-batches/
 **/neo-batches/
 
 # Ignore root TS codebuff monorepo (keep agents/codebuff)
-/codebuff/
+# /codebuff/

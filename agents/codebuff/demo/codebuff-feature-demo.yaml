@@ -3,7 +3,7 @@
 
 container:
     work_dir: "/app"
-    docker_file_path: ""
+    docker_file_path: "./dockerfile"
 
 core_api:
     model: "openai/gpt-4o"
@@ -17,8 +17,17 @@ git:
     user_name: "Feature Developer"
     base_pull_request_branch: "feature-dev"
 
+testing:
+    enabled: true
+    test_command: "npm run test"
+    install_command: "npm install"
+
+
 # Agent-specific settings
 agents:
+    orchestrator:
+        model: "openai/gpt-5-mini"
+
     file_explorer:
         model: "anthropic/claude-3.5-sonnet"
         focus_areas:
@@ -28,7 +37,7 @@ agents:
             - "user management"
     
     file_picker:
-        model: "google/gemini-flash-1.5"
+        model: "google/gemini-2.5-flash"
         max_files: 10
     
     thinker:

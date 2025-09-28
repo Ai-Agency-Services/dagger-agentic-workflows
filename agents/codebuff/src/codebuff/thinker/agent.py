@@ -4,7 +4,7 @@ from typing import List
 import dagger
 from ais_dagger_agents_config import YAMLConfig
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from simple_chalk import blue, green, yellow
 
 
@@ -142,7 +142,7 @@ Risk Assessment:
         return error_msg
 
 
-def create_thinker_agent(model: OpenAIModel) -> Agent:
+def create_thinker_agent(model: OpenAIChatModel) -> Agent:
     """Create the Thinker/Planner agent."""
     system_prompt = """
 You are a Thinker/Planner Agent, equivalent to Codebuff's strategic planning capabilities.

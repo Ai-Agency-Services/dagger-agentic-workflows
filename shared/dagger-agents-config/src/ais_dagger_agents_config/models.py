@@ -51,12 +51,13 @@ class ContainerConfig(BaseModel):
         default=None, description="Path to Dockerfile")
 
 
+# Update to provide safe defaults so YAMLConfig can tolerate minimal configs
 class GitConfig(BaseModel):
     """Git configuration."""
-    user_name: str = Field(description="Git user name")
-    user_email: EmailStr = Field(description="Git user email")
+    user_name: str = Field(default="Codebuff Agent", description="Git user name")
+    user_email: EmailStr = Field(default="codebuff@example.com", description="Git user email")
     base_pull_request_branch: str = Field(
-        description="Base branch for pull requests")
+        default="main", description="Base branch for pull requests")
 
 
 class ConcurrencyConfig(BaseModel):
@@ -150,6 +151,16 @@ class ReporterConfig(BaseModel):
     test_timeout_seconds: int = Field(
         default=60, description="Maximum time to wait for tests to complete"
     )
+
+
+# Add TestingConfig (new)
+class TestingConfig(BaseModel):
+    """Testing environment configuration overrides."""
+    enable: bool = Field(default=True, description="Enable running tests")
+    working_dir: Optional[str] = Field(default=None, description="Subdirectory to run tests from")
+    test_command: Optional[str] = Field(default=None, description="Override test command (single shell line)")
+    install_command: Optional[str] = Field(default=None, description="Install command to prepare environment")
+    timeout_seconds: Optional[int] = Field(default=None, description="Max time to allow test run")
 
 
 # --- Add Smell configuration models ---
@@ -261,8 +272,13 @@ class CodeMapConfig(BaseModel):
 
 class YAMLConfig(BaseModel):
     """Main configuration model."""
-    container: ContainerConfig
-    git: GitConfig
+    # Delete original container/git lines below to replace with defaulted versions
+    # container: ContainerConfig
+    # git: GitConfig
+    # Replace with safe defaults so missing sections don't fail validation
+    container: ContainerConfig = Field(default_factory=ContainerConfig)
+    git: GitConfig = Field(default_factory=GitConfig)
+
     concurrency: Optional[ConcurrencyConfig] = Field(default_factory=ConcurrencyConfig)
     indexing: Optional[IndexingConfig] = Field(default_factory=IndexingConfig)
     test_generation: Optional[TestGenerationConfig] = Field(default=None)
@@ -273,8 +289,9 @@ class YAMLConfig(BaseModel):
     smell: Optional[SmellConfig] = Field(default=None, description="Smell detection thresholds and detector filters")
     # Code-map configuration (optional)
     code_map: Optional[CodeMapConfig] = Field(default_factory=CodeMapConfig, description="Code-map module configuration")
+    # Testing configuration (new; optional)
+    testing: Optional[TestingConfig] = Field(default=None, description="Testing environment overrides/config")
 
     class Config:
         """Pydantic configuration."""
         extra = "allow"  # Allow extra fields for flexibility
-

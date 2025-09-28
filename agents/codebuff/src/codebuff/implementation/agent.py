@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import dagger
 from ais_dagger_agents_config import YAMLConfig
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from simple_chalk import blue, green, yellow, red
 
 
@@ -94,7 +94,7 @@ async def write_file(
         return error_msg
 
 
-def create_implementation_agent(model: OpenAIModel) -> Agent:
+def create_implementation_agent(model: OpenAIChatModel) -> Agent:
     """Create the Implementation agent."""
     system_prompt = """
 You are an Implementation Agent, equivalent to Codebuff's code execution capabilities.

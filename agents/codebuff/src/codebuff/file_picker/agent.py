@@ -1,14 +1,19 @@
-from dataclasses import dataclass
-from typing import List
 import json
+import re
+from dataclasses import dataclass
+from typing import List, Optional
 
 import dagger
-from dagger import dag  # Added for cross-module Dagger calls
+import yaml
 from ais_dagger_agents_config import YAMLConfig
+from codebuff.utils.container_state import append_log, write_json
+from dagger import dag  # Added for cross-module Dagger calls
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
+
 from simple_chalk import blue, green, yellow
-from ..constants import EXCLUDED_DIRS
+
+from codebuff.constants import EXCLUDED_DIRS
 
 
 @dataclass
@@ -16,113 +21,117 @@ class FilePickerDependencies:
     config: YAMLConfig
     container: dagger.Container
     task_description: str
+    config_file: Optional[dagger.File] = None
 
 
-async def search_relevant_files(
-    ctx: RunContext[FilePickerDependencies],
-    search_terms: str
-) -> str:
-    """Search for files relevant to the task."""
-    print(blue(f"🔍 Searching for files related to: {search_terms}"))
-    
-    try:
-        # Search file names (excluding common directories)
-        exclude_args = " ".join([f"-not -path '*/{dir}/*'" for dir in EXCLUDED_DIRS])
-        
-        name_search = await ctx.deps.container.with_exec([
-            "bash", "-c", f"find . -type f {exclude_args} -iname '*{search_terms}*' | head -15"
-        ]).stdout()
-        
-        # Search file contents (excluding common directories)
-        exclude_grep = " ".join([f"--exclude-dir={dir}" for dir in EXCLUDED_DIRS])
-        content_search = await ctx.deps.container.with_exec([
-            "bash", "-c", f"grep -r -l '{search_terms}' {exclude_grep} --include='*.py' --include='*.js' --include='*.ts' --include='*.java' --include='*.go' --include='*.rs' --include='*.jsx' --include='*.tsx' . 2>/dev/null | head -10"
-        ]).stdout()
-        
-        result = f"""File Search Results for '{search_terms}':
-
-Files with matching names:
-{name_search if name_search.strip() else 'No matches found'}
-
-Files with matching content:
-{content_search if content_search.strip() else 'No matches found'}"""
-        
-        print(green("✅ File search completed"))
-        return result
-        
-    except Exception as e:
-        error_msg = f"Error searching files: {e}"
-        print(yellow(f"⚠️ {error_msg}"))
-        return error_msg
-
-
-async def analyze_file_relevance(
-    ctx: RunContext[FilePickerDependencies],
-    file_pattern: str = "*"
-) -> str:
-    """Analyze files to determine relevance to the task."""
-    print(blue(f"📊 Analyzing file relevance for: {ctx.deps.task_description}"))
-    
-    try:
-        # Get recently modified files (excluding common directories)
-        exclude_args = " ".join([f"-not -path '*/{dir}/*'" for dir in EXCLUDED_DIRS])
-        
-        recent_files = await ctx.deps.container.with_exec([
-            "bash", "-c", rf"find . -type f {exclude_args} \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.java' -o -name '*.go' -o -name '*.jsx' -o -name '*.tsx' \) -exec ls -lt {{}} + | head -10"
-        ]).stdout()
-        
-        # Get file sizes and types (excluding common directories)
-        file_types = await ctx.deps.container.with_exec([
-            "bash", "-c", rf"find . -type f {exclude_args} \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.jsx' -o -name '*.tsx' \) | head -20 | xargs file"
-        ]).stdout()
-        
-        result = f"""File Relevance Analysis:
-
-Task: {ctx.deps.task_description}
-
-Recently modified files:
-{recent_files}
-
-File types found:
-{file_types}"""
-        
-        print(green("✅ Relevance analysis completed"))
-        return result
-        
-    except Exception as e:
-        error_msg = f"Error analyzing relevance: {e}"
-        print(yellow(f"⚠️ {error_msg}"))
-        return error_msg
-
-
+# --- Tools ---
 async def semantic_query(
     ctx: RunContext[FilePickerDependencies],
     query: str,
     top: int = 20
 ) -> str:
-    """Semantic-lite ranking using the shared/code-map Dagger module (no CLI)."""
-    print(blue(f"🧭 Semantic query for: {query}"))
+    """Semantic-lite ranking using code-map token scores.
+    Returns JSON array: [{ path, score, reason }]
+    """
+    if not ctx.deps.config_file:
+        return json.dumps({"error": "File Picker missing config_file; orchestrator must pass a Dagger File."})
+
     try:
-        # Build code map directory from current container files
+        code_map = dag.code_map(config_file=ctx.deps.config_file)
         src_dir = ctx.deps.container.directory(".")
-        import json
-        code_map = await dag.code_map().set_config_from_string(json.dumps(ctx.deps.config.model_dump()))
-        map_dir = await code_map.build(source_dir=src_dir)
-        # Query for relevant files
-        output = await code_map.query(
-            map_dir=map_dir,
-            query_text=query,
-            top_k=top
-        )
-        print(green("✅ Semantic query completed via code-map"))
-        return output
+        scores_json = await code_map.get_file_token_scores(source_dir=src_dir)
+        scores_data = json.loads(scores_json)
+        file_scores = scores_data.get("fileTokenScores", {}) or {}
+
+        # Tokenize query
+        query_text = (query or ctx.deps.task_description or "").lower()
+        q_tokens = [t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query_text) if len(t) > 1]
+        if not q_tokens:
+            return json.dumps([])
+
+        ranked = []
+        for path, token_map in file_scores.items():
+            score = 0.0
+            matched = []
+            for qt in q_tokens:
+                v = token_map.get(qt)
+                if v:
+                    score += float(v)
+                    matched.append(qt)
+            if score > 0:
+                ranked.append({
+                    "path": path,
+                    "score": round(score, 4),
+                    "reason": f"matched: {', '.join(matched[:5])}"
+                })
+
+        ranked.sort(key=lambda x: x["score"], reverse=True)
+        return json.dumps(ranked[: max(1, int(top))])
     except Exception as e:
-        warning = f"Semantic query failed: {e}"
-        print(yellow(f"⚠️ {warning}"))
-        return json.dumps({"error": warning})
+        return json.dumps({"error": f"semantic_query failed: {e}"})
 
 
-def create_file_picker_agent(model: OpenAIModel) -> Agent:
+async def search_relevant_files(
+    ctx: RunContext[FilePickerDependencies],
+    pattern: str,
+    cwd: Optional[str] = None,
+    max_results: int = 100
+) -> str:
+    """Search for files by name/content using ripgrep/grep fallback. Returns JSON array of paths."""
+    try:
+        workdir = cwd or "."
+        cmd = f"cd {workdir} && (rg -n --no-messages '{pattern}' || grep -R -n -I -E '{pattern}' . || true)"
+        run = ctx.deps.container.with_exec(["bash", "-lc", cmd])
+        out = await run.stdout()
+        paths = []
+        seen = set()
+        for line in (out or "").splitlines():
+            # rg/grep: path:line:content
+            p = line.split(":", 1)[0]
+            if not p:
+                continue
+            if any(ex in p for ex in EXCLUDED_DIRS):
+                continue
+            if p not in seen:
+                seen.add(p)
+                paths.append(p)
+            if len(paths) >= max_results:
+                break
+        return json.dumps(paths)
+    except Exception as e:
+        return json.dumps({"error": f"search_relevant_files failed: {e}"})
+
+
+async def analyze_file_relevance(
+    ctx: RunContext[FilePickerDependencies],
+    files: List[str]
+) -> str:
+    """Analyze files for task relevance using simple name/token overlap with task description.
+    Returns JSON array: [{ path, score, reason }]
+    """
+    try:
+        desc = (ctx.deps.task_description or "").lower()
+        desc_tokens = set([t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", desc) if len(t) > 1])
+        results = []
+        for p in files or []:
+            base = p.split("/")[-1].lower()
+            name_tokens = set([t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", base) if len(t) > 1])
+            overlap = sorted(desc_tokens.intersection(name_tokens))
+            score = float(len(overlap))
+            if score > 0:
+                results.append({
+                    "path": p,
+                    "score": score,
+                    "reason": f"name overlap: {', '.join(overlap[:5])}"
+                })
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return json.dumps(results[:50])
+    except Exception as e:
+        return json.dumps({"error": f"analyze_file_relevance failed: {e}"})
+
+
+# --- Agent ---
+def create_file_picker_agent(model: OpenAIChatModel) -> Agent:
     """Create the File Picker agent."""
     system_prompt = """
 You are a File Picker Agent, equivalent to Codebuff's file selection capabilities.
@@ -133,18 +142,12 @@ Your role:
 - Prioritize files based on relevance to the task
 - Provide a curated list of files to work with
 
-Your tools:
+Tools:
 1. search_relevant_files - Search for files by name and content
 2. analyze_file_relevance - Analyze files for task relevance
 3. semantic_query - Semantic-lite ranking using code-map
-
-Always provide:
-- A focused list of the most relevant files
-- Explanation of why each file is relevant
-- Priority ordering of files to examine
-- Suggestions for files that might be missing but needed
 """
-    
+
     agent = Agent(
         model=model,
         system_prompt=system_prompt,
@@ -153,10 +156,12 @@ Always provide:
         end_strategy="exhaustive",
         retries=3
     )
-    
+
+    # Register tools
     agent.tool(search_relevant_files)
     agent.tool(analyze_file_relevance)
     agent.tool(semantic_query)
-    
+
     print(f"File Picker Agent created with model: {model.model_name}")
     return agent
+

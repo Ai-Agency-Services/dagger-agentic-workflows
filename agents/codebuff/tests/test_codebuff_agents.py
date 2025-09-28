@@ -14,7 +14,7 @@ class TestCodebuffCreation:
     
     @pytest.mark.unit
     @pytest.mark.asyncio
-    @patch('agents.codebuff.src.codebuff.main.yaml.safe_load')
+    @patch('codebuff.main.yaml.safe_load')
     async def test_create_codebuff_success(self, mock_yaml_load):
         """Test successful Codebuff creation."""
         from codebuff.main import Codebuff
@@ -209,30 +209,30 @@ class TestCodebuffAgentMethods:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_pick_files_success(self):
-        """Test successful file picking."""
+    async def test_explore_files_extended_success(self):
+        """Test successful file exploration with new API."""
         from codebuff.main import Codebuff
         
         codebuff = MagicMock(spec=Codebuff)
         codebuff.config = {"test": "config"}
         codebuff._get_llm_for_agent = AsyncMock(return_value=MagicMock())
         
-        with patch('codebuff.main.create_file_picker_agent') as mock_create_agent:
+        with patch('codebuff.main.create_file_explorer_agent') as mock_create_agent:
             mock_agent = AsyncMock()
             mock_result = MagicMock()
-            mock_result.output = "Selected files: file1.py, file2.py"
+            mock_result.output = "File exploration results with tokens"
             mock_agent.run = AsyncMock(return_value=mock_result)
             mock_create_agent.return_value = mock_agent
             
-            codebuff.pick_files = Codebuff.pick_files.__get__(codebuff, Codebuff)
+            codebuff.explore_files = Codebuff.explore_files.__get__(codebuff, Codebuff)
             
-            result = await codebuff.pick_files(
-                task_description="test task",
+            result = await codebuff.explore_files(
+                focus_area="test area",
                 container=MagicMock(),
                 openai_api_key=MagicMock()
             )
             
-            assert "Selected files: file1.py, file2.py" in result
+            assert "File exploration results" in result
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -244,7 +244,7 @@ class TestCodebuffAgentMethods:
         codebuff.config = {"test": "config"}
         codebuff._get_llm_for_agent = AsyncMock(return_value=MagicMock())
         
-        with patch('agents.codebuff.src.codebuff.main.create_thinker_agent') as mock_create_agent:
+        with patch('codebuff.main.create_thinker_agent') as mock_create_agent:
             mock_agent = AsyncMock()
             mock_result = MagicMock()
             mock_result.output = "Detailed implementation plan"
@@ -273,7 +273,7 @@ class TestCodebuffAgentMethods:
         codebuff.config = {"test": "config"}
         codebuff._get_llm_for_agent = AsyncMock(return_value=MagicMock())
         
-        with patch('agents.codebuff.src.codebuff.main.create_implementation_agent') as mock_create_agent:
+        with patch('codebuff.main.create_implementation_agent') as mock_create_agent:
             mock_agent = AsyncMock()
             mock_result = MagicMock()
             mock_result.output = "Implementation completed successfully"
@@ -300,7 +300,7 @@ class TestCodebuffAgentMethods:
         codebuff.config = {"test": "config"}
         codebuff._get_llm_for_agent = AsyncMock(return_value=MagicMock())
         
-        with patch('agents.codebuff.src.codebuff.main.create_reviewer_agent') as mock_create_agent:
+        with patch('codebuff.main.create_reviewer_agent') as mock_create_agent:
             mock_agent = AsyncMock()
             mock_result = MagicMock()
             mock_result.output = "Review completed: Changes look good"
@@ -327,7 +327,7 @@ class TestCodebuffAgentMethods:
         codebuff.config = {"test": "config"}
         codebuff._get_llm_for_agent = AsyncMock(return_value=MagicMock())
         
-        with patch('agents.codebuff.src.codebuff.main.create_context_pruner_agent') as mock_create_agent:
+        with patch('codebuff.main.create_context_pruner_agent') as mock_create_agent:
             mock_agent = AsyncMock()
             mock_result = MagicMock()
             mock_result.output = "Context pruned successfully"
@@ -513,7 +513,7 @@ class TestCodebuffOrchestration:
         codebuff.setup_environment = AsyncMock(side_effect=mock_setup_env)
         
         # Mock orchestrator agent
-        with patch('agents.codebuff.src.codebuff.main.create_orchestrator_agent') as mock_create_agent:
+        with patch('codebuff.main.create_orchestrator_agent') as mock_create_agent:
             mock_agent = AsyncMock()
             mock_result = MagicMock()
             mock_result.output = "Workflow completed successfully"
@@ -578,26 +578,26 @@ class TestCodebuffErrorHandling:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_pick_files_exception_handling(self):
-        """Test file picking with exception."""
+    async def test_explore_files_exception_handling_extended(self):
+        """Test file exploration with exception in new API."""
         from codebuff.main import Codebuff
         
         codebuff = MagicMock(spec=Codebuff)
         codebuff.config = {"test": "config"}
         codebuff._get_llm_for_agent = AsyncMock(return_value=MagicMock())
         
-        with patch('codebuff.main.create_file_picker_agent') as mock_create_agent:
+        with patch('codebuff.main.create_file_explorer_agent') as mock_create_agent:
             mock_create_agent.side_effect = Exception("Agent creation failed")
             
-            codebuff.pick_files = Codebuff.pick_files.__get__(codebuff, Codebuff)
+            codebuff.explore_files = Codebuff.explore_files.__get__(codebuff, Codebuff)
             
-            result = await codebuff.pick_files(
-                task_description="test task",
+            result = await codebuff.explore_files(
+                focus_area="test area",
                 container=MagicMock(),
                 openai_api_key=MagicMock()
             )
             
-            assert "Error picking files: Agent creation failed" in result
+            assert "Error exploring files: Agent creation failed" in result
 
     @pytest.mark.unit
     @pytest.mark.asyncio

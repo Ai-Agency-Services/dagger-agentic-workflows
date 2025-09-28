@@ -130,6 +130,12 @@ test-agent-utils:
 test-shared/agent-utils:
 	cd shared/agent-utils && uv run --extra test pytest
 
+test-code-map:
+	cd shared/code-map && PYTHONPATH=$(shell pwd)/shared/code-map/src uv run pytest
+
+test-shared/code-map:
+	cd shared/code-map && PYTHONPATH=$(shell pwd)/shared/code-map/src uv run pytest
+
 # Neo4j specific tests (requires running Neo4j)
 test-neo4j:
 	uv run pytest -m "neo4j" --tb=short -v

@@ -139,13 +139,217 @@ file_picker:
 
 ## Best Practices
 
+### PydanticAI Agent Development Patterns
+
+PydanticAI is the Python framework we use for building AI agents. Key patterns:
+
+#### Agent Definition
+```python
+from pydantic_ai import Agent
+
+# Basic agent with instructions and dependencies
+agent = Agent(
+    model='openai:gpt-4o',
+    deps_type=MyDependencies,
+    instructions="You are a helpful agent that...",
+    retries=2
+)
+```
+
+#### Dependencies (Structured Data Injection)
+```python
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class MyDependencies:
+    config: dict
+    container: dagger.Container
+    # Lazy-loaded sub-agents
+    file_explorer: Optional[Agent] = None
+```
+
+#### Tool Registration
+```python
+# Direct tool decorator
+@agent.tool
+async def my_tool(
+    ctx: RunContext[MyDependencies],
+    param: str
+) -> str:
+    """Tool description for the LLM."""
+    # Access dependencies via ctx.deps
+    return f"Result: {param}"
+
+# Toolset organization
+from pydantic_ai import Toolset
+
+toolset = Toolset()
+
+@toolset.tool
+async def grouped_tool(ctx: RunContext[MyDependencies]) -> str:
+    # Implementation
+    pass
+
+# Register toolset with agent
+agent = Agent(
+    model='openai:gpt-4o',
+    deps_type=MyDependencies,
+    toolsets=[toolset]
+)
+```
+
+#### Multi-Agent Coordination
+```python
+# Agent-as-Tool Pattern
+@orchestrator.tool
+async def run_sub_agent(
+    ctx: RunContext[OrchestratorDeps],
+    task: str
+) -> str:
+    if ctx.deps.sub_agent is None:
+        ctx.deps.sub_agent = create_sub_agent()
+    
+    result = await ctx.deps.sub_agent.run(
+        task,
+        deps=SubAgentDeps(container=ctx.deps.container)
+    )
+    return result.output
+```
+
+#### Streaming and Real-time Updates
+```python
+# Stream agent execution
+async with agent.iter(prompt, deps=deps) as it:
+    async for step in it:
+        if step.is_tool_call:
+            print(f"🔧 Running: {step.tool_name}")
+        elif step.is_model_response:
+            print(f"🤖 Agent: {step.content}")
+    
+    final_result = it.final_result()
+```
+
+#### Error Handling and Retries
+- Use `retries=N` in Agent() for automatic retry of failed tool calls
+- Handle errors gracefully in tools and return structured messages
+- PydanticAI automatically validates tool parameters using type hints
+
+#### Best Practices
+- Keep agents narrow; compose via orchestrator
+- Use structured deps and typed tool I/O
+- Persist state in containers; pass explicit deps rather than global state
+- Prefer deterministic tool interfaces with clear error handling
+- Use toolsets to organize related functionality
+- Leverage streaming for long-running workflows
+
+#### References
+- [Agent Instructions](https://ai.pydantic.dev/agents/#instructions)
+- [Dependencies](https://ai.pydantic.dev/dependencies/#defining-dependencies)
+- [Tools](https://ai.pydantic.dev/tools/) and [Advanced Tools](https://ai.pydantic.dev/tools-advanced/)
+- [Toolsets](https://ai.pydantic.dev/toolsets/)
+- [Multi-Agent Applications](https://ai.pydantic.dev/multi-agent-applications/)
+
+### Available Development Tools
+
+When working with the codebase, the following tools are available for agents and development workflows:
+
+#### Planning and Documentation
+- `create_plan`: Generate detailed markdown plans for complex tasks
+- `add_subgoal`/`update_subgoal`: Track progress on complex multi-step tasks
+
+#### File Operations
+- `read_files`: Read multiple files from the codebase
+- `write_file`: Create or edit files (use edit snippets, not full rewrites)
+- `str_replace`: Make precise string replacements in existing files
+- `code_search`: Search for patterns across the codebase using ripgrep
+
+#### Execution and Testing
+- `run_terminal_command`: Execute CLI commands (SYNC or BACKGROUND)
+- `browser_logs`: Navigate to URLs and capture console logs/errors for web apps
+
+#### Agent Coordination
+- `spawn_agents`: Spawn multiple agents in parallel for complex tasks
+- `spawn_agent_inline`: Spawn a single agent within current message history
+- `lookup_agent_info`: Get information about available agent types
+
+#### Analysis and Research
+- `think_deeply`: Perform detailed step-by-step analysis for complex problems
+- Available spawnable agents:
+  - `codebuff/file-explorer@0.0.2`: Comprehensive codebase exploration
+  - `codebuff/file-picker@0.0.2`: Find relevant files for specific tasks
+  - `codebuff/researcher@0.0.2`: Web search and documentation research
+  - `codebuff/thinker@0.0.2`: Deep thinking on specific problems
+  - `codebuff/reviewer@0.0.2`: Code review and feedback
+  - `codebuff/context-pruner@0.0.2`: Context management for long conversations
+
+#### Session Management
+- `end_turn`: Signal completion and hand control back to user
+
+### Orchestrator Toolsets (agents/codebuff)
+- Planning & Docs: create_plan, add_subgoal, update_subgoal, think_deeply
+- File Ops: read_files, write_file, str_replace, code_search
+- Execution & Testing: run_terminal_command, browser_logs
+- Agent Coordination: spawn_agents, spawn_agent_inline, lookup_agent_info
+- Sub-Agents: run_file_explorer, run_file_picker, run_researcher, run_thinker, run_reviewer, run_implementation, run_context_pruner
+- Session: end_turn
+
+#### Best Practices for Tool Usage
+- Use `read_files` extensively before making changes (20+ files is fine)
+- Use `code_search` to find patterns and understand dependencies
+- Always spawn `file-explorer` first for complex tasks
+- Use `spawn_agents` for parallel work, `spawn_agent_inline` for sequential
+- Spawn `reviewer` agent after significant code changes
+- Use `write_file` with edit snippets, not full file rewrites
+- Use `str_replace` for precise edits in existing files
+
+
 ### Code Structure
 - Follow the established agent pattern with dependency injection
 - Use Pydantic models for all data structures
 - Implement proper error handling with structured exceptions
 - Keep agents focused on single responsibilities
 
+#### Python import hygiene (avoid UnboundLocalError)
+- Do not import json (or other stdlib modules) inside functions that also use json earlier in the function.
+- Keep a single module-level `import json` and reference it everywhere in the file.
+- Never assign to a local variable named `json` (shadows the module). This can cause `UnboundLocalError` at runtime.
+
 ### Dagger Integration
+
+#### Test Environment Configurator pattern (agents/codebuff)
+- Purpose: detect project language/framework/package manager, configure the container, and return a shell test command.
+- Dagger-safe flow:
+  - In Codebuff main, expose three @function proxies:
+    - detect_test_env(container) -> str (TestEnvConfig JSON)
+    - configure_test_env(container, cfg_json) -> dagger.Container
+    - get_test_command(cfg_json) -> str
+  - In orchestrate_feature_development, call detect → configure → get_test_command and pass into OrchestratorDependencies:
+    - test_env_cfg_json: str
+    - test_command: str (None when skipped)
+  - In execute_implementation, prefer deps.test_command:
+    - If absent → soft-pass (tests skipped)
+    - If it errors with “no tests collected” → soft-pass
+    - Otherwise gate commit/PR on success
+- Config propagation: pass config_file (dagger.File) via dependency objects; no YAML fallback in agents.
+- YAML overrides (optional):
+```yaml
+testing:
+  enable: true
+  working_dir: apps/api
+  test_command: pnpm test --filter api
+  install_command: pnpm install --frozen-lockfile
+  timeout_seconds: 900
+```
+- State writes: .codebuff-state/test_env.json + timeline log entries.
+
+
+#### Dagger-safe config_file propagation (agents/codebuff)
+- Pass a Dagger File for configuration through dependency objects (required at runtime).
+- Dependencies: include `config_file: Optional[dagger.File]`, but agents treat it as required — no YAML fallback.
+- Agents (File Explorer/Picker) must use `ctx.deps.config_file` when constructing downstream modules (e.g., `dag.code_map(config_file=...)`). If missing, return a clear error.
+- In main objects, pass `getattr(self, "config_file", None)` into dependency constructors (mock-safe), but ensure real runs provide a config file.
+- No in-function YAML serialization paths — orchestration provides the config file.
 - Use `@object_type` for main classes
 - Use `@function` for exposed methods
 - Handle secrets properly with `dagger.Secret`
@@ -466,6 +670,68 @@ dagger call --mod shared/code-map create --config-file agents/codebuff/demo/code
   - dagger call --mod shared/code-map create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml
   - dagger call --mod shared/code-map build --source-dir . export --path ./.code-map
 
+## Orchestrator runtime guard pattern
+
+- Always pass deps to pydantic_ai Agent.run when tools reference ctx.deps:
+  - result = await agent.run(prompt, deps=deps)
+- Initialize orchestration state before the first tool call:
+  - deps.state = OrchestrationState(task_spec=TaskSpec(id=str(uuid.uuid4()), goal=task_description, focus_area=focus_area))
+- Use relative imports for orchestrator submodules inside agents/codebuff (avoid shadowing by root TS folder):
+  - from .orchestrator.agent import create_orchestrator_agent
+  - from .orchestrator.models import OrchestrationState, OrchestratorDependencies, TaskSpec
+
+Example (main.py critical lines):
+```python
+import uuid
+from datetime import datetime, UTC
+from .orchestrator.models import (
+    OrchestrationState, OrchestratorDependencies, TaskSpec, Phase, Status
+)
+
+# Build valid initial state (all required fields present)
+initial_state = OrchestrationState(
+    task_id=str(uuid.uuid4()),
+    current_phase=Phase.EXPLORATION,
+    status=Status.IN_PROGRESS,
+    start_time=datetime.now(UTC),
+    last_update=datetime.now(UTC),
+    task_spec=TaskSpec(
+        id=str(uuid.uuid4()),
+        goal=task_description,
+        focus_area=focus_area,
+    ),
+)
+
+# Always pass deps
+result = await agent.run(workflow_prompt, deps=deps)
+```
+
+## Container-backed Orchestration State (agents/codebuff)
+
+- State directory: .codebuff-state (relative to workdir)
+- Files written during workflow:
+  - task.json: { id, goal, focus_area, created_at }
+  - exploration.json: { language_counts, with_tokens }
+  - selected_files.json: [ { path, score, reason } ]
+  - plan.json: serialized plan
+  - implementation/
+    - test_results.json: { tests_passed, test_output, exit_code }
+    - summary.json: serialized change_set
+    - diffs/commit.diff
+  - review.json: reviewer summary
+  - pull_request.json: { branch, status, message }
+  - log.txt: append-only timeline (start_task → explore → select → plan → implement → review → PR)
+
+Test-gated PR flow
+- execute_implementation runs the test suite in the container; commit only if tests pass
+- If tests fail: no commit, no PR
+- PR step reuses the same container (includes code + .codebuff-state)
+
+Implementation pattern
+- Always reassign dependencies with the updated container:
+  - ctx.deps.container = await write_json(ctx.deps.container, "plan.json", plan)
+  - ctx.deps.container = await append_log(ctx.deps.container, "create_plan: done")
+
 ## Common Commands (constructor-first order)
 
 ```bash
@@ -585,5 +851,4 @@ code_map:
 - GHA multiline output: avoid big content in GITHUB_OUTPUT—export artifacts instead
 - Debug: `await c.stdout()/stderr()`, Dagger Cloud trace URL, `DAGGER_LOG_LEVEL=debug`
 
-# Delete the trailing web_scraped_content blocks and any pasted HTML from here
 

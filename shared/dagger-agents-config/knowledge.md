@@ -13,7 +13,33 @@ Provides centralized configuration management for all Dagger agents using Pydant
 
 ## Configuration Models
 
+### TestingConfig (new)
+Use to control how tests are detected/run by agents (e.g., Implementation step):
+
+```yaml
+testing:
+  enable: true
+  working_dir: apps/api          # optional subdir
+  test_command: pnpm test --filter api
+  install_command: pnpm install --frozen-lockfile
+  timeout_seconds: 900
+```
+
+- Fields:
+  - enable: toggle tests on/off
+  - working_dir: run tests from this directory
+  - test_command: exact shell command to run tests
+  - install_command: pre-test install command
+  - timeout_seconds: override test run timeout
+
+Agents can read config.testing to shape detection/configuration and test command selection.
+
+
+
 ### Core Configuration
+
+Note: container and git now have safe defaults so minimal YAML files do not fail validation. You can still override all fields.
+
 - **`LLMCredentials`**: API keys and provider settings
 - **`ContainerConfig`**: Docker and runtime environment settings
 - **`GitConfig`**: Version control and repository settings

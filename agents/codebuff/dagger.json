@@ -1,6 +1,6 @@
 {
   "name": "codebuff",
-  "engineVersion": "v0.18.18",
+  "engineVersion": "v0.18.19",
   "sdk": {
     "source": "python"
   },
@@ -10,12 +10,12 @@
       "source": "../builder"
     },
     {
-      "name": "pull_request_agent",
-      "source": "../pull_request"
-    },
-    {
       "name": "code_map",
       "source": "../../shared/code-map"
+    },
+    {
+      "name": "pull_request_agent",
+      "source": "../pull_request"
     }
   ]
 }
