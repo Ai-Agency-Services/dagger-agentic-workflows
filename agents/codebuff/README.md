@@ -46,7 +46,7 @@ Orchestrator Agent
 # Complete feature development in one command
 dagger call codebuff create --config-file=config.yaml orchestrate-feature-development \
   --container=<your-container> \
-  --task-description="Add user profile management with avatar upload" \
+  --feature-task-description="Add user profile management with avatar upload" \
   --focus-area="user management" \
   --openai-api-key=env:OPENAI_API_KEY
 ```
@@ -63,13 +63,13 @@ dagger call codebuff create --config-file=config.yaml explore-files \
 # 2. Pick relevant files
 dagger call codebuff create --config-file=config.yaml pick-files \
   --container=<container> \
-  --task-description="Add OAuth 2.0 authentication" \
+  --feature-task-description="Add OAuth 2.0 authentication" \
   --openai-api-key=env:OPENAI_API_KEY
 
 # 3. Create implementation plan
 dagger call codebuff create --config-file=config.yaml create-plan \
   --container=<container> \
-  --task-description="Add OAuth 2.0 authentication" \
+  --feature-task-description="Add OAuth 2.0 authentication" \
   --relevant-files="auth/oauth.py,config/settings.py" \
   --openai-api-key=env:OPENAI_API_KEY
 
@@ -325,7 +325,7 @@ Safe parallelization of independent phases:
 ```bash
 # Check orchestrator status
 dagger call codebuff create --config-file=config.yaml orchestrate-feature-development \
-  --task-description="status check" \
+  --feature-task-description="status check" \
   --openai-api-key=env:OPENAI_API_KEY
 
 # Test individual agents
@@ -351,7 +351,7 @@ python -m pytest tests/
 
 # Test orchestration workflow
 dagger call codebuff create --config-file=test-config.yaml orchestrate-feature-development \
-  --task-description="test feature" \
+  --feature-task-description="test feature" \
   --container=$TEST_CONTAINER
 ```
 

@@ -12,6 +12,7 @@ from ais_dagger_agents_config import YAMLConfig
 
 class Phase(str, Enum):
     """Orchestration workflow phases."""
+    INITIALIZATION = "initialization"
     EXPLORATION = "exploration"
     FILE_SELECTION = "file_selection"
     PLANNING = "planning"
@@ -224,6 +225,7 @@ class OrchestratorDependencies:
     config_file: dagger.File
     container: dagger.Container
     api_key: dagger.Secret
+    github_token: dagger.Secret
 
     # Optional model for sub-agents
     model: Optional[Any] = None

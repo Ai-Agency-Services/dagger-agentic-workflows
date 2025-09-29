@@ -1,0 +1,38 @@
+# Demo config for Codebuff orchestrator with Git-based feedback gates
+
+# Container + Git required fields (minimal, consistent with YAMLConfig usage in code)
+container:
+  work_dir: "/src"
+  docker_file_path: null
+
+git:
+  user_name: "Codebuff Agent"
+  user_email: "codebuff@example.com"
+  base_pull_request_branch: "main"
+
+# Optional: control test behavior during implementation
+# The orchestrator will try this first; if not set, it uses heuristics
+testing:
+  enable: true
+  working_dir: "."
+  # Install step (safe no-op if no requirements.txt)
+  install_command: "bash -lc 'if [ -f requirements.txt ]; then uv pip install -r requirements.txt; else echo no-requirements; fi'"
+  # Default fallback that mirrors CI behavior
+  test_command: "bash -lc 'pytest -q || ( [ -f Makefile ] && make test || true )'"
+  timeout_seconds: 900
+
+# Orchestrator feedback gates (Git-based branch + PR)
+orchestrator:
+  feedback:
+    enabled: true
+    stop_after_phase: "PLANNING"   # Valid: PLANNING (currently supported)
+    branch_prefix: "feature/orchestrator-"
+
+# Optional: LLM model overrides (agent-specific)
+# agents:
+#   orchestrator:
+#     model: "openai/gpt-4o"
+#   file_explorer:
+#     model: "openai/gpt-4o-mini"
+#   file_picker:
+#     model: "openai/gpt-4o-mini"

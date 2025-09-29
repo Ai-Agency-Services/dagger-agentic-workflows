@@ -38,7 +38,7 @@ echo ""
 echo "📂 Step 3: Picking relevant files for the feature..."
 FILE_SELECTION=$(dagger call codebuff pick-files \
     --container="$CONTAINER" \
-    --task-description="$FEATURE_NAME with avatar upload, bio editing, and privacy settings" \
+    --feature-task-description="$FEATURE_NAME with avatar upload, bio editing, and privacy settings" \
     --openai-api-key=env:OPENAI_API_KEY)
 
 echo "📝 Selected Files:"
@@ -49,7 +49,7 @@ echo ""
 echo "🧠 Step 4: Creating detailed implementation plan..."
 IMPLEMENTATION_PLAN=$(dagger call codebuff create-plan \
     --container="$CONTAINER" \
-    --task-description="$FEATURE_NAME with avatar upload, bio editing, and privacy settings" \
+    --feature-task-description="$FEATURE_NAME with avatar upload, bio editing, and privacy settings" \
     --relevant-files="models/user.py,views/profile.py,templates/profile.html" \
     --openai-api-key=env:OPENAI_API_KEY)
 

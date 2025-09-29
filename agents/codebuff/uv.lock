@@ -71,7 +71,7 @@ wheels = [
 
 [[package]]
 name = "ais-dagger-agents-config"
-version = "0.1.23"
+version = "0.1.24"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dagger-io" },
@@ -79,9 +79,9 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/84/bbd93ab0fa68a3d9c8c49812cfd2117533924e949461b36ccc909dfb08d2/ais_dagger_agents_config-0.1.23.tar.gz", hash = "sha256:0d115d37d61c4dc6d4cae0cd4ba6119cba0462c72b1f2bdb40a53c223490c5d9", size = 58071, upload-time = "2025-09-28T15:55:16.632Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/6c/4275dadc2e615bfc2dff365299114c7abb88ce18a5c5e61063008fbb24ea/ais_dagger_agents_config-0.1.24.tar.gz", hash = "sha256:19507b7d31f40d0ad964e30e85f84fb111db86dc8297e1b0e0aefe1be152934e", size = 58256, upload-time = "2025-09-29T10:38:23.202Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/45/c373f19c6f11e350feda2ba7b9d48199922c1dc66ee4aea3506c685a901a/ais_dagger_agents_config-0.1.23-py3-none-any.whl", hash = "sha256:b3d01b8d687f8ad3c605d60a609c1348e3d4b2ca1c375d63e162132350b7cc0b", size = 6359, upload-time = "2025-09-28T15:55:15.209Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/a9/568a037dc80b3cd53c1ac49cdb1f2316e361d28e4711d1fd97e4dd45fc5a/ais_dagger_agents_config-0.1.24-py3-none-any.whl", hash = "sha256:45b48ca7001d4be386b2bd7e7f04063fa03a01d1dc583d7a3ba6055b4df8e6b7", size = 6539, upload-time = "2025-09-29T10:38:22.126Z" },
 ]
 
 [[package]]
@@ -766,7 +766,7 @@ wheels = [
 
 [[package]]
 name = "huggingface-hub"
-version = "0.35.1"
+version = "0.35.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
@@ -778,9 +778,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f6/42/0e7be334a6851cd7d51cc11717cb95e89333ebf0064431c0255c56957526/huggingface_hub-0.35.1.tar.gz", hash = "sha256:3585b88c5169c64b7e4214d0e88163d4a709de6d1a502e0cd0459e9ee2c9c572", size = 461374, upload-time = "2025-09-23T13:43:47.074Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a5/53/7c546f1a1034edaf17c54de94a1c36e481124c27e5190a85dcc1be43ffe1/huggingface_hub-0.35.2.tar.gz", hash = "sha256:3a5c03aa272f267a6892e701e5ef1bb2d0d46a487550fda978b5255bcd52f376", size = 461678, upload-time = "2025-09-29T09:50:30.883Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/60/4acf0c8a3925d9ff491dc08fe84d37e09cfca9c3b885e0db3d4dedb98cea/huggingface_hub-0.35.1-py3-none-any.whl", hash = "sha256:2f0e2709c711e3040e31d3e0418341f7092910f1462dd00350c4e97af47280a8", size = 563340, upload-time = "2025-09-23T13:43:45.343Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/ca/b1b845d49171aaa12c94614f1b075b1f665f89a617f9f22892af4e59aeec/huggingface_hub-0.35.2-py3-none-any.whl", hash = "sha256:dc6106e45b7744048d3bb315baa48f7b94b66167b2a5bb3175920038da2d5ca7", size = 564080, upload-time = "2025-09-29T09:50:27.876Z" },
 ]
 
 [package.optional-dependencies]

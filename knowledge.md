@@ -303,7 +303,6 @@ When working with the codebase, the following tools are available for agents and
 - Use `write_file` with edit snippets, not full file rewrites
 - Use `str_replace` for precise edits in existing files
 
-
 ### Code Structure
 - Follow the established agent pattern with dependency injection
 - Use Pydantic models for all data structures
@@ -324,7 +323,7 @@ When working with the codebase, the following tools are available for agents and
     - detect_test_env(container) -> str (TestEnvConfig JSON)
     - configure_test_env(container, cfg_json) -> dagger.Container
     - get_test_command(cfg_json) -> str
-  - In orchestrate_feature_development, call detect → configure → get_test_command and pass into OrchestratorDependencies:
+  - In orchestrate-feature-development, call detect → configure → get_test_command and pass into OrchestratorDependencies:
     - test_env_cfg_json: str
     - test_command: str (None when skipped)
   - In execute_implementation, prefer deps.test_command:
@@ -342,7 +341,6 @@ testing:
   timeout_seconds: 900
 ```
 - State writes: .codebuff-state/test_env.json + timeline log entries.
-
 
 #### Dagger-safe config_file propagation (agents/codebuff)
 - Pass a Dagger File for configuration through dependency objects (required at runtime).
@@ -565,6 +563,30 @@ class CodeMap:
 - All functions accept only Dagger-safe types
 - Non-nullable list params default to [] (never None); merge from config when empty
 
+Note: This is the canonical pattern. Older duplicate sections should be removed.
+
+### Dagger module verification vs install
+- Use `dagger functions --mod <module-dir>` to verify a module and list callable objects/functions (loads the module).
+- Use `dagger call --mod <module-dir> <object-or-function> ...` to execute functions.
+- Do NOT use `dagger install` to verify modules — it’s only for adding a module as a dependency to another module (updates dagger.json).
+
+Examples:
+```bash
+# Verify CodeMap module
+dagger functions --mod shared/code-map
+
+# Call a function (constructor-first)
+dagger call --mod shared/code-map create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml
+```
+
+### Verification checklist
+- List callable objects/functions (loads the module):
+  - dagger functions --mod shared/code-map
+  - dagger functions --mod agents/codebuff
+- Minimal end-to-end check (constructor-first):
+  - dagger call --mod shared/code-map create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml
+  - dagger call --mod shared/code-map build --source-dir . export --path ./.code-map
+
 ## Dagger Config Injection Pattern (constructor-first)
 
 Use only Dagger-safe types in function signatures. Do NOT expose Pydantic types in @function params.
@@ -742,7 +764,7 @@ dagger call --mod <module-dir> --config-file=config.yaml create
 dagger call --mod agents/codebuff \
   --config-file config.yaml \
   orchestrate-feature-development \
-  --task-description="Feature description" \
+  --feature-task-description="Feature description" \
   --openai-api-key=env:OPENAI_API_KEY
 
 # Build code graph from a repository (constructor-first + --mod)
@@ -760,6 +782,31 @@ dagger call --mod workflows/cover \
   --config-file=config.yaml \
   generate-tests
 ```
+
+## PR Orchestrator Commands (agents/codebuff)
+
+Trigger feature development workflow directly from a PR comment using the new command processor.
+
+- Supported command:
+  - `@orchestrator feature - kickoff feature-development-workflow`
+
+- CLI invocation (process PR comment text):
+```bash
+dagger call --mod agents/codebuff \
+  --config-file config.yaml \
+  process-orchestrator-command \
+  --github-token=secret:GITHUB_TOKEN \
+  --repository-url https://github.com/org/repo \
+  --branch main \
+  --command-text "@orchestrator feature - kickoff feature-development-workflow" \
+  --feature-task-description "Add user profile management with avatar upload" \
+  --openai-api-key=env:OPENAI_API_KEY
+```
+
+Notes:
+- Uses `feature_task_description` (or defaults to "Feature from PR" if omitted).
+- Provider is chosen based on provided keys (OpenRouter preferred when available).
+- Integrates with the Git-based feedback gates you enabled (PLANNING stop + PR).
 
 ## Development Notes
 
@@ -851,4 +898,4 @@ code_map:
 - GHA multiline output: avoid big content in GITHUB_OUTPUT—export artifacts instead
 - Debug: `await c.stdout()/stderr()`, Dagger Cloud trace URL, `DAGGER_LOG_LEVEL=debug`
 
-
+<!-- Delete any web_scraped_content blocks appended below. They were placeholder 404 pages. -->

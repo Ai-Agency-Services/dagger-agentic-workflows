@@ -43,7 +43,7 @@ dagger call codebuff create --config-file=config.yaml explore-files \
 # 2. Pick relevant files for your specific feature
 dagger call codebuff create --config-file=config.yaml pick-files \
   --container=<your-container> \
-  --task-description="Add OAuth 2.0 authentication with Google provider" \
+  --feature-task-description="Add OAuth 2.0 authentication with Google provider" \
   --openai-api-key=env:OPENAI_API_KEY
 ```
 
@@ -55,7 +55,7 @@ dagger call codebuff create --config-file=config.yaml pick-files \
 # 3. Create a detailed implementation plan
 dagger call codebuff create --config-file=config.yaml create-plan \
   --container=<your-container> \
-  --task-description="Add OAuth 2.0 authentication with Google provider" \
+  --feature-task-description="Add OAuth 2.0 authentication with Google provider" \
   --relevant-files="auth/oauth.py,config/settings.py,routes/auth.py" \
   --openai-api-key=env:OPENAI_API_KEY
 ```
@@ -134,7 +134,7 @@ dagger call codebuff explore-files \
 ```bash
 dagger call codebuff pick-files \
   --container=<container-from-step-1> \
-  --task-description="Add user profile management with avatar upload, bio editing, and privacy settings" \
+  --feature-task-description="Add user profile management with avatar upload, bio editing, and privacy settings" \
   --openai-api-key=env:OPENAI_API_KEY
 ```
 
@@ -143,7 +143,7 @@ dagger call codebuff pick-files \
 ```bash
 dagger call codebuff create-plan \
   --container=<container> \
-  --task-description="Add user profile management with avatar upload, bio editing, and privacy settings" \
+  --feature-task-description="Add user profile management with avatar upload, bio editing, and privacy settings" \
   --relevant-files="models/user.py,views/profile.py,templates/profile.html,static/css/profile.css" \
   --openai-api-key=env:OPENAI_API_KEY
 ```
@@ -177,7 +177,7 @@ For complex features, you can chain multiple agent calls:
 EXPLORATION=$(dagger call codebuff explore-files --container=$CONTAINER --focus-area="API layer")
 
 # Step 2: Use exploration results to pick files
-FILES=$(dagger call codebuff pick-files --container=$CONTAINER --task-description="Add REST API endpoints")
+FILES=$(dagger call codebuff pick-files --container=$CONTAINER --feature-task-description="Add REST API endpoints")
 
 # Step 3: Create plan based on files
 PLAN=$(dagger call codebuff create-plan --container=$CONTAINER --relevant-files="$FILES")

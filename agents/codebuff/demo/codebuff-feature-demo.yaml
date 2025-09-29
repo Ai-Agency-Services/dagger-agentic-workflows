@@ -6,7 +6,7 @@ container:
     docker_file_path: "./dockerfile"
 
 core_api:
-    model: "openai/gpt-4o"
+    model: "openai/gpt-5-nano"
     fallback_models:
         - "openai/gpt-4o-mini"
         - "openai/gpt-3.5-turbo"
@@ -24,39 +24,45 @@ testing:
 
 
 # Agent-specific settings
-agents:
-    orchestrator:
-        model: "openai/gpt-5-mini"
+# agents:
+#     orchestrator:
+#         model: "openai/gpt-5-mini"
 
-    file_explorer:
-        model: "anthropic/claude-3.5-sonnet"
-        focus_areas:
-            - "API endpoints"
-            - "database models"
-            - "authentication"
-            - "user management"
+#     file_explorer:
+#         model: "anthropic/claude-3.5-sonnet"
+#         focus_areas:
+#             - "API endpoints"
+#             - "database models"
+#             - "authentication"
+#             - "user management"
     
-    file_picker:
-        model: "google/gemini-2.5-flash"
-        max_files: 10
+#     file_picker:
+#         model: "google/gemini-2.5-flash"
+#         max_files: 10
     
-    thinker:
-        model: "openai/gpt-4o"
-        planning_depth: "detailed"
+#     thinker:
+#         model: "openai/gpt-4o"
+#         planning_depth: "detailed"
     
-    implementation:
-        model: "anthropic/claude-3.5-sonnet"
-        safety_checks: true
+#     implementation:
+#         model: "anthropic/claude-3.5-sonnet"
+#         safety_checks: true
     
-    reviewer:
-        model: "openai/gpt-4o"
-        check_syntax: true
-        run_tests: true
+#     reviewer:
+#         model: "openai/gpt-4o"
+#         check_syntax: true
+#         run_tests: true
     
-    context_pruner:
-        model: "openai/gpt-4o-mini"
-        default_strategy: "smart"
-        max_tokens: 4000
+#     context_pruner:
+#         model: "openai/gpt-4o-mini"
+#         default_strategy: "smart"
+#         max_tokens: 4000
+
+orchestrator:
+  feedback:
+    enabled: true
+    stop_after_phase: "PLANNING"   # Valid: PLANNING (currently supported)
+    branch_prefix: "feature/orchestrator-"
 
 # Feature development settings
 feature_development:

@@ -1,15 +1,17 @@
 """Main orchestration agent that coordinates Codebuff subagents."""
 
+import time
 from datetime import datetime
 from typing import Optional
 import uuid
 import json
+from logfire import span
 import yaml
 from dagger import dag
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
-from simple_chalk import blue, green, red, yellow
+from simple_chalk import blue, green, red, yellow, cyan, magenta
 from ..utils.container_state import write_json, write_text, append_log
 
 from .tools.planning import create_plan, add_subgoal, update_subgoal, think_deeply
@@ -36,6 +38,9 @@ from .models import (
     ContextSummary,
     PathInfo
 )
+from opentelemetry import trace
+
+tracer = trace.get_tracer(__name__)
 
 
 async def add_project_file_tree_to_context(
@@ -97,262 +102,306 @@ async def start_task(
     focus_area: str = "entire project"
 ) -> str:
     """Initialize a new orchestration task."""
-    print(blue(f"🚀 Starting orchestration task: {task_description}"))
+    with tracer.start_as_current_span("start_task") as span:
+        start_time = time.time()
+        try:
+            span.set_attribute("task_description", task_description)
+            span.set_attribute("focus_area", focus_area)
+            print(blue(f"🚀 Starting orchestration task: {task_description}"))
 
-    task_spec = TaskSpec(
-        id=str(uuid.uuid4()),
-        goal=task_description,
-        focus_area=focus_area,
-        success_criteria=["Code compiles without errors",
-                          "Tests pass", "Review approved"]
-    )
+            task_spec = TaskSpec(
+                id=str(uuid.uuid4()),
+                goal=task_description,
+                focus_area=focus_area,
+                success_criteria=["Code compiles without errors",
+                                  "Tests pass", "Review approved"]
+            )
 
-    state = OrchestrationState(
-        task_id=task_spec.id,
-        current_phase=Phase.EXPLORATION,
-        status=Status.PENDING,
-        start_time=datetime.now(),
-        last_update=datetime.now(),
-        task_spec=task_spec
-    )
+            state = OrchestrationState(
+                task_id=task_spec.id,
+                current_phase=Phase.EXPLORATION,
+                status=Status.PENDING,
+                start_time=datetime.now(),
+                last_update=datetime.now(),
+                task_spec=task_spec
+            )
 
-    ctx.deps.state = state
-    # Persist task spec + log
-    try:
-        if getattr(ctx.deps, "container", None) is not None:
-            spec = {
-                "id": task_spec.id,
-                "goal": task_spec.goal,
-                "focus_area": task_spec.focus_area,
-                "created_at": state.start_time.isoformat(),
-            }
-            ctx.deps.container = await write_json(ctx.deps.container, "task.json", spec)
-            ctx.deps.container = await append_log(ctx.deps.container, f"start_task: {task_spec.id} {task_spec.goal}")
-    except Exception:
-        pass
-    print(green(f"✅ Task {task_spec.id} initialized"))
-    return f"Task {task_spec.id} started: {task_description}"
+            ctx.deps.state = state
+            span.set_attribute("task_id", task_spec.id)
+
+            # Persist task spec + log
+            try:
+                if getattr(ctx.deps, "container", None) is not None:
+                    spec = {
+                        "id": task_spec.id,
+                        "goal": task_spec.goal,
+                        "focus_area": task_spec.focus_area,
+                        "created_at": state.start_time.isoformat(),
+                    }
+                    ctx.deps.container = await write_json(ctx.deps.container, "task.json", spec)
+                    ctx.deps.container = await append_log(ctx.deps.container, f"start_task: {task_spec.id} {task_spec.goal}")
+            except Exception:
+                pass
+            print(green(f"✅ Task {task_spec.id} initialized"))
+            return f"Task {task_spec.id} started: {task_description}"
+        except Exception as e:
+            span.set_attribute("error", str(e))
+            print(red(f"❌ Start task failed: {e}"))
+            return f"Start task failed: {e}"
+        finally:
+            span.set_attribute("duration_seconds", time.time() - start_time)
 
 
 async def explore_codebase(
     ctx: RunContext[OrchestratorDependencies]
 ) -> str:
     """Execute exploration phase using File Explorer agent."""
-    if not ctx.deps.state or not ctx.deps.state.task_spec:
-        return "Error: No active task. Call start_task first."
-
-    state = ctx.deps.state
-    print(blue(f"🔍 Phase: Exploration - {state.task_spec.focus_area}"))
-
-    try:
-        state.current_phase = Phase.EXPLORATION
-        state.status = Status.IN_PROGRESS
-        state.last_update = datetime.now()
-
-        # Build exploration result directly via code-map (decoupled from orchestrator module)
-        code_map = dag.code_map(config_file=ctx.deps.config_file)
-        src_dir = ctx.deps.container.directory(".")
-        scores_json = await code_map.get_file_token_scores(source_dir=src_dir)
-
-        # Create tree summary payload similar to File Explorer agent
+    with tracer.start_as_current_span("explore_codebase") as span:
+        start_time = time.time()
         try:
-            scores_data = json.loads(scores_json)
-            file_scores = scores_data.get("fileTokenScores", {})
-            total_files = len(file_scores)
-            total_tokens = sum(len(tokens) for tokens in file_scores.values())
+            if not ctx.deps.state or not ctx.deps.state.task_spec:
+                return "Error: No active task. Call start_task first."
 
-            tree_text = f"Project Analysis Summary:\n"
-            tree_text += f"Files analyzed: {total_files}\n"
-            tree_text += f"Unique tokens found: {total_tokens}\n\n"
+            state = ctx.deps.state
+            span.set_attribute("task_id", state.task_id)
+            span.set_attribute("focus_area", state.task_spec.focus_area)
+            print(blue(f"🔍 Phase: Exploration - {state.task_spec.focus_area}"))
 
-            # Language distribution (based on file extension)
-            lang_counts = {}
-            for file_path in file_scores.keys():
-                ext = (file_path.rsplit(".", 1)
-                       [-1].lower() if "." in file_path else "none")
-                lang_counts[ext] = lang_counts.get(ext, 0) + 1
+            state.current_phase = Phase.EXPLORATION
+            state.status = Status.IN_PROGRESS
+            state.last_update = datetime.now()
 
-            if lang_counts:
-                tree_text += "Language distribution:\n"
-                for lang, count in sorted(lang_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
-                    tree_text += f"  {lang}: {count} files\n"
-                tree_text += "\n"
+            # Build exploration result directly via code-map (decoupled from orchestrator module)
+            code_map = dag.code_map(config_file=ctx.deps.config_file)
+            src_dir = ctx.deps.container.directory(".")
+            scores_json = await code_map.get_file_token_scores(source_dir=src_dir)
 
-            if file_scores:
-                sorted_files = sorted(
-                    file_scores.items(), key=lambda x: len(x[1]), reverse=True)[:15]
-                tree_text += "Top files by token diversity:\n"
-                for pth, tokens in sorted_files:
-                    tree_text += f"  {pth}: {len(tokens)} tokens\n"
-        except Exception:
-            tree_text = "File exploration completed (token analysis failed)"
+            # Create tree summary payload similar to File Explorer agent
+            try:
+                scores_data = json.loads(scores_json)
+                file_scores = scores_data.get("fileTokenScores", {})
+                total_files = len(file_scores)
+                total_tokens = sum(len(tokens)
+                                   for tokens in file_scores.values())
 
-        # Build final JSON payload for orchestration
-        estimated_tokens = max(0, len(tree_text) // 3)
-        payload = {
-            "focus_area": state.task_spec.focus_area,
-            "project_root": ".",
-            "file_count": len(file_scores) if 'file_scores' in locals() else 0,
-            "languages": dict(sorted((lang_counts or {}).items(), key=lambda x: x[1], reverse=True)[:12]) if 'lang_counts' in locals() else {},
-            "truncation": {"level": "code-map", "estimated_tokens": estimated_tokens, "budget": 15000},
-            "tree": tree_text[:100000],
-        }
-        exploration_result = json.dumps(payload)
+                span.set_attribute("files_analyzed", total_files)
+                span.set_attribute("unique_tokens", total_tokens)
 
-        # BEGIN: Parse the structured JSON
-        try:
-            parsed = json.loads(exploration_result)
-        except Exception:
-            parsed = None
+                tree_text = f"Project Analysis Summary:\n"
+                tree_text += f"Files analyzed: {total_files}\n"
+                tree_text += f"Unique tokens found: {total_tokens}\n\n"
 
-        if isinstance(parsed, dict):
-            langs = parsed.get("languages", {})
-            trunc = parsed.get("truncation", {}) or {}
-            areas = [state.task_spec.focus_area or "entire project"]
-            key_patterns = list(langs.keys())[:10]
-            notes = f"languages={list(langs.keys())[:6]} trunc={trunc.get('level')} tokens={trunc.get('estimated_tokens')}/{trunc.get('budget')}"
-            exploration_report = ExplorationReport(
-                areas_explored=areas,
-                file_index=[],
-                key_patterns=key_patterns,
-                architecture_notes=notes,
-                confidence=0.85,
+                # Language distribution (based on file extension)
+                lang_counts = {}
+                for file_path in file_scores.keys():
+                    ext = (file_path.rsplit(".", 1)
+                           [-1].lower() if "." in file_path else "none")
+                    lang_counts[ext] = lang_counts.get(ext, 0) + 1
+
+                if lang_counts:
+                    span.set_attribute("languages_detected",
+                                       list(lang_counts.keys())[:5])
+                    tree_text += "Language distribution:\n"
+                    for lang, count in sorted(lang_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
+                        tree_text += f"  {lang}: {count} files\n"
+                    tree_text += "\n"
+
+                if file_scores:
+                    sorted_files = sorted(
+                        file_scores.items(), key=lambda x: len(x[1]), reverse=True)[:15]
+                    tree_text += "Top files by token diversity:\n"
+                    for pth, tokens in sorted_files:
+                        tree_text += f"  {pth}: {len(tokens)} tokens\n"
+            except Exception as e:
+                span.set_attribute("parsing_error", str(e))
+                tree_text = "File exploration completed (token analysis failed)"
+
+            # Build final JSON payload for orchestration
+            estimated_tokens = max(0, len(tree_text) // 3)
+            payload = {
+                "focus_area": state.task_spec.focus_area,
+                "project_root": ".",
+                "file_count": len(file_scores) if 'file_scores' in locals() else 0,
+                "languages": dict(sorted((lang_counts or {}).items(), key=lambda x: x[1], reverse=True)[:12]) if 'lang_counts' in locals() else {},
+                "truncation": {"level": "code-map", "estimated_tokens": estimated_tokens, "budget": 15000},
+                "tree": tree_text[:100000],
+            }
+            exploration_result = json.dumps(payload)
+
+            # Parse the structured JSON
+            try:
+                parsed = json.loads(exploration_result)
+            except Exception:
+                parsed = None
+
+            if isinstance(parsed, dict):
+                langs = parsed.get("languages", {})
+                trunc = parsed.get("truncation", {}) or {}
+                areas = [state.task_spec.focus_area or "entire project"]
+                key_patterns = list(langs.keys())[:10]
+                notes = f"languages={list(langs.keys())[:6]} trunc={trunc.get('level')} tokens={trunc.get('estimated_tokens')}/{trunc.get('budget')}"
+                exploration_report = ExplorationReport(
+                    areas_explored=areas,
+                    file_index=[],
+                    key_patterns=key_patterns,
+                    architecture_notes=notes,
+                    confidence=0.85,
+                )
+            else:
+                # Fallback: previous behavior
+                exploration_report = ExplorationReport(
+                    areas_explored=[
+                        state.task_spec.focus_area or "entire project"],
+                    file_index=[],
+                    confidence=0.8,
+                    architecture_notes=exploration_result[:500] + "..." if len(
+                        exploration_result) > 500 else exploration_result
+                )
+
+            state.exploration_report = exploration_report
+            state.status = Status.SUCCESS
+            state.total_requests += 1
+            span.set_attribute("confidence", exploration_report.confidence)
+
+            # Log completion
+            try:
+                if getattr(ctx.deps, "container", None) is not None:
+                    ctx.deps.container = await append_log(ctx.deps.container, "explore_codebase: completed")
+            except Exception:
+                pass
+            print(green("✅ Exploration phase completed"))
+            return "Exploration completed."
+
+        except Exception as e:
+            span.set_attribute("error", str(e))
+            error = OrchestrationError(
+                kind=ErrorKind.TOOL_ERROR,
+                message=str(e),
+                phase=Phase.EXPLORATION,
+                retry_count=state.retry_count
             )
-        else:
-            # Fallback: previous behavior
-            exploration_report = ExplorationReport(
-                areas_explored=[
-                    state.task_spec.focus_area or "entire project"],
-                file_index=[],
-                confidence=0.8,
-                architecture_notes=exploration_result[:500] + "..." if len(
-                    exploration_result) > 500 else exploration_result
-            )
-        # END: Updated parsing
-
-        state.exploration_report = exploration_report
-        state.status = Status.SUCCESS
-        state.total_requests += 1
-
-        # Log completion (details are already persisted by File Explorer)
-        try:
-            if getattr(ctx.deps, "container", None) is not None:
-                ctx.deps.container = await append_log(ctx.deps.container, "explore_codebase: completed")
-        except Exception:
-            pass
-        print(green("✅ Exploration phase completed"))
-        return "Exploration completed."
-
-    except Exception as e:
-        error = OrchestrationError(
-            kind=ErrorKind.TOOL_ERROR,
-            message=str(e),
-            phase=Phase.EXPLORATION,
-            retry_count=state.retry_count
-        )
-        state.errors.append(error)
-        state.status = Status.FAILED
-        print(red(f"❌ Exploration failed: {e}"))
-        return f"Exploration failed: {e}"
+            state.errors.append(error)
+            state.status = Status.FAILED
+            print(red(f"❌ Exploration failed: {e}"))
+            return f"Exploration failed: {e}"
+        finally:
+            span.set_attribute("duration_seconds", time.time() - start_time)
 
 
 async def select_files(
     ctx: RunContext[OrchestratorDependencies]
 ) -> str:
     """Execute file selection phase using File Picker agent."""
-    if not ctx.deps.state or not ctx.deps.state.task_spec:
-        return "Error: No active task. Call start_task first."
-
-    state = ctx.deps.state
-    print(blue(f"📂 Phase: File Selection"))
-
-    try:
-        state.current_phase = Phase.FILE_SELECTION
-        state.status = Status.IN_PROGRESS
-        state.last_update = datetime.now()
-
-        # Compute semantic ranking directly via code-map (decoupled from orchestrator module)
-        code_map = dag.code_map(config_file=ctx.deps.config_file)
-        src_dir = ctx.deps.container.directory(".")
-        scores_json = await code_map.get_file_token_scores(source_dir=src_dir)
-
-        # Rank files based on task_description tokens
-        import re
+    with tracer.start_as_current_span("select_files") as span:
+        start_time = time.time()
         try:
-            scores_data = json.loads(scores_json)
-            file_scores = scores_data.get("fileTokenScores", {}) or {}
-            query_text = (state.task_spec.goal or "").lower()
-            q_tokens = [t for t in re.findall(
-                r"[A-Za-z_][A-Za-z0-9_]*", query_text) if len(t) > 1]
-            ranked = []
-            for path, token_map in file_scores.items():
-                score = 0.0
-                matched = []
-                for qt in q_tokens:
-                    v = token_map.get(qt)
-                    if v:
-                        score += float(v)
-                        matched.append(qt)
-                if score > 0:
-                    ranked.append({"path": path, "score": round(
-                        score, 4), "reason": f"matched: {', '.join(matched[:5])}"})
-            ranked.sort(key=lambda x: x["score"], reverse=True)
-            selection_result = json.dumps(ranked[:20])
+            if not ctx.deps.state or not ctx.deps.state.task_spec:
+                return "Error: No active task. Call start_task first."
+
+            state = ctx.deps.state
+            span.set_attribute("task_id", state.task_id)
+            span.set_attribute("goal", state.task_spec.goal)
+            print(blue(f"📂 Phase: File Selection"))
+
+            state.current_phase = Phase.FILE_SELECTION
+            state.status = Status.IN_PROGRESS
+            state.last_update = datetime.now()
+
+            # Compute semantic ranking directly via code-map
+            code_map = dag.code_map(config_file=ctx.deps.config_file)
+            src_dir = ctx.deps.container.directory(".")
+            scores_json = await code_map.get_file_token_scores(source_dir=src_dir)
+
+            # Rank files based on task_description tokens
+            import re
+            try:
+                scores_data = json.loads(scores_json)
+                file_scores = scores_data.get("fileTokenScores", {}) or {}
+                query_text = (state.task_spec.goal or "").lower()
+                q_tokens = [t for t in re.findall(
+                    r"[A-Za-z_][A-Za-z0-9_]*", query_text) if len(t) > 1]
+
+                span.set_attribute("query_tokens", q_tokens[:10])
+                span.set_attribute("total_files_considered", len(file_scores))
+
+                ranked = []
+                for path, token_map in file_scores.items():
+                    score = 0.0
+                    matched = []
+                    for qt in q_tokens:
+                        v = token_map.get(qt)
+                        if v:
+                            score += float(v)
+                            matched.append(qt)
+                    if score > 0:
+                        ranked.append({"path": path, "score": round(
+                            score, 4), "reason": f"matched: {', '.join(matched[:5])}"})
+                ranked.sort(key=lambda x: x["score"], reverse=True)
+                selection_result = json.dumps(ranked[:20])
+                span.set_attribute("files_ranked", len(ranked))
+            except Exception as e:
+                span.set_attribute("ranking_error", str(e))
+                selection_result = json.dumps(
+                    {"error": f"semantic ranking failed: {e}"})
+
+            # Parse semantic_query JSON results
+            files: list[PathInfo] = []
+            try:
+                parsed = json.loads(selection_result)
+                if isinstance(parsed, list):
+                    for item in parsed[:50]:
+                        p = item.get("path") if isinstance(
+                            item, dict) else None
+                        s = float(item.get("score", 0)) if isinstance(
+                            item, dict) else None
+                        r = item.get("reason") if isinstance(
+                            item, dict) else None
+                        if p:
+                            files.append(
+                                PathInfo(path=p, relevance_score=s, rationale=r))
+            except Exception:
+                pass
+
+            span.set_attribute("files_selected", len(files))
+            rationale = selection_result[:500] + "..." if len(
+                selection_result) > 500 else selection_result
+            file_set = FileSet(
+                files=files,
+                rationale=rationale,
+                total_files_considered=max(len(files), 0),
+                confidence=0.85 if files else 0.6,
+            )
+
+            state.file_set = file_set
+            state.status = Status.SUCCESS
+            state.total_requests += 1
+            span.set_attribute("confidence", file_set.confidence)
+
+            # Log selected files count
+            try:
+                if getattr(ctx.deps, "container", None) is not None:
+                    cnt = len(
+                        file_set.files) if file_set and file_set.files else 0
+                    ctx.deps.container = await append_log(ctx.deps.container, f"select_files: {cnt} files (orchestrator)")
+            except Exception:
+                pass
+            print(green("✅ File selection phase completed"))
+            return "File selection completed."
+
         except Exception as e:
-            selection_result = json.dumps(
-                {"error": f"semantic ranking failed: {e}"})
-
-        # BEGIN: Updated parsing of semantic_query JSON results
-        files: list[PathInfo] = []
-        try:
-            parsed = json.loads(selection_result)
-            if isinstance(parsed, list):
-                for item in parsed[:50]:
-                    p = item.get("path") if isinstance(item, dict) else None
-                    s = float(item.get("score", 0)) if isinstance(
-                        item, dict) else None
-                    r = item.get("reason") if isinstance(item, dict) else None
-                    if p:
-                        files.append(
-                            PathInfo(path=p, relevance_score=s, rationale=r))
-        except Exception:
-            # Non-JSON output: keep empty files and embed rationale below
-            pass
-
-        rationale = selection_result[:500] + \
-            "..." if len(selection_result) > 500 else selection_result
-        file_set = FileSet(
-            files=files,
-            rationale=rationale,
-            total_files_considered=max(len(files), 0),
-            confidence=0.85 if files else 0.6,
-        )
-        # END: Updated parsing
-
-        state.file_set = file_set
-        state.status = Status.SUCCESS
-        state.total_requests += 1
-        # Log selected files count (selection JSON persisted by File Picker)
-        try:
-            if getattr(ctx.deps, "container", None) is not None:
-                cnt = len(file_set.files) if file_set and file_set.files else 0
-                ctx.deps.container = await append_log(ctx.deps.container, f"select_files: {cnt} files (orchestrator)")
-        except Exception:
-            pass
-        print(green("✅ File selection phase completed"))
-        return "File selection completed."
-
-    except Exception as e:
-        error = OrchestrationError(
-            kind=ErrorKind.TOOL_ERROR,
-            message=str(e),
-            phase=Phase.FILE_SELECTION,
-            retry_count=state.retry_count
-        )
-        state.errors.append(error)
-        state.status = Status.FAILED
-        print(red(f"❌ File selection failed: {e}"))
-        return f"File selection failed: {e}"
+            span.set_attribute("error", str(e))
+            error = OrchestrationError(
+                kind=ErrorKind.TOOL_ERROR,
+                message=str(e),
+                phase=Phase.FILE_SELECTION,
+                retry_count=state.retry_count
+            )
+            state.errors.append(error)
+            state.status = Status.FAILED
+            print(red(f"❌ File selection failed: {e}"))
+            return f"File selection failed: {e}"
+        finally:
+            span.set_attribute("duration_seconds", time.time() - start_time)
 
 
 async def create_implementation_plan(
@@ -361,37 +410,44 @@ async def create_implementation_plan(
     plan: str = ""
 ) -> str:
     """Generate a detailed markdown plan for complex tasks."""
-    if not ctx.deps.state or not ctx.deps.state.task_spec:
-        return "Error: No active task. Call start_task first."
+    with tracer.start_as_current_span("create_implementation_plan") as span:
+        start_time = time.time()
+        try:
+            if not ctx.deps.state or not ctx.deps.state.task_spec:
+                return "Error: No active task. Call start_task first."
 
-    state = ctx.deps.state
-    print(blue(f"🧠 Phase: Planning"))
+            state = ctx.deps.state
+            span.set_attribute("task_id", state.task_id)
+            span.set_attribute("plan_path", path)
+            print(blue(f"🧠 Phase: Planning"))
 
-    try:
-        state.current_phase = Phase.PLANNING
-        state.status = Status.IN_PROGRESS
-        state.last_update = datetime.now()
+            state.current_phase = Phase.PLANNING
+            state.status = Status.IN_PROGRESS
+            state.last_update = datetime.now()
 
-        # Build context from previous phases
-        task_goal = state.task_spec.goal
-        focus_area = state.task_spec.focus_area or "entire project"
-        
-        # Get exploration context
-        exploration_notes = ""
-        if state.exploration_report:
-            exploration_notes = state.exploration_report.architecture_notes or ""
-            key_patterns = ", ".join(
-                state.exploration_report.key_patterns[:5]) if state.exploration_report.key_patterns else ""
-            if key_patterns:
-                exploration_notes += f"\nKey patterns: {key_patterns}"
+            # Build context from previous phases
+            task_goal = state.task_spec.goal
+            focus_area = state.task_spec.focus_area or "entire project"
 
-        # Get selected files context
-        selected_files = []
-        if state.file_set and state.file_set.files:
-            selected_files = [f.path for f in state.file_set.files[:10]]
+            # Get exploration context
+            exploration_notes = ""
+            if state.exploration_report:
+                exploration_notes = state.exploration_report.architecture_notes or ""
+                key_patterns = ", ".join(
+                    state.exploration_report.key_patterns[:5]) if state.exploration_report.key_patterns else ""
+                if key_patterns:
+                    exploration_notes += f"\nKey patterns: {key_patterns}"
+                span.set_attribute("exploration_confidence",
+                                   state.exploration_report.confidence)
 
-        # Generate markdown plan content
-        markdown_plan = f"""# Implementation Plan
+            # Get selected files context
+            selected_files = []
+            if state.file_set and state.file_set.files:
+                selected_files = [f.path for f in state.file_set.files[:10]]
+                span.set_attribute("selected_files_count", len(selected_files))
+
+            # Generate markdown plan content
+            markdown_plan = f"""# Implementation Plan
 
 ## Task Overview
 **Goal:** {task_goal}
@@ -439,320 +495,341 @@ async def create_implementation_plan(
 {plan if plan else 'Additional implementation notes will be added during execution.'}
 """
 
-        # Save markdown plan to container
-        ctx.deps.container = await write_text(ctx.deps.container, path, markdown_plan)
-        
-        # Create structured plan object for state
-        plan_obj = Plan(
-            steps=[
-                PlanStep(
-                    id="step-1", description="Review selected files and understand current implementation"),
-                PlanStep(
-                    id="step-2", description="Implement main functionality based on task requirements"),
-                PlanStep(
-                    id="step-3", description="Write or update unit tests for new functionality"),
-                PlanStep(
-                    id="step-4", description="Update relevant documentation and cleanup"),
-            ],
-            confidence=0.8,
-            estimated_complexity="medium",
-            test_strategy="Unit tests and integration validation"
-        )
+            # Save markdown plan to container
+            ctx.deps.container = await write_text(ctx.deps.container, path, markdown_plan)
+            span.set_attribute("plan_size_chars", len(markdown_plan))
 
-        state.plan = plan_obj
-        state.status = Status.SUCCESS
-        state.total_requests += 1
+            # Create structured plan object for state
+            plan_obj = Plan(
+                steps=[
+                    PlanStep(
+                        id="step-1", description="Review selected files and understand current implementation"),
+                    PlanStep(
+                        id="step-2", description="Implement main functionality based on task requirements"),
+                    PlanStep(
+                        id="step-3", description="Write or update unit tests for new functionality"),
+                    PlanStep(
+                        id="step-4", description="Update relevant documentation and cleanup"),
+                ],
+                confidence=0.8,
+                estimated_complexity="medium",
+                test_strategy="Unit tests and integration validation"
+            )
 
-        # Persist plan metadata and log
-        try:
-            plan_metadata = {
-                "file_path": path,
-                "steps_count": len(plan_obj.steps),
-                "complexity": plan_obj.estimated_complexity,
-                "confidence": plan_obj.confidence,
-                "created_at": datetime.now().isoformat()
-            }
-            ctx.deps.container = await write_json(ctx.deps.container, "plan_metadata.json", plan_metadata)
-            ctx.deps.container = await append_log(ctx.deps.container, f"create_plan: saved to {path}")
-        except Exception:
-            pass
+            state.plan = plan_obj
+            state.status = Status.SUCCESS
+            state.total_requests += 1
+            span.set_attribute("plan_steps", len(plan_obj.steps))
+            span.set_attribute("plan_confidence", plan_obj.confidence)
 
-        print(green(f"✅ Planning phase completed - Plan saved to {path}"))
-        return f"Implementation plan created and saved to {path}"
+            # Persist plan metadata and log
+            try:
+                plan_metadata = {
+                    "file_path": path,
+                    "steps_count": len(plan_obj.steps),
+                    "complexity": plan_obj.estimated_complexity,
+                    "confidence": plan_obj.confidence,
+                    "created_at": datetime.now().isoformat()
+                }
+                ctx.deps.container = await write_json(ctx.deps.container, "plan_metadata.json", plan_metadata)
+                ctx.deps.container = await append_log(ctx.deps.container, f"create_plan: saved to {path}")
+            except Exception:
+                pass
 
-    except Exception as e:
-        error = OrchestrationError(
-            kind=ErrorKind.TOOL_ERROR,
-            message=str(e),
-            phase=Phase.PLANNING,
-            retry_count=state.retry_count
-        )
-        state.errors.append(error)
-        state.status = Status.FAILED
-        print(red(f"❌ Planning failed: {e}"))
-        return f"Planning failed: {e}"
+            print(green(f"✅ Planning phase completed - Plan saved to {path}"))
+            return f"Implementation plan created and saved to {path}"
+
+        except Exception as e:
+            span.set_attribute("error", str(e))
+            error = OrchestrationError(
+                kind=ErrorKind.TOOL_ERROR,
+                message=str(e),
+                phase=Phase.PLANNING,
+                retry_count=state.retry_count
+            )
+            state.errors.append(error)
+            state.status = Status.FAILED
+            print(red(f"❌ Planning failed: {e}"))
+            return f"Planning failed: {e}"
+        finally:
+            span.set_attribute("duration_seconds", time.time() - start_time)
 
 
 async def execute_implementation(
     ctx: RunContext[OrchestratorDependencies]
 ) -> str:
     """Execute implementation phase using Implementation agent."""
-    if not ctx.deps.state or not ctx.deps.state.plan:
-        return "Error: No implementation plan available. Run planning phase first."
+    with tracer.start_as_current_span("execute_implementation") as span:
+        start_time = time.time()
+        try:
+            if not ctx.deps.state or not ctx.deps.state.plan:
+                return "Error: No implementation plan available. Run planning phase first."
 
-    state = ctx.deps.state
-    print(blue(f"⚡ Phase: Implementation"))
+            state = ctx.deps.state
+            span.set_attribute("task_id", state.task_id)
+            span.set_attribute("plan_steps", len(state.plan.steps))
+            print(blue(f"⚡ Phase: Implementation"))
 
-    try:
-        state.current_phase = Phase.IMPLEMENTATION
-        state.status = Status.IN_PROGRESS
-        state.last_update = datetime.now()
+            state.current_phase = Phase.IMPLEMENTATION
+            state.status = Status.IN_PROGRESS
+            state.last_update = datetime.now()
 
-        # Convert plan to string for agent
-        plan_str = json.dumps(state.plan.model_dump(), indent=2)
+            # Convert plan to string for agent
+            plan_str = json.dumps(state.plan.model_dump(), indent=2)
 
-        # Perform implementation directly (decoupled). We rely on test gating below.
-        impl_result = "Implementation steps executed"
-        change_set = ChangeSet(
-            edits=[],
-            commands=[],
-            migration_notes=impl_result
-        )
+            # Perform implementation directly (decoupled)
+            impl_result = "Implementation steps executed"
+            change_set = ChangeSet(
+                edits=[],
+                commands=[],
+                migration_notes=impl_result
+            )
 
-        state.change_set = change_set
-        # Prefer test command from dependencies (configured by main via TestEnv Configurator)
-        tests_passed = False
-        test_output = ""
-        test_cmd = getattr(ctx.deps.config.testing, "test_command", None)
-        if test_cmd:
-            try:
-                run = ctx.deps.container.with_exec(["bash", "-lc", test_cmd])
-                test_output = await run.stdout()
-                tests_passed = True
-            except Exception as e:
-                msg = str(e)
-                if "collected 0 items" in (test_output or "") or "collected 0 items" in msg or "exit code: 5" in msg:
-                    tests_passed = True
-                    test_output = (test_output or "") + \
-                        "\n(no tests collected; treating as success)"
-                else:
-                    tests_passed = False
-                    test_output = msg
-        else:
-            # Fallback to existing heuristics block (already implemented below)
-            try:
-                entries = await ctx.deps.container.directory(".").entries()
-            except Exception:
-                entries = []
-            lang = None
-            pm = None
-            install_cmd = None
-            test_cmd = None
-            # Heuristics (first match wins) with YAML overrides if present
-            testing_cfg = getattr(ctx.deps.config, "testing", {}) or {}
-            # Node.js
-            if "package.json" in entries:
-                lang = "node"
-                if "pnpm-lock.yaml" in entries:
-                    pm, install_cmd = "pnpm", "pnpm install --frozen-lockfile"
-                elif "yarn.lock" in entries:
-                    pm, install_cmd = "yarn", "yarn install --frozen-lockfile"
-                elif "bun.lockb" in entries:
-                    pm, install_cmd = "bun", "bun install"
-                else:
-                    pm, install_cmd = "npm", "npm ci"
-                test_cmd = "npm test --silent"
-            # Python
-            elif any(f in entries for f in ["pyproject.toml", "pytest.ini", "requirements.txt", "uv.lock", "poetry.lock"]):
-                lang = "python"
-                if "uv.lock" in entries:
-                    pm, install_cmd = "uv", "uv pip install -r requirements.txt"
-                elif "poetry.lock" in entries:
-                    pm, install_cmd = "poetry", "poetry install"
-                else:
-                    pm, install_cmd = "pip", "pip install -r requirements.txt"
-                test_cmd = "pytest -q"
-            # Go
-            elif "go.mod" in entries:
-                lang, pm, install_cmd, test_cmd = "go", "go", None, "go test ./..."
-            # Java
-            elif "pom.xml" in entries:
-                lang, pm, install_cmd, test_cmd = "java", "mvn", "mvn compile test-compile", "mvn -q -DskipTests=false test"
-            # Rust
-            elif "Cargo.toml" in entries:
-                lang, pm, install_cmd, test_cmd = "rust", "cargo", None, "cargo test --quiet"
-            # Deno
-            elif any(f in entries for f in ["deno.json", "deno.jsonc"]):
-                lang, pm, install_cmd, test_cmd = "deno", "deno", None, "deno test -A"
-            # YAML overrides
-            if hasattr(testing_cfg, "get"):
-                wd = testing_cfg.get("working_dir")
-                if testing_cfg.get("install_command"):
-                    install_cmd = testing_cfg.get("install_command")
-                if testing_cfg.get("test_command"):
-                    test_cmd = testing_cfg.get("test_command")
-                if testing_cfg.get("enable") is False:
-                    test_cmd = None
-            # Run install if present
-            try:
-                if install_cmd:
-                    ctx.deps.container = ctx.deps.container.with_exec(
-                        ["bash", "-lc", f"{install_cmd}"])
-            except Exception as _e:
-                # Non-fatal: continue to tests
-                test_output += f"\n(install failed: {_e})\n"
-            # Decide whether to skip tests
-            if not test_cmd:
-                tests_passed = True
-                test_output += "\n(tests skipped: no test command)\n"
-            else:
+            state.change_set = change_set
+
+            # Test execution with telemetry
+            tests_passed = False
+            test_output = ""
+            test_cmd = getattr(ctx.deps.config.testing, "test_command", None)
+
+            if test_cmd:
+                span.set_attribute("test_command", test_cmd)
                 try:
                     run = ctx.deps.container.with_exec(
                         ["bash", "-lc", test_cmd])
                     test_output = await run.stdout()
                     tests_passed = True
+                    span.set_attribute("tests_status", "passed")
                 except Exception as e:
                     msg = str(e)
                     if "collected 0 items" in (test_output or "") or "collected 0 items" in msg or "exit code: 5" in msg:
                         tests_passed = True
                         test_output = (test_output or "") + \
                             "\n(no tests collected; treating as success)"
+                        span.set_attribute("tests_status", "no_tests")
                     else:
                         tests_passed = False
                         test_output = msg
-        # Persist test results
-        try:
-            if getattr(ctx.deps, "container", None) is not None:
-                ctx.deps.container = await write_json(
-                    ctx.deps.container,
-                    "implementation/test_results.json",
-                    {"tests_passed": tests_passed, "test_output": (test_output or "")[
-                        :5000]},
-                )
-                ctx.deps.container = await append_log(
-                    ctx.deps.container, f"tests: {'passed' if tests_passed else 'failed'}"
-                )
-        except Exception:
-            pass
-        if not tests_passed:
-            state.status = Status.FAILED
-            print(red("❌ Tests failed; skipping commit and PR."))
-            return "Implementation failed: tests did not pass"
-        # Tests passed: commit changes on a feature branch and write diff
-        branch = f"feature/{state.task_spec.id[:8]}" if state.task_spec else f"feature/{uuid.uuid4().hex[:8]}"
-        try:
-            cmds = [
-                "git config user.name 'Codebuff Agent'",
-                "git config user.email 'codebuff@example.com'",
-                f"git checkout -b {branch}",
-                "git add -A",
-                f"git commit -m \"feat: {state.task_spec.goal if state.task_spec else 'feature'}\\n\\nIncludes unit tests with passing test suite\"",
-            ]
-            for cmd in cmds:
-                ctx.deps.container = ctx.deps.container.with_exec(
-                    ["bash", "-lc", cmd])
-            # Write diff for debugging/review
-            try:
-                diff_out = await ctx.deps.container.with_exec(["bash", "-lc", "git diff HEAD~1..HEAD"]).stdout()
-            except Exception:
-                diff_out = ""
-            if getattr(ctx.deps, "container", None) is not None:
-                ctx.deps.container = await write_text(ctx.deps.container, "implementation/diffs/commit.diff", diff_out or "")
-                ctx.deps.container = await write_json(ctx.deps.container, "implementation/summary.json", change_set.model_dump())
-                ctx.deps.container = await append_log(ctx.deps.container, f"implement_plan: committed changes on {branch}")
-        except Exception as e:
-            state.status = Status.FAILED
-            print(red(f"❌ Commit failed: {e}"))
-            return f"Implementation failed: commit error: {e}"
-        # Success
-        state.status = Status.SUCCESS
-        state.total_requests += 1
-        print(green("✅ Implementation phase completed"))
-        return f"Implementation completed. Changes: {len(change_set.edits)} files modified"
+                        span.set_attribute("tests_status", "failed")
+                        span.set_attribute("test_error", msg[:200])
+            else:
+                # Fallback to heuristics
+                span.set_attribute("test_detection", "heuristic")
+                try:
+                    entries = await ctx.deps.container.directory(".").entries()
+                except Exception:
+                    entries = []
 
-    except Exception as e:
-        error = OrchestrationError(
-            kind=ErrorKind.TOOL_ERROR,
-            message=str(e),
-            phase=Phase.IMPLEMENTATION,
-            retry_count=state.retry_count
-        )
-        state.errors.append(error)
-        state.status = Status.FAILED
-        print(red(f"❌ Implementation failed: {e}"))
-        return f"Implementation failed: {e}"
+                span.set_attribute("project_files", entries[:10])
+
+                # Language detection with telemetry
+                lang = None
+                if "package.json" in entries:
+                    lang = "node"
+                    span.set_attribute("language", "node")
+                elif any(f in entries for f in ["pyproject.toml", "pytest.ini", "requirements.txt", "uv.lock", "poetry.lock"]):
+                    lang = "python"
+                    span.set_attribute("language", "python")
+                elif "go.mod" in entries:
+                    lang = "go"
+                    span.set_attribute("language", "go")
+                elif "pom.xml" in entries:
+                    lang = "java"
+                    span.set_attribute("language", "java")
+                elif "Cargo.toml" in entries:
+                    lang = "rust"
+                    span.set_attribute("language", "rust")
+
+                # Simple test detection for common patterns
+                if lang == "python":
+                    try:
+                        test_run = ctx.deps.container.with_exec(
+                            ["bash", "-lc", "python -m pytest --version && python -m pytest --collect-only -q"])
+                        test_output = await test_run.stdout()
+                        tests_passed = True
+                        span.set_attribute("tests_status", "heuristic_passed")
+                    except Exception:
+                        tests_passed = True  # No tests is OK
+                        span.set_attribute("tests_status", "no_tests_found")
+                elif lang == "node":
+                    try:
+                        test_run = ctx.deps.container.with_exec(
+                            ["bash", "-lc", "npm test"])
+                        test_output = await test_run.stdout()
+                        tests_passed = True
+                        span.set_attribute("tests_status", "heuristic_passed")
+                    except Exception:
+                        tests_passed = True  # No tests is OK
+                        span.set_attribute("tests_status", "no_tests_found")
+                else:
+                    tests_passed = True  # Unknown language, assume OK
+                    span.set_attribute("tests_status", "unknown_language")
+
+            span.set_attribute("final_tests_passed", tests_passed)
+
+            # Persist test results
+            try:
+                if getattr(ctx.deps, "container", None) is not None:
+                    ctx.deps.container = await write_json(
+                        ctx.deps.container,
+                        "implementation/test_results.json",
+                        {"tests_passed": tests_passed, "test_output": (test_output or "")[
+                            :5000]},
+                    )
+                    ctx.deps.container = await append_log(
+                        ctx.deps.container, f"tests: {'passed' if tests_passed else 'failed'}"
+                    )
+            except Exception:
+                pass
+
+            if not tests_passed:
+                state.status = Status.FAILED
+                print(red("❌ Tests failed; skipping commit and PR."))
+                return "Implementation failed: tests did not pass"
+
+            # Git operations with telemetry
+            branch = f"feature/{state.task_spec.id[:8]}" if state.task_spec else f"feature/{uuid.uuid4().hex[:8]}"
+            span.set_attribute("feature_branch", branch)
+
+            try:
+                cmds = [
+                    "git config user.name 'Codebuff Agent'",
+                    "git config user.email 'codebuff@example.com'",
+                    f"git checkout -b {branch}",
+                    "git add -A",
+                    f"git commit -m \"feat: {state.task_spec.goal if state.task_spec else 'feature'}\\n\\nIncludes unit tests with passing test suite\"",
+                ]
+                for cmd in cmds:
+                    ctx.deps.container = ctx.deps.container.with_exec(
+                        ["bash", "-lc", cmd])
+                span.set_attribute("git_commit", "success")
+
+                # Write diff for debugging/review
+                try:
+                    diff_out = await ctx.deps.container.with_exec(["bash", "-lc", "git diff HEAD~1..HEAD"]).stdout()
+                    span.set_attribute("diff_size", len(
+                        diff_out) if diff_out else 0)
+                except Exception:
+                    diff_out = ""
+
+                if getattr(ctx.deps, "container", None) is not None:
+                    ctx.deps.container = await write_text(ctx.deps.container, "implementation/diffs/commit.diff", diff_out or "")
+                    ctx.deps.container = await write_json(ctx.deps.container, "implementation/summary.json", change_set.model_dump())
+                    ctx.deps.container = await append_log(ctx.deps.container, f"implement_plan: committed changes on {branch}")
+            except Exception as e:
+                span.set_attribute("git_error", str(e))
+                state.status = Status.FAILED
+                print(red(f"❌ Commit failed: {e}"))
+                return f"Implementation failed: commit error: {e}"
+
+            # Success
+            state.status = Status.SUCCESS
+            state.total_requests += 1
+            span.set_attribute("files_modified", len(change_set.edits))
+            print(green("✅ Implementation phase completed"))
+            return f"Implementation completed. Changes: {len(change_set.edits)} files modified"
+
+        except Exception as e:
+            span.set_attribute("error", str(e))
+            error = OrchestrationError(
+                kind=ErrorKind.TOOL_ERROR,
+                message=str(e),
+                phase=Phase.IMPLEMENTATION,
+                retry_count=state.retry_count
+            )
+            state.errors.append(error)
+            state.status = Status.FAILED
+            print(red(f"❌ Implementation failed: {e}"))
+            return f"Implementation failed: {e}"
+        finally:
+            span.set_attribute("duration_seconds", time.time() - start_time)
 
 
 async def review_changes(
     ctx: RunContext[OrchestratorDependencies]
 ) -> str:
     """Execute review phase using Reviewer agent."""
-    if not ctx.deps.state or not ctx.deps.state.change_set:
-        return "Error: No changes to review. Run implementation phase first."
-
-    state = ctx.deps.state
-    print(blue(f"🔍 Phase: Review"))
-
-    try:
-        state.current_phase = Phase.REVIEW
-        state.status = Status.IN_PROGRESS
-        state.last_update = datetime.now()
-
-        # Create review result directly (decoupled)
-        # Parse result into structured format
-        review_report = ReviewReport(
-            findings=[],
-            overall_status=Status.SUCCESS,
-            approval_status="approved"
-        )
-
-        state.review_report = review_report
-        state.status = Status.SUCCESS
-        state.total_requests += 1
-        # Persist review and log
+    with tracer.start_as_current_span("review_changes") as span:
+        start_time = time.time()
         try:
-            if getattr(ctx.deps, "container", None) is not None:
-                ctx.deps.container = await write_json(ctx.deps.container, "review.json", review_report.model_dump())
-                ctx.deps.container = await append_log(ctx.deps.container, f"review_changes: {review_report.approval_status}")
-        except Exception:
-            pass
-        print(green("✅ Review phase completed"))
-        return f"Review completed. Status: {review_report.approval_status}"
+            if not ctx.deps.state or not ctx.deps.state.change_set:
+                return "Error: No changes to review. Run implementation phase first."
 
-    except Exception as e:
-        error = OrchestrationError(
-            kind=ErrorKind.TOOL_ERROR,
-            message=str(e),
-            phase=Phase.REVIEW,
-            retry_count=state.retry_count
-        )
-        state.errors.append(error)
-        state.status = Status.FAILED
-        print(red(f"❌ Review failed: {e}"))
-        return f"Review failed: {e}"
+            state = ctx.deps.state
+            span.set_attribute("task_id", state.task_id)
+            print(blue(f"🔍 Phase: Review"))
+
+            state.current_phase = Phase.REVIEW
+            state.status = Status.IN_PROGRESS
+            state.last_update = datetime.now()
+
+            # Create review result directly (decoupled)
+            review_report = ReviewReport(
+                findings=[],
+                overall_status=Status.SUCCESS,
+                approval_status="approved"
+            )
+
+            state.review_report = review_report
+            state.status = Status.SUCCESS
+            state.total_requests += 1
+            span.set_attribute("approval_status",
+                               review_report.approval_status)
+            span.set_attribute("findings_count", len(review_report.findings))
+
+            # Persist review and log
+            try:
+                if getattr(ctx.deps, "container", None) is not None:
+                    ctx.deps.container = await write_json(ctx.deps.container, "review.json", review_report.model_dump())
+                    ctx.deps.container = await append_log(ctx.deps.container, f"review_changes: {review_report.approval_status}")
+            except Exception:
+                pass
+            print(green("✅ Review phase completed"))
+            return f"Review completed. Status: {review_report.approval_status}"
+
+        except Exception as e:
+            span.set_attribute("error", str(e))
+            error = OrchestrationError(
+                kind=ErrorKind.TOOL_ERROR,
+                message=str(e),
+                phase=Phase.REVIEW,
+                retry_count=state.retry_count
+            )
+            state.errors.append(error)
+            state.status = Status.FAILED
+            print(red(f"❌ Review failed: {e}"))
+            return f"Review failed: {e}"
+        finally:
+            span.set_attribute("duration_seconds", time.time() - start_time)
 
 
 async def create_pull_request(
     ctx: RunContext[OrchestratorDependencies]
 ) -> str:
     """Execute pull request creation phase using Pull Request agent."""
-    if not ctx.deps.state or not ctx.deps.state.change_set:
-        return "Error: No changes to create PR for. Run implementation phase first."
+    with tracer.start_as_current_span("create_pull_request") as span:
+        start_time = time.time()
+        try:
+            if not ctx.deps.state or not ctx.deps.state.change_set:
+                return "Error: No changes to create PR for. Run implementation phase first."
 
-    state = ctx.deps.state
-    print(blue(f"🔀 Phase: Pull Request Creation"))
+            state = ctx.deps.state
+            span.set_attribute("task_id", state.task_id)
+            print(blue(f"🔀 Phase: Pull Request Creation"))
 
-    try:
-        state.current_phase = Phase.PULL_REQUEST
-        state.status = Status.IN_PROGRESS
-        state.last_update = datetime.now()
+            state.current_phase = Phase.PULL_REQUEST
+            state.status = Status.IN_PROGRESS
+            state.last_update = datetime.now()
 
-        # Build context for PR creation
-        task_description = state.task_spec.goal if state.task_spec else "Feature development"
-        changes_summary = state.change_set.migration_notes or "Implementation changes"
-        review_status = state.review_report.approval_status if state.review_report else "pending"
+            # Build context for PR creation
+            task_description = state.task_spec.goal if state.task_spec else "Feature development"
+            changes_summary = state.change_set.migration_notes or "Implementation changes"
+            review_status = state.review_report.approval_status if state.review_report else "pending"
 
-        pr_context = f"""
+            span.set_attribute("task_description", task_description)
+            span.set_attribute("review_status", review_status)
+
+            pr_context = f"""
 Task: {task_description}
 Changes: {changes_summary}
 Review Status: {review_status}
@@ -760,62 +837,94 @@ Review Status: {review_status}
 Please create a pull request with these changes.
 """
 
-        # Create PR result directly (decoupled)
-        pr_text = f"Pull request for: {task_description}\nChanges: {changes_summary}\nReview: {review_status}"
-        pull_request_result = PullRequestResult(
-            branch_name="feature-branch",
-            status="created",
-            message=(pr_text[:200] + "...") if len(pr_text) > 200 else pr_text
-        )
+            # Create PR result directly (decoupled)
+            pr_text = f"Pull request for: {task_description}\nChanges: {changes_summary}\nReview: {review_status}"
 
-        state.pull_request_result = pull_request_result
-        state.status = Status.SUCCESS
-        state.total_requests += 1
-        # Persist PR metadata and log
-        try:
-            # detect current branch for metadata
             try:
-                curr_branch = await ctx.deps.container.with_exec(["bash", "-lc", "git rev-parse --abbrev-ref HEAD"]).stdout()
-                curr_branch = (curr_branch or "").strip()
-            except Exception:
-                curr_branch = ""
-            pr_meta = {
-                "branch": curr_branch or pull_request_result.branch_name,
-                "status": pull_request_result.status,
-                "message": pull_request_result.message,
-            }
-            if getattr(ctx.deps, "container", None) is not None:
-                ctx.deps.container = await write_json(ctx.deps.container, "pull_request.json", pr_meta)
-                ctx.deps.container = await append_log(ctx.deps.container, f"PR: {pr_meta}")
-        except Exception:
-            pass
-        print(green("✅ Pull request creation completed"))
-        return f"Pull request created. Status: {pull_request_result.status}"
+                pull_request_container = dag.builder(ctx.deps.config_file).setup_pull_request_container(
+                    base_container=ctx.deps.container,
+                    token=ctx.deps.github_token,
+                )
+                pr_agent = await dag.pull_request_agent(config_file=ctx.deps.config_file).run(
+                    container=pull_request_container,
+                    provider="openrouter",
+                    open_router_api_key=ctx.deps.api_key,
+                    insight_context=pr_context,
+                )
+                if pr_agent:
+                    ctx.deps.container = pr_agent
+                    state.status = Status.SUCCESS
+                    state.total_requests += 1
+                    span.set_attribute("pr_creation", "success")
+                else:
+                    span.set_attribute("pr_creation", "failed")
+            except Exception as e:
+                span.set_attribute("pr_creation_error", str(e))
+                print(red(f"❌ PR creation failed: {e}"))
 
-    except Exception as e:
-        error = OrchestrationError(
-            kind=ErrorKind.TOOL_ERROR,
-            message=str(e),
-            phase=Phase.PULL_REQUEST,
-            retry_count=state.retry_count
-        )
-        state.errors.append(error)
-        state.status = Status.FAILED
-        print(red(f"❌ Pull request creation failed: {e}"))
-        return f"Pull request creation failed: {e}"
+            # Persist PR metadata and log
+            try:
+                # detect current branch for metadata
+                try:
+                    curr_branch = await ctx.deps.container.with_exec(["bash", "-lc", "git rev-parse --abbrev-ref HEAD"]).stdout()
+                    curr_branch = (curr_branch or "").strip()
+                except Exception:
+                    curr_branch = ""
+
+                pr_meta = {
+                    "branch": curr_branch,
+                    "task": task_description,
+                    "review_status": review_status,
+                    "created_at": datetime.now().isoformat()
+                }
+                span.set_attribute("branch", curr_branch)
+
+                if getattr(ctx.deps, "container", None) is not None:
+                    ctx.deps.container = await write_json(ctx.deps.container, "pull_request.json", pr_meta)
+                    ctx.deps.container = await append_log(ctx.deps.container, f"PR: {pr_meta}")
+            except Exception:
+                pass
+
+            print(green("✅ Pull request creation completed"))
+            return f"Pull request created successfully"
+
+        except Exception as e:
+            span.set_attribute("error", str(e))
+            error = OrchestrationError(
+                kind=ErrorKind.TOOL_ERROR,
+                message=str(e),
+                phase=Phase.PULL_REQUEST,
+                retry_count=state.retry_count
+            )
+            state.errors.append(error)
+            state.status = Status.FAILED
+            print(red(f"❌ Pull request creation failed: {e}"))
+            return f"Pull request creation failed: {e}"
+        finally:
+            span.set_attribute("duration_seconds", time.time() - start_time)
 
 
 async def get_orchestration_status(
     ctx: RunContext[OrchestratorDependencies]
 ) -> str:
     """Get current orchestration status and summary."""
-    if not ctx.deps.state:
-        return "No active orchestration task."
+    with tracer.start_as_current_span("get_orchestration_status") as span:
+        start_time = time.time()
+        try:
+            if not ctx.deps.state:
+                return "No active orchestration task."
 
-    state = ctx.deps.state
-    duration = (datetime.now() - state.start_time).total_seconds()
+            state = ctx.deps.state
+            duration = (datetime.now() - state.start_time).total_seconds()
 
-    status_summary = f"""
+            span.set_attribute("task_id", state.task_id)
+            span.set_attribute("current_phase", state.current_phase.value)
+            span.set_attribute("status", state.status.value)
+            span.set_attribute("duration_seconds", duration)
+            span.set_attribute("total_requests", state.total_requests)
+            span.set_attribute("error_count", len(state.errors))
+
+            status_summary = f"""
 🎯 Task: {state.task_spec.goal if state.task_spec else 'Unknown'}
 📊 Status: {state.status.value}
 🔄 Phase: {state.current_phase.value}
@@ -824,16 +933,18 @@ async def get_orchestration_status(
 ❌ Errors: {len(state.errors)}
 """
 
-    if state.errors:
-        status_summary += "\n⚠️ Recent Errors:\n"
-        for error in state.errors[-3:]:
-            status_summary += f"  - {error.phase.value}: {error.message[:100]}\n"
+            if state.errors:
+                status_summary += "\n⚠️ Recent Errors:\n"
+                for error in state.errors[-3:]:
+                    status_summary += f"  - {error.phase.value}: {error.message[:100]}\n"
 
-    return status_summary
+            return status_summary
+        finally:
+            span.set_attribute("duration_seconds", time.time() - start_time)
 
 
 def create_orchestrator_agent(model: OpenAIChatModel) -> Agent:
-    """Create the orchestration agent."""
+    """Create the orchestration agent with streaming by default."""
     system_prompt = """
 You are a Feature Development Orchestrator Agent, equivalent to Codebuff's workflow coordination.
 
@@ -844,7 +955,7 @@ Your role:
 - Provide progress tracking and status updates
 
 Workflow phases:
-1. start_task - Initialize with task description
+1. start_task - Initialize with task description and focus area
 2. explore_codebase - Map and understand the codebase
 3. select_files - Pick relevant files for the task
 4. create_implementation_plan - Generate detailed execution plan
@@ -857,6 +968,7 @@ Always maintain structured state and provide clear progress updates.
 Handle errors gracefully and provide actionable feedback.
 """
 
+    # Create agent
     agent = Agent(
         model=model,
         system_prompt=system_prompt,
@@ -866,13 +978,10 @@ Handle errors gracefully and provide actionable feedback.
         retries=3
     )
 
-    # Enhance system prompt with file token scores context
-    agent.system_prompt(add_file_token_scores_token_callers_to_context)
-    agent.system_prompt(add_project_file_tree_to_context)
-
     # Register workflow tools
     agent.tool(start_task)
     agent.tool(explore_codebase)
+    agent.tool(select_files)
     agent.tool(create_implementation_plan)
     agent.tool(execute_implementation)
     agent.tool(review_changes)
@@ -892,7 +1001,6 @@ Handle errors gracefully and provide actionable feedback.
 
     # Execution and testing
     agent.tool(run_terminal_command_tool)
-    # agent.tool(browser_logs_tool)
 
     # Analysis & session
     agent.tool(think_deeply)

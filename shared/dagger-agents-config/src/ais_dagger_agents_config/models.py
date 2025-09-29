@@ -270,12 +270,22 @@ class CodeMapConfig(BaseModel):
     )
 
 
+# --- Orchestrator feedback configuration ---
+class FeedbackConfig(BaseModel):
+    """Git-based feedback gates configuration."""
+    enabled: bool = Field(default=False, description="Enable Git-based feedback gates")
+    stop_after_phase: Optional[str] = Field(default=None, description="Phase to stop after (e.g., 'PLANNING')")
+    branch_prefix: str = Field(default="feature/orchestrator-", description="Prefix for working branches")
+
+
+class OrchestratorConfig(BaseModel):
+    """Orchestrator behavior configuration."""
+    feedback: Optional[FeedbackConfig] = Field(default=None, description="Feedback gates and PR behavior")
+
+
 class YAMLConfig(BaseModel):
     """Main configuration model."""
-    # Delete original container/git lines below to replace with defaulted versions
-    # container: ContainerConfig
-    # git: GitConfig
-    # Replace with safe defaults so missing sections don't fail validation
+    # Delete original container/git lines below to replace with safe defaults so missing sections don't fail validation
     container: ContainerConfig = Field(default_factory=ContainerConfig)
     git: GitConfig = Field(default_factory=GitConfig)
 
@@ -291,6 +301,8 @@ class YAMLConfig(BaseModel):
     code_map: Optional[CodeMapConfig] = Field(default_factory=CodeMapConfig, description="Code-map module configuration")
     # Testing configuration (new; optional)
     testing: Optional[TestingConfig] = Field(default=None, description="Testing environment overrides/config")
+    # Orchestrator configuration (new; optional)
+    orchestrator: Optional[OrchestratorConfig] = Field(default=None, description="Orchestrator behavior configuration")
 
     class Config:
         """Pydantic configuration."""
