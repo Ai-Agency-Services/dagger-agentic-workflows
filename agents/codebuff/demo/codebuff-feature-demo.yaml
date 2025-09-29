@@ -17,8 +17,17 @@ git:
     user_name: "Feature Developer"
     base_pull_request_branch: "feature-dev"
 
+testing:
+    enabled: true
+    test_command: "npm run test"
+    install_command: "npm install"
+
+
 # Agent-specific settings
 agents:
+    orchestrator:
+        model: "openai/gpt-5-mini"
+
     file_explorer:
         model: "anthropic/claude-3.5-sonnet"
         focus_areas:
@@ -28,7 +37,7 @@ agents:
             - "user management"
     
     file_picker:
-        model: "google/gemini-flash-1.5"
+        model: "google/gemini-2.5-flash"
         max_files: 10
     
     thinker:
@@ -68,3 +77,18 @@ integrations:
     cover_workflow: true
     graph_workflow: true
     smell_detection: true
+
+# Code Map engine and File Picker tuning
+code_map:
+  out_dir: .code-map
+  ignore_dirs: [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
+  max_file_size: 1000000
+  languages: ["python", "javascript", "typescript"]
+  incremental: true
+  verbose: false
+  chunk_lines: 120
+  cache_dir: ./tmp/code-map-cache
+
+file_picker:
+  semantic_weight: 0.8
+  fallback_when_empty: true

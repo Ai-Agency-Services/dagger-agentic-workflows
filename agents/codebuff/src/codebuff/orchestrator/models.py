@@ -5,7 +5,7 @@ from enum import Enum
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import dagger
 from ais_dagger_agents_config import YAMLConfig
 
@@ -91,6 +91,30 @@ class Plan(BaseModel):
     test_strategy: Optional[str] = None
     confidence: float = Field(ge=0.0, le=1.0)
     estimated_complexity: str = Field(default="medium")  # low, medium, high
+
+    # Coerce strings/dicts into PlanStep instances (defensive normalization)
+    @field_validator("steps", mode="before")
+    @classmethod
+    def _coerce_steps(cls, v):
+        if not isinstance(v, list):
+            return v
+        coerced = []
+        for i, item in enumerate(v):
+            if isinstance(item, PlanStep):
+                coerced.append(item)
+            elif isinstance(item, str):
+                coerced.append({
+                    "id": f"step-{i+1}",
+                    "description": item,
+                })
+            elif isinstance(item, dict):
+                # Ensure an id exists
+                if "id" not in item:
+                    item = {"id": f"step-{i+1}", **item}
+                coerced.append(item)
+            else:
+                raise TypeError(f"Invalid step type at index {i}: {type(item)}")
+        return coerced
 
 
 class FileEdit(BaseModel):
@@ -197,7 +221,30 @@ class OrchestrationState(BaseModel):
 class OrchestratorDependencies:
     """Dependencies for the orchestrator agent."""
     config: YAMLConfig
+    config_file: dagger.File
     container: dagger.Container
-    codebuff_module: Any  # Reference to the Codebuff module instance
     api_key: dagger.Secret
+
+    # Optional model for sub-agents
+    model: Optional[Any] = None
+
+    # Optional sub-agent instances (if needed later)
+    file_explorer: Optional[Any] = None
+    file_picker: Optional[Any] = None
+    researcher: Optional[Any] = None
+    thinker: Optional[Any] = None
+    reviewer: Optional[Any] = None
+    implementation: Optional[Any] = None
+    context_pruner: Optional[Any] = None
+
+    # Workflow state
     state: Optional[OrchestrationState] = None
+    test_env_cfg_json: Optional[str] = None  # JSON from detect_test_env
+    # Final command from get_test_command
+    test_command: Optional[str] = None
+
+    # Orchestration scratch
+    current_task: Optional[TaskSpec] = None
+    selected_files: list[str] = None
+    exploration_results: Optional[str] = None
+

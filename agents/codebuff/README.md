@@ -227,6 +227,60 @@ The orchestrator provides detailed metrics:
 - **Quality**: Error rates, retry counts, review outcomes
 - **Progress**: Step completion, confidence scores
 
+## One‑shot demo (with demo YAML)
+
+Use the included demo configuration to run the full orchestrated workflow in one call.
+
+```bash
+# (Optional) Inspect available objects/functions for this module
+dagger functions --mod agents/codebuff
+
+# Run orchestrated feature development using the demo YAML
+# Secrets are passed via env:NAME
+
+dagger call --mod agents/codebuff \
+  create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml \
+  orchestrate-feature-development \
+  --task-description "Add user profile management with avatar upload" \
+  --repo-url https://github.com/user/repo \
+  --branch main \
+  --github-token env:GITHUB_TOKEN \
+  --openai-api-key env:OPENAI_API_KEY \
+  --open-router-api-key env:OPEN_ROUTER_API_KEY
+```
+
+Notes:
+- When running locally, prefer `--mod agents/codebuff` to target this module without installing it elsewhere.
+- Code selection uses CodeMap under the hood; tune `file_picker.semantic_weight` and `code_map.*` in your YAML as needed.
+
+## Export .codebuff-state
+
+Export the workflow state (logs, selections, plan, test results, PR metadata) to your host.
+
+Option A: From a known container
+```bash
+dagger call --mod agents/codebuff \
+  create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml \
+  export-state \
+  --container $YOUR_CONTAINER \
+  export --path ./.codebuff-state
+```
+
+Option B: From the current orchestrator object (after running other steps on the same object)
+```bash
+# Example: run orchestrator and then export state in the same call chain
+dagger call --mod agents/codebuff \
+  create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml \
+  orchestrate-feature-development \
+  --task-description "Add user profiles" \
+  --repo-url https://github.com/user/repo \
+  --branch main \
+  --github-token env:GITHUB_TOKEN \
+  --openai-api-key env:OPENAI_API_KEY \
+  export-state-from-self \
+  export --path ./.codebuff-state
+```
+
 ## Advanced Features
 
 ### Context Pruning
@@ -255,7 +309,7 @@ Safe parallelization of independent phases:
 ### Common Issues
 
 1. **"No API key provided"**
-   - Set `OPENAI_API_KEY` or `OPENROUTER_API_KEY`
+   - Set `OPENAI_API_KEY` or `OPEN_ROUTER_API_KEY`
    - Pass key explicitly in command
 
 2. **"Container not ready"**

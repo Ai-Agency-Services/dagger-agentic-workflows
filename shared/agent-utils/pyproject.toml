@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "dagger-io",
     "pydantic>=2.11.7",
+    "pyyaml>=6.0.0",
 ]
 
 [build-system]
@@ -35,5 +36,6 @@ markers = [
 ]
 asyncio_mode = "auto"
 
-[tool.uv.sources]
-dagger-io = { path = "sdk", editable = true }
+[tool.hatch.build]
+packages = ["src/agent_utils"]
+

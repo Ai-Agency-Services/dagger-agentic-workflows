@@ -13,6 +13,7 @@ help:
 	@echo "  lint             - Run linting"
 	@echo "  format           - Format code"
 	@echo "  clean            - Clean up generated files"
+	@echo "  test-local       - Run CI-style tests locally (matrix across modules)"
 
 install:
 	uv sync --extra test --extra dev
@@ -37,7 +38,7 @@ test-coverage-all:
 	@echo "  Smell:         make test-workflows/smell-coverage"
 
 test-services/neo-coverage:
-	cd services/neo && uv run --extra test pytest tests/test_neo_service_comprehensive.py::TestSymbolProperties --cov=neo --cov-report=html:htmlcov --cov-report=term-missing && echo "✅ Neo coverage: services/neo/htmlcov/index.html"
+	cd services/neo && PYTHONPATH=$(shell pwd):$PYTHONPATH uv run --extra test pytest tests/test_neo_service_comprehensive.py::TestSymbolProperties --cov=neo --cov-report=html:htmlcov --cov-report=term-missing && echo "✅ Neo coverage: services/neo/htmlcov/index.html"
 
 test-workflows/graph-coverage:
 	cd workflows/graph && uv run --extra test pytest tests/test_graph_basic_working.py --cov=graph --cov-report=html:htmlcov --cov-report=term-missing && echo "✅ Graph coverage: workflows/graph/htmlcov/index.html"
@@ -70,10 +71,10 @@ clean:
 
 # Module-specific testing
 test-neo:
-	cd services/neo && uv run --extra test pytest
+	cd services/neo && PYTHONPATH=$(shell pwd):$PYTHONPATH uv run --extra test pytest
 
 test-services/neo:
-	cd services/neo && uv run --extra test pytest
+	cd services/neo && PYTHONPATH=$(shell pwd):$PYTHONPATH uv run --extra test pytest
 
 test-query:
 	cd services/query && uv run --extra test pytest
@@ -129,6 +130,12 @@ test-agent-utils:
 test-shared/agent-utils:
 	cd shared/agent-utils && uv run --extra test pytest
 
+test-code-map:
+	cd shared/code-map && PYTHONPATH=$(shell pwd)/shared/code-map/src uv run pytest
+
+test-shared/code-map:
+	cd shared/code-map && PYTHONPATH=$(shell pwd)/shared/code-map/src uv run pytest
+
 # Neo4j specific tests (requires running Neo4j)
 test-neo4j:
 	uv run pytest -m "neo4j" --tb=short -v
@@ -136,3 +143,6 @@ test-neo4j:
 # LLM tests (requires API keys)
 test-llm:
 	uv run pytest -m "llm" --tb=short -v
+
+test-local:
+	bash scripts/run_tests_local.sh

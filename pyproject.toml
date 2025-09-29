@@ -47,6 +47,7 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-report=html:htmlcov",
     "--cov-report=xml",
+    "--cov-config=pyproject.toml",
     "--ignore=workflows/cover/src/coverage/",
     "--ignore=shared/dagger-agents-config/sdk/"
 ]
@@ -61,6 +62,8 @@ markers = [
     "llm: marks tests that require LLM API access",
     "dagger: marks tests that require Dagger runtime",
     "graph: marks tests for graph workflow",
+    "utils: marks tests for agent-utils",
+    "parsing: marks parsing-related tests",
 ]
 filterwarnings = [
     "error",
@@ -78,10 +81,15 @@ omit = [
     "*_test.py",
     "*/conftest.py",
     "*/sdk/*",
+    "**/sdk/*",
     "*/demo/*",
 ]
 
 [tool.coverage.report]
+omit = [
+    "**/sdk/*",
+    "*/sdk/*"
+]
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
@@ -92,6 +100,7 @@ exclude_lines = [
     "if 0:",
     "if __name__ == .__main__.:",
 ]
+
 
 [tool.ruff]
 line-length = 88

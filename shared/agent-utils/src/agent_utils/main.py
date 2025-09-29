@@ -8,6 +8,7 @@ from typing import NamedTuple, Optional, List, Any, Dict
 import dagger
 from dagger import dag, field, function, object_type
 from pydantic import BaseModel
+import yaml
 
 class SymbolType(Enum):
     VARIABLE = "variable"
@@ -77,26 +78,81 @@ def detect_language(filepath: str) -> str:
     return language_map.get(ext, 'unknown')
 
 
+def should_ignore_path(filepath: str, ignore_dirs: Optional[List[str]]) -> bool:
+    """Return True if filepath contains any ignored directory segment.
+    Matches on path segments (e.g., node_modules, .venv, dist, build).
+    """
+    if not ignore_dirs:
+        return False
+    # Normalize
+    parts = [p for p in filepath.replace("\\", "/").split("/") if p]
+    ignore_set = set((d or "").strip() for d in ignore_dirs if d and d.strip())
+    return any(seg in ignore_set for seg in parts)
+
+
 # TODO: Fix Python parsing with Tree-sitter
 @object_type
 class AgentUtils:
     """Enhanced utility class using Tree-sitter for accurate code parsing"""
 
     @function
-    async def parse_code_file_to_json(self, content: str, filepath: str) -> dagger.File:
-        """Parse a code file using Tree-sitter and return JSON with extracted symbols."""
+    async def parse_code_file_to_json(self, content: str, filepath: str, ignore_dirs: Optional[List[str]] = None) -> dagger.File:
+        """Parse a code file using Tree-sitter and return JSON with extracted symbols.
+        If filepath contains any directory listed in ignore_dirs, return an empty result immediately.
+        """
         if not isinstance(content, str):
             raise TypeError(
                 f"Expected content to be str, got {type(content).__name__}")
+
+        # Honor directory ignore list (short-circuit, no container work)
+        if should_ignore_path(filepath, ignore_dirs):
+            empty_json = json.dumps({
+                "content": content,
+                "filepath": filepath,
+                "language": detect_language(filepath),
+                "symbols": [],
+                "imports": []
+            }, indent=2)
+            return dag.directory().with_new_file("result.json", empty_json).file("result.json")
 
         language = detect_language(filepath)
 
         # Use Tree-sitter for supported languages, fallback for others
         if language in ['python', 'javascript', 'typescript', 'java', 'go', 'rust', 'c', 'cpp']:
             return await self._parse_with_tree_sitter(content, filepath, language)
-        # else:
-        #     # Fallback to regex-based parsing for unsupported languages
-        #     return await self._parse_with_fallback(content, filepath, language)
+        # Fallback: return minimal JSON for unknown/unsupported languages (e.g., .toml, .sh)
+        empty_json = json.dumps({
+            "content": content,
+            "filepath": filepath,
+            "language": language,
+            "symbols": [],
+            "imports": []
+        }, indent=2)
+        return dag.directory().with_new_file("result.json", empty_json).file("result.json")
+
+    @function
+    async def parse_code_file_to_json_with_config(self, content: str, filepath: str, config_file: dagger.File) -> dagger.File:
+        """Parse a code file using ignore directories from a shared YAML config.
+        Loads indexing.ignore_directories from the YAML config and forwards to parse_code_file_to_json.
+        """
+        cfg_text = ""
+        try:
+            cfg_text = await config_file.contents()
+        except Exception:
+            cfg_text = ""
+        if isinstance(cfg_text, (bytes, bytearray)):
+            cfg_text = cfg_text.decode("utf-8", errors="ignore")
+        ignore_dirs: List[str] = []
+        if isinstance(cfg_text, str) and cfg_text.strip():
+            try:
+                data = yaml.safe_load(cfg_text) or {}
+                indexing = data.get("indexing") or {}
+                ignore = indexing.get("ignore_directories") or []
+                if isinstance(ignore, list):
+                    ignore_dirs = [str(d).strip() for d in ignore if str(d).strip()]
+            except Exception:
+                ignore_dirs = []
+        return await self.parse_code_file_to_json(content=content, filepath=filepath, ignore_dirs=ignore_dirs)
 
     @function
     async def _parse_with_tree_sitter(self, content: str, filepath: str, language: str) -> dagger.File:

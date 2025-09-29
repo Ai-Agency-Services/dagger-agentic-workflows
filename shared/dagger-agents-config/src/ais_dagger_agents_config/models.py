@@ -51,12 +51,13 @@ class ContainerConfig(BaseModel):
         default=None, description="Path to Dockerfile")
 
 
+# Update to provide safe defaults so YAMLConfig can tolerate minimal configs
 class GitConfig(BaseModel):
     """Git configuration."""
-    user_name: str = Field(description="Git user name")
-    user_email: EmailStr = Field(description="Git user email")
+    user_name: str = Field(default="Codebuff Agent", description="Git user name")
+    user_email: EmailStr = Field(default="codebuff@example.com", description="Git user email")
     base_pull_request_branch: str = Field(
-        description="Base branch for pull requests")
+        default="main", description="Base branch for pull requests")
 
 
 class ConcurrencyConfig(BaseModel):
@@ -84,6 +85,14 @@ class IndexingConfig(BaseModel):
         description="File extensions to process"
     )
     max_files: int = Field(default=50, description="Maximum files to process")
+    ignore_directories: List[str] = Field(
+        default_factory=lambda: [
+            "node_modules", "build", "dist", "target", ".git", "bin", "obj",
+            "__pycache__", ".venv", "venv", "vendor", "out", ".idea",
+            ".vscode", "coverage", "sdk"
+        ],
+        description="Directory names to ignore during scanning and parsing"
+    )
     skip_indexing: bool = Field(
         default=False, description="Skip indexing if true"
     )
@@ -142,6 +151,16 @@ class ReporterConfig(BaseModel):
     test_timeout_seconds: int = Field(
         default=60, description="Maximum time to wait for tests to complete"
     )
+
+
+# Add TestingConfig (new)
+class TestingConfig(BaseModel):
+    """Testing environment configuration overrides."""
+    enable: bool = Field(default=True, description="Enable running tests")
+    working_dir: Optional[str] = Field(default=None, description="Subdirectory to run tests from")
+    test_command: Optional[str] = Field(default=None, description="Override test command (single shell line)")
+    install_command: Optional[str] = Field(default=None, description="Install command to prepare environment")
+    timeout_seconds: Optional[int] = Field(default=None, description="Max time to allow test run")
 
 
 # --- Add Smell configuration models ---
@@ -229,23 +248,50 @@ class Neo4jConfig(BaseModel):
         default="1G", description="Neo4j initial heap size")
     memory_heap_max_size: str = Field(
         default="1G", description="Neo4j maximum heap size")
+    # Transaction timeout (ISO-8601 duration, e.g., PT120S)
+    transaction_timeout: str = Field(
+        default="PT120S", description="Default transaction timeout (e.g., PT120S)")
+
+
+# --- Code Map configuration ---
+class CodeMapConfig(BaseModel):
+    """Code-map module configuration."""
+    out_dir: str = Field(default=".code-map", description="Output directory for code map artifacts")
+    ignore_dirs: List[str] = Field(
+        default_factory=lambda: [
+            ".git", "node_modules", "__pycache__", ".venv", "dist", "build"
+        ],
+        description="Directories to ignore while scanning"
+    )
+    max_file_size: int = Field(default=1_000_000, description="Max file size to process (bytes)")
+    languages: List[str] = Field(
+        default_factory=lambda: ["python", "javascript", "typescript"],
+        description="Language IDs to parse"
+    )
 
 
 class YAMLConfig(BaseModel):
     """Main configuration model."""
-    container: ContainerConfig
-    git: GitConfig
-    concurrency: Optional[ConcurrencyConfig] = Field(
-        default_factory=ConcurrencyConfig)
+    # Delete original container/git lines below to replace with defaulted versions
+    # container: ContainerConfig
+    # git: GitConfig
+    # Replace with safe defaults so missing sections don't fail validation
+    container: ContainerConfig = Field(default_factory=ContainerConfig)
+    git: GitConfig = Field(default_factory=GitConfig)
+
+    concurrency: Optional[ConcurrencyConfig] = Field(default_factory=ConcurrencyConfig)
     indexing: Optional[IndexingConfig] = Field(default_factory=IndexingConfig)
     test_generation: Optional[TestGenerationConfig] = Field(default=None)
     reporter: Optional[ReporterConfig] = Field(default=None)
     core_api: Optional[CoreAPIConfig] = Field(default=None)
     neo4j: Optional[Neo4jConfig] = Field(default=None)
-    # Add smell configuration (optional)
+    # Smell configuration (optional)
     smell: Optional[SmellConfig] = Field(default=None, description="Smell detection thresholds and detector filters")
+    # Code-map configuration (optional)
+    code_map: Optional[CodeMapConfig] = Field(default_factory=CodeMapConfig, description="Code-map module configuration")
+    # Testing configuration (new; optional)
+    testing: Optional[TestingConfig] = Field(default=None, description="Testing environment overrides/config")
 
     class Config:
         """Pydantic configuration."""
         extra = "allow"  # Allow extra fields for flexibility
-

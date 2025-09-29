@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import dagger
 from ais_dagger_agents_config import YAMLConfig
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from simple_chalk import blue, green, yellow, red
 
 
@@ -140,7 +140,7 @@ Potential issues/TODOs:
         return error_msg
 
 
-def create_reviewer_agent(model: OpenAIModel) -> Agent:
+def create_reviewer_agent(model: OpenAIChatModel) -> Agent:
     """Create the Reviewer agent."""
     system_prompt = """
 You are a Reviewer Agent, equivalent to Codebuff's code review capabilities.
@@ -173,7 +173,7 @@ Provide clear, actionable feedback with specific recommendations for improvement
         model=model,
         system_prompt=system_prompt,
         deps_type=ReviewerDependencies,
-        instrument=True,
+        instrument=False,
         end_strategy="exhaustive",
         retries=3
     )

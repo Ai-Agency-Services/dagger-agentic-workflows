@@ -249,8 +249,10 @@ class FileProcessor:
         return []
 
     @staticmethod
-    async def get_filtered_files(container: dagger.Container, extensions: Optional[List[str]] = None) -> List[str]:
-        """Get all source files in the container, filtering out build artifacts and binaries."""
+    async def get_filtered_files(container: dagger.Container, extensions: Optional[List[str]] = None, ignore_dirs: Optional[List[str]] = None) -> List[str]:
+        """Get all source files in the container, filtering out build artifacts and binaries.
+        Respects optional ignore_dirs list of directory names to exclude (from shared config).
+        """
 
         # Comprehensive list of source-related extensions if none provided
         if not extensions:
@@ -268,7 +270,6 @@ class FileProcessor:
             ]
 
         # Build directory patterns to exclude - just directory names for cleaner matching
-        # TODO: Make this configurable
         exclude_dirs = [
             "node_modules",
             "build",
@@ -286,6 +287,12 @@ class FileProcessor:
             ".vscode",
             "coverage"
         ]
+        # Merge user-provided ignore directories from shared config (if any)
+        if ignore_dirs:
+            for d in ignore_dirs:
+                d = (d or "").strip()
+                if d and d not in exclude_dirs:
+                    exclude_dirs.append(d)
 
         # File patterns to exclude
         exclude_files = [

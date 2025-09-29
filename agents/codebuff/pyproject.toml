@@ -44,3 +44,4 @@ asyncio_mode = "auto"
 
 [tool.uv.sources]
 dagger-io = { path = "sdk", editable = true }
+agent-utils = { path = "../../shared/agent-utils", editable = true }

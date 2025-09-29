@@ -13,7 +13,33 @@ Provides centralized configuration management for all Dagger agents using Pydant
 
 ## Configuration Models
 
+### TestingConfig (new)
+Use to control how tests are detected/run by agents (e.g., Implementation step):
+
+```yaml
+testing:
+  enable: true
+  working_dir: apps/api          # optional subdir
+  test_command: pnpm test --filter api
+  install_command: pnpm install --frozen-lockfile
+  timeout_seconds: 900
+```
+
+- Fields:
+  - enable: toggle tests on/off
+  - working_dir: run tests from this directory
+  - test_command: exact shell command to run tests
+  - install_command: pre-test install command
+  - timeout_seconds: override test run timeout
+
+Agents can read config.testing to shape detection/configuration and test command selection.
+
+
+
 ### Core Configuration
+
+Note: container and git now have safe defaults so minimal YAML files do not fail validation. You can still override all fields.
+
 - **`LLMCredentials`**: API keys and provider settings
 - **`ContainerConfig`**: Docker and runtime environment settings
 - **`GitConfig`**: Version control and repository settings
@@ -249,6 +275,30 @@ integration:
 - **Pydantic**: Data validation and settings management
 - **YAML**: Configuration file parsing
 - **Dagger SDK**: Integration with Dagger modules
+
+## Code Map Configuration
+
+Add a `code_map` block to your YAML to drive shared/code-map defaults.
+
+```yaml
+code_map:
+  out_dir: .code-map
+  ignore_dirs: [".git", "node_modules", "__pycache__", ".venv", "dist", "build"]
+  max_file_size: 1000000
+  languages: ["python", "javascript", "typescript"]
+```
+
+- Fields (CodeMapConfig):
+  - out_dir: where map.json, files.jsonl, symbols.jsonl, chunks.jsonl are written
+  - ignore_dirs: directory names to skip when scanning
+  - max_file_size: maximum bytes per file
+  - languages: language IDs to parse
+
+Consumers can call constructor-first and let defaults flow:
+```python
+code_map = await dag.code_map().with_config(config)
+map_dir = await code_map.build(source_dir=container.directory("."))
+```
 
 ## Troubleshooting
 
