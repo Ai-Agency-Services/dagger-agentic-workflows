@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import Optional
 import uuid
 import json
+from codebuff.utils.llm import create_llm_model, get_llm_credentials
+import dagger
 from logfire import span
 import yaml
 from dagger import dag
@@ -16,10 +18,13 @@ from ..utils.container_state import write_json, write_text, append_log
 
 from .tools.planning import create_plan, add_subgoal, update_subgoal, think_deeply
 from .tools.file_ops import read_files as read_files_tool, write_file as write_file_tool, str_replace as str_replace_tool, code_search as code_search_tool
-from .tools.execution import run_terminal_command as run_terminal_command_tool, browser_logs as browser_logs_tool
-from .tools.agents import spawn_agents as spawn_agents_tool, spawn_agent_inline as spawn_agent_inline_tool, lookup_agent_info as lookup_agent_info_tool
-from .tools.sub_agents import run_file_explorer as run_file_explorer_tool, run_file_picker as run_file_picker_tool, run_researcher as run_researcher_tool, run_thinker as run_thinker_tool, run_reviewer as run_reviewer_tool, run_implementation as run_implementation_tool, run_context_pruner as run_context_pruner_tool
-from .tools.session import end_turn as end_turn_tool
+from .tools.execution import run_terminal_command as run_terminal_command_tool
+# Updated imports for the new multi-agent structure
+from .tools.sub_agents import (
+    create_file_explorer_agent,
+    create_file_picker_agent,
+    run_file_pickers_in_parallel,
+)
 from .models import (
     OrchestratorDependencies,
     OrchestrationState,
@@ -41,6 +46,52 @@ from .models import (
 from opentelemetry import trace
 
 tracer = trace.get_tracer(__name__)
+
+
+def _get_model_for_agent(config: dict, agent_name: str) -> str:
+    """Get model name for specific agent from config, with fallbacks."""
+    # Check agent-specific config first
+    if config and "agents" in config and agent_name in config["agents"]:
+        if "model" in config["agents"][agent_name]:
+            return config["agents"][agent_name]["model"]
+
+    # Fallback to core_api model
+    if config and "core_api" in config and "model" in config["core_api"]:
+        return config["core_api"]["model"]
+
+    # Ultimate fallback by agent type
+    fallbacks = {
+        "explorer": "openai/gpt-4o-mini",
+        "picker": "openai/gpt-4o-mini",
+        "thinker": "openai/gpt-4o",
+        "implementation": "openai/gpt-4o",
+        "reviewer": "openai/gpt-4o",
+        "context_pruner": "openai/gpt-4o-mini",
+        "orchestrator": "openai/gpt-4o"
+    }
+    return fallbacks.get(agent_name, "openai/gpt-4o")
+
+
+async def _get_llm_for_agent(
+    config: dict,
+    agent_name: str,
+    open_router_api_key: Optional[dagger.Secret],
+    openai_api_key: Optional[dagger.Secret],
+) -> object:
+    """Determines the correct provider and creates the LLM for a given agent."""
+    model_name = _get_model_for_agent(config, agent_name)
+
+    # Determine provider based on available keys
+    # Prefer OpenRouter if available since it supports more models
+    if open_router_api_key:
+        provider = "openrouter"
+    elif openai_api_key:
+        provider = "openai"
+    else:
+        provider = "openai"  # fallback
+
+    creds = await get_llm_credentials(provider, open_router_api_key, openai_api_key)
+    return await create_llm_model(creds.api_key, creds.base_url, model_name)
 
 
 async def add_project_file_tree_to_context(
@@ -155,9 +206,10 @@ async def start_task(
 async def explore_codebase(
     ctx: RunContext[OrchestratorDependencies]
 ) -> str:
-    """Execute exploration phase using File Explorer agent."""
+    """Execute exploration phase using a multi-agent file explorer pattern."""
     with tracer.start_as_current_span("explore_codebase") as span:
         start_time = time.time()
+        state = None
         try:
             if not ctx.deps.state or not ctx.deps.state.task_spec:
                 return "Error: No active task. Call start_task first."
@@ -165,241 +217,135 @@ async def explore_codebase(
             state = ctx.deps.state
             span.set_attribute("task_id", state.task_id)
             span.set_attribute("focus_area", state.task_spec.focus_area)
-            print(blue(f"🔍 Phase: Exploration - {state.task_spec.focus_area}"))
+            print(
+                blue(f"🔍 Phase: Multi-Agent Exploration - {state.task_spec.focus_area}"))
 
             state.current_phase = Phase.EXPLORATION
             state.status = Status.IN_PROGRESS
             state.last_update = datetime.now()
 
-            # Build exploration result directly via code-map (decoupled from orchestrator module)
+            # 1. Create the models for the sub-agents
+            explorer_model = await _get_llm_for_agent(
+                ctx.deps.config, "explorer", open_router_api_key=ctx.deps.api_key, openai_api_key=None
+            )
+            picker_model = await _get_llm_for_agent(
+                ctx.deps.config, "picker", open_router_api_key=ctx.deps.api_key, openai_api_key=None
+            )
+
+            # 2. Create the agent that will decide what to explore
+            explorer_llm_agent = create_file_explorer_agent(explorer_model)
+
+            # 3. Run the explorer LLM to get a structured list of prompts
+            explorer_prompt = f"Based on the overall goal '{state.task_spec.goal}', what are 1-4 different areas of the codebase that could be useful to explore in parallel? Think about components, features, or layers (e.g., 'API routes', 'database models', 'UI components')."
+
+            # Run returns an AgentRunResult object that contains our structured output
+            explorer_result = await explorer_llm_agent.run(explorer_prompt)
+
+            # Extract the ExplorePrompts object from the result
+            explore_prompts_result = explorer_result.output
+
+            # Now we can access the prompts attribute on the structured output
+            prompts = explore_prompts_result.prompts
+            span.set_attribute("explore_prompts", prompts)
+
+            print(cyan(
+                f"🧭 Explorer identified {len(prompts)} areas to explore:"))
+            for i, prompt in enumerate(prompts):
+                print(magenta(f"  {i+1}. {prompt}"))
+
+            # 4. Set up dependencies for the picker agents
+            picker_agent = create_file_picker_agent(picker_model)
+
+            # Get code map scores for file ranking
             code_map = dag.code_map(config_file=ctx.deps.config_file)
             src_dir = ctx.deps.container.directory(".")
             scores_json = await code_map.get_file_token_scores(source_dir=src_dir)
 
-            # Create tree summary payload similar to File Explorer agent
             try:
                 scores_data = json.loads(scores_json)
                 file_scores = scores_data.get("fileTokenScores", {})
-                total_files = len(file_scores)
-                total_tokens = sum(len(tokens)
-                                   for tokens in file_scores.values())
-
-                span.set_attribute("files_analyzed", total_files)
-                span.set_attribute("unique_tokens", total_tokens)
-
-                tree_text = f"Project Analysis Summary:\n"
-                tree_text += f"Files analyzed: {total_files}\n"
-                tree_text += f"Unique tokens found: {total_tokens}\n\n"
-
-                # Language distribution (based on file extension)
-                lang_counts = {}
-                for file_path in file_scores.keys():
-                    ext = (file_path.rsplit(".", 1)
-                           [-1].lower() if "." in file_path else "none")
-                    lang_counts[ext] = lang_counts.get(ext, 0) + 1
-
-                if lang_counts:
-                    span.set_attribute("languages_detected",
-                                       list(lang_counts.keys())[:5])
-                    tree_text += "Language distribution:\n"
-                    for lang, count in sorted(lang_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
-                        tree_text += f"  {lang}: {count} files\n"
-                    tree_text += "\n"
-
-                if file_scores:
-                    sorted_files = sorted(
-                        file_scores.items(), key=lambda x: len(x[1]), reverse=True)[:15]
-                    tree_text += "Top files by token diversity:\n"
-                    for pth, tokens in sorted_files:
-                        tree_text += f"  {pth}: {len(tokens)} tokens\n"
+                token_callers = scores_data.get("tokenCallers", {})
             except Exception as e:
-                span.set_attribute("parsing_error", str(e))
-                tree_text = "File exploration completed (token analysis failed)"
+                print(red(f"Warning: Error parsing code map scores: {e}"))
+                file_scores = {}
+                token_callers = {}
 
-            # Build final JSON payload for orchestration
-            estimated_tokens = max(0, len(tree_text) // 3)
-            payload = {
-                "focus_area": state.task_spec.focus_area,
-                "project_root": ".",
-                "file_count": len(file_scores) if 'file_scores' in locals() else 0,
-                "languages": dict(sorted((lang_counts or {}).items(), key=lambda x: x[1], reverse=True)[:12]) if 'lang_counts' in locals() else {},
-                "truncation": {"level": "code-map", "estimated_tokens": estimated_tokens, "budget": 15000},
-                "tree": tree_text[:100000],
-            }
-            exploration_result = json.dumps(payload)
+            # 5. Run the file pickers in parallel using the generated prompts
+            all_results = await run_file_pickers_in_parallel(
+                overall_goal=state.task_spec.goal,
+                focus_prompts=prompts,
+                picker_agent=picker_agent,
+                file_scores=file_scores,
+                token_callers=token_callers,  # Add token_callers to the function call
+            )
 
-            # Parse the structured JSON
-            try:
-                parsed = json.loads(exploration_result)
-            except Exception:
-                parsed = None
+            # 6. Process and flatten results
+            unique_files = sorted(list(set(
+                file for sublist in all_results for file in sublist if not file.startswith("Error:"))))
+            span.set_attribute("files_found_count", len(unique_files))
 
-            if isinstance(parsed, dict):
-                langs = parsed.get("languages", {})
-                trunc = parsed.get("truncation", {}) or {}
-                areas = [state.task_spec.focus_area or "entire project"]
-                key_patterns = list(langs.keys())[:10]
-                notes = f"languages={list(langs.keys())[:6]} trunc={trunc.get('level')} tokens={trunc.get('estimated_tokens')}/{trunc.get('budget')}"
-                exploration_report = ExplorationReport(
-                    areas_explored=areas,
-                    file_index=[],
-                    key_patterns=key_patterns,
-                    architecture_notes=notes,
-                    confidence=0.85,
+            # Print the files that were found by category
+            print(cyan("\n📁 Files found during exploration:"))
+            for i, (prompt, files) in enumerate(zip(prompts, all_results)):
+                print(magenta(f"\n  Category {i+1}: {prompt}"))
+                for file in files:
+                    if not file.startswith("Error:"):
+                        print(green(f"    • {file}"))
+
+            # Print unique files after deduplication
+            print(cyan(f"\n📦 Unique files identified ({len(unique_files)}):"))
+            for file in unique_files:
+                print(green(f"  • {file}"))
+
+            # Convert string paths to PathInfo objects with relevance scores
+            path_infos = [
+                PathInfo(
+                    path=file_path,
+                    relevance=0.9,  # Default relevance score
+                    tokens=len(file_scores.get(file_path, [])
+                               ) if file_scores else 0
                 )
-            else:
-                # Fallback: previous behavior
-                exploration_report = ExplorationReport(
-                    areas_explored=[
-                        state.task_spec.focus_area or "entire project"],
-                    file_index=[],
-                    confidence=0.8,
-                    architecture_notes=exploration_result[:500] + "..." if len(
-                        exploration_result) > 500 else exploration_result
-                )
+                for file_path in unique_files
+            ]
+
+            exploration_report = ExplorationReport(
+                areas_explored=prompts,
+                file_index=path_infos,  # Use PathInfo objects instead of strings
+                key_patterns=[],
+                architecture_notes=f"Found {len(unique_files)} relevant files across {len(prompts)} explored areas.",
+                confidence=0.9 if unique_files else 0.5,
+            )
 
             state.exploration_report = exploration_report
+
+            # Create a FileSet from the path_infos and update the state
+            file_set = FileSet(
+                files=path_infos,
+                selection_criteria=f"Files selected by multi-agent exploration for '{state.task_spec.goal}'",
+                rationale="Selected based on relevance to task requirements and token analysis",
+                total_files_considered=len(file_scores) if file_scores else 0,
+                confidence=0.9 if unique_files else 0.5
+            )
+            state.file_set = file_set
+
             state.status = Status.SUCCESS
             state.total_requests += 1
             span.set_attribute("confidence", exploration_report.confidence)
 
-            # Log completion
-            try:
-                if getattr(ctx.deps, "container", None) is not None:
-                    ctx.deps.container = await append_log(ctx.deps.container, "explore_codebase: completed")
-            except Exception:
-                pass
-            print(green("✅ Exploration phase completed"))
-            return "Exploration completed."
+            print(
+                green(f"✅ Multi-agent exploration completed. Found {len(unique_files)} files."))
+            return f"Exploration completed. Found {len(unique_files)} relevant files."
 
         except Exception as e:
             span.set_attribute("error", str(e))
-            error = OrchestrationError(
-                kind=ErrorKind.TOOL_ERROR,
-                message=str(e),
-                phase=Phase.EXPLORATION,
-                retry_count=state.retry_count
-            )
-            state.errors.append(error)
-            state.status = Status.FAILED
+            if state:
+                error = OrchestrationError(
+                    kind=ErrorKind.TOOL_ERROR, message=str(e), phase=Phase.EXPLORATION, retry_count=state.retry_count if state else 0
+                )
+                state.errors.append(error)
+                state.status = Status.FAILED
             print(red(f"❌ Exploration failed: {e}"))
             return f"Exploration failed: {e}"
-        finally:
-            span.set_attribute("duration_seconds", time.time() - start_time)
-
-
-async def select_files(
-    ctx: RunContext[OrchestratorDependencies]
-) -> str:
-    """Execute file selection phase using File Picker agent."""
-    with tracer.start_as_current_span("select_files") as span:
-        start_time = time.time()
-        try:
-            if not ctx.deps.state or not ctx.deps.state.task_spec:
-                return "Error: No active task. Call start_task first."
-
-            state = ctx.deps.state
-            span.set_attribute("task_id", state.task_id)
-            span.set_attribute("goal", state.task_spec.goal)
-            print(blue(f"📂 Phase: File Selection"))
-
-            state.current_phase = Phase.FILE_SELECTION
-            state.status = Status.IN_PROGRESS
-            state.last_update = datetime.now()
-
-            # Compute semantic ranking directly via code-map
-            code_map = dag.code_map(config_file=ctx.deps.config_file)
-            src_dir = ctx.deps.container.directory(".")
-            scores_json = await code_map.get_file_token_scores(source_dir=src_dir)
-
-            # Rank files based on task_description tokens
-            import re
-            try:
-                scores_data = json.loads(scores_json)
-                file_scores = scores_data.get("fileTokenScores", {}) or {}
-                query_text = (state.task_spec.goal or "").lower()
-                q_tokens = [t for t in re.findall(
-                    r"[A-Za-z_][A-Za-z0-9_]*", query_text) if len(t) > 1]
-
-                span.set_attribute("query_tokens", q_tokens[:10])
-                span.set_attribute("total_files_considered", len(file_scores))
-
-                ranked = []
-                for path, token_map in file_scores.items():
-                    score = 0.0
-                    matched = []
-                    for qt in q_tokens:
-                        v = token_map.get(qt)
-                        if v:
-                            score += float(v)
-                            matched.append(qt)
-                    if score > 0:
-                        ranked.append({"path": path, "score": round(
-                            score, 4), "reason": f"matched: {', '.join(matched[:5])}"})
-                ranked.sort(key=lambda x: x["score"], reverse=True)
-                selection_result = json.dumps(ranked[:20])
-                span.set_attribute("files_ranked", len(ranked))
-            except Exception as e:
-                span.set_attribute("ranking_error", str(e))
-                selection_result = json.dumps(
-                    {"error": f"semantic ranking failed: {e}"})
-
-            # Parse semantic_query JSON results
-            files: list[PathInfo] = []
-            try:
-                parsed = json.loads(selection_result)
-                if isinstance(parsed, list):
-                    for item in parsed[:50]:
-                        p = item.get("path") if isinstance(
-                            item, dict) else None
-                        s = float(item.get("score", 0)) if isinstance(
-                            item, dict) else None
-                        r = item.get("reason") if isinstance(
-                            item, dict) else None
-                        if p:
-                            files.append(
-                                PathInfo(path=p, relevance_score=s, rationale=r))
-            except Exception:
-                pass
-
-            span.set_attribute("files_selected", len(files))
-            rationale = selection_result[:500] + "..." if len(
-                selection_result) > 500 else selection_result
-            file_set = FileSet(
-                files=files,
-                rationale=rationale,
-                total_files_considered=max(len(files), 0),
-                confidence=0.85 if files else 0.6,
-            )
-
-            state.file_set = file_set
-            state.status = Status.SUCCESS
-            state.total_requests += 1
-            span.set_attribute("confidence", file_set.confidence)
-
-            # Log selected files count
-            try:
-                if getattr(ctx.deps, "container", None) is not None:
-                    cnt = len(
-                        file_set.files) if file_set and file_set.files else 0
-                    ctx.deps.container = await append_log(ctx.deps.container, f"select_files: {cnt} files (orchestrator)")
-            except Exception:
-                pass
-            print(green("✅ File selection phase completed"))
-            return "File selection completed."
-
-        except Exception as e:
-            span.set_attribute("error", str(e))
-            error = OrchestrationError(
-                kind=ErrorKind.TOOL_ERROR,
-                message=str(e),
-                phase=Phase.FILE_SELECTION,
-                retry_count=state.retry_count
-            )
-            state.errors.append(error)
-            state.status = Status.FAILED
-            print(red(f"❌ File selection failed: {e}"))
-            return f"File selection failed: {e}"
         finally:
             span.set_attribute("duration_seconds", time.time() - start_time)
 
@@ -849,6 +795,7 @@ Please create a pull request with these changes.
                     container=pull_request_container,
                     provider="openrouter",
                     open_router_api_key=ctx.deps.api_key,
+                    openai_api_key=None,
                     insight_context=pr_context,
                 )
                 if pr_agent:
@@ -944,7 +891,7 @@ async def get_orchestration_status(
 
 
 def create_orchestrator_agent(model: OpenAIChatModel) -> Agent:
-    """Create the orchestration agent with streaming by default."""
+    """Create the orchestration agent with standard Pydantic AI patterns."""
     system_prompt = """
 You are a Feature Development Orchestrator Agent, equivalent to Codebuff's workflow coordination.
 
@@ -979,9 +926,10 @@ Handle errors gracefully and provide actionable feedback.
     )
 
     # Register workflow tools
+    agent.system_prompt(add_file_token_scores_token_callers_to_context)
+    agent.system_prompt(add_project_file_tree_to_context)
     agent.tool(start_task)
     agent.tool(explore_codebase)
-    agent.tool(select_files)
     agent.tool(create_implementation_plan)
     agent.tool(execute_implementation)
     agent.tool(review_changes)
@@ -1005,15 +953,8 @@ Handle errors gracefully and provide actionable feedback.
     # Analysis & session
     agent.tool(think_deeply)
 
-    # Sub-agent wrappers
-    agent.tool(run_file_explorer_tool)
-    agent.tool(run_file_picker_tool)
-    agent.tool(run_researcher_tool)
-    agent.tool(run_thinker_tool)
-    agent.tool(run_reviewer_tool)
-    agent.tool(run_implementation_tool)
-    agent.tool(run_context_pruner_tool)
+    # Sub-agent wrappers are no longer needed as individual tools
+    # The `explore_codebase` tool now orchestrates them directly.
 
     print(f"Orchestrator Agent created with model: {model.model_name}")
     return agent
-

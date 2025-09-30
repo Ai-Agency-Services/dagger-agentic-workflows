@@ -61,7 +61,7 @@ testing:
 orchestrator:
   feedback:
     enabled: true
-    stop_after_phase: "PLANNING"   # Valid: PLANNING (currently supported)
+    stop_after_phase: "IMPLEMENTATION"   # Valid: PLANNING (currently supported)
     branch_prefix: "feature/orchestrator-"
 
 # Feature development settings

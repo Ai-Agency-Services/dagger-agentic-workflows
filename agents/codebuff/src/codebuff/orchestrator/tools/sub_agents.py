@@ -1,134 +1,333 @@
 import json
-from pydantic_ai import RunContext
-import yaml
-from dagger import dag
+from typing import List, Optional, Dict
 
-from ..models import OrchestratorDependencies
+import anyio
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent
 
 
-async def run_file_explorer(
-    ctx: RunContext[OrchestratorDependencies],
-    focus_area: str,
-    with_tokens: bool = True
-) -> str:
-    """Analyze codebase structure using code-map directly (no module coupling)."""
-    cfg_yaml = yaml.safe_dump(ctx.deps.config.model_dump()) if hasattr(ctx.deps.config, "model_dump") else yaml.safe_dump(dict(ctx.deps.config))
-    cfg_file = dag.directory().with_new_file("config.yaml", cfg_yaml).file("config.yaml")
-    code_map = dag.code_map(config_file=cfg_file)
-    src_dir = ctx.deps.container.directory(".")
+class ExplorePrompts(BaseModel):
+    """A model to hold a list of exploration prompts for the file picker agents."""
+    prompts: List[str] = Field(
+        ..., description="A list of 1 to 4 concise prompts for exploring different areas of the codebase in parallel.")
 
+
+class FilePickerDependencies(BaseModel):
+    """Dependencies for the File Picker agent."""
+    pass
+
+
+async def find_files(
+    prompt: str,
+    file_scores: dict,
+    token_callers: dict = None,
+) -> List[str]:
+    """
+    Finds relevant files in the codebase based on a prompt using file token scores and token callers.
+    """
+    print(f"Finding files for prompt: '{prompt}'")
     try:
-        scores_json = await code_map.get_file_token_scores(source_dir=src_dir)
-        scores_data = json.loads(scores_json)
-        file_scores = scores_data.get("fileTokenScores", {})
+        if not file_scores:
+            print("Warning: No file scores provided, returning empty list")
+            return []
 
-        total_files = len(file_scores)
-        total_tokens = sum(len(tokens) for tokens in file_scores.values())
+        # Extract keywords from the prompt for filtering
+        keywords = _extract_keywords_from_prompt(prompt)
+        print(f"Using keywords for search: {keywords}")
 
-        tree_text = f"Project Analysis Summary:\n"
-        tree_text += f"Files analyzed: {total_files}\n"
-        tree_text += f"Unique tokens found: {total_tokens}\n\n"
+        # Handle different file_scores data structure formats
+        scored_files = []
 
-        lang_counts = {}
-        for file_path in file_scores.keys():
-            ext = (file_path.rsplit(".", 1)[-1].lower() if "." in file_path else "none")
-            lang_counts[ext] = lang_counts.get(ext, 0) + 1
-        if lang_counts:
-            tree_text += "Language distribution:\n"
-            for lang, count in sorted(lang_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
-                tree_text += f"  {lang}: {count} files\n"
-            tree_text += "\n"
+        # Check if file_scores is a dictionary as expected
+        if isinstance(file_scores, dict):
+            # Standard structure: {file_path: [tokens]}
+            for file_path, tokens in file_scores.items():
+                # Skip non-code files
+                if _is_non_code_file(file_path):
+                    continue
 
-        if file_scores:
-            sorted_files = sorted(file_scores.items(), key=lambda x: len(x[1]), reverse=True)[:15]
-            tree_text += "Top files by token diversity:\n"
-            for pth, tokens in sorted_files:
-                tree_text += f"  {pth}: {len(tokens)} tokens\n"
+                # Calculate relevance score
+                score = _calculate_token_relevance(
+                    tokens, keywords, file_path, token_callers)
+                if score > 0:
+                    scored_files.append((file_path, score))
 
-        estimated_tokens = max(0, len(tree_text) // 3)
-        payload = {
-            "focus_area": focus_area,
-            "project_root": ".",
-            "file_count": total_files,
-            "languages": dict(sorted(lang_counts.items(), key=lambda x: x[1], reverse=True)[:12]),
-            "truncation": {"level": "code-map", "estimated_tokens": estimated_tokens, "budget": 15000},
-            "tree": tree_text[:100000],
-        }
-        return json.dumps(payload)
+        # Handle case where file_scores is a list (unexpected but handle gracefully)
+        elif isinstance(file_scores, list):
+            # Fall back to searching file paths for keywords
+            for file_path in file_scores:
+                if _is_non_code_file(file_path):
+                    continue
+
+                # Simple path-based scoring
+                score = 0
+                for keyword in keywords:
+                    if keyword.lower() in file_path.lower():
+                        score += 3.0
+
+                if score > 0:
+                    scored_files.append((file_path, score))
+
+        # If we don't have results yet, try to get all files from git
+        if not scored_files:
+            print(
+                "No files matched from provided scores, falling back to keyword search in paths")
+            # This would need container access, but you mentioned we don't need that dependency
+            # Instead, use whatever files we have available
+            return []
+
+        # Sort by relevance score
+        sorted_files = [file for file, _ in sorted(
+            scored_files, key=lambda x: x[1], reverse=True)]
+
+        # Return top results (maximum 20)
+        result_files = sorted_files[:20]
+        print(f"Found {len(result_files)} relevant files")
+        return result_files
+
     except Exception as e:
-        return json.dumps({"error": f"explorer failed: {e}"})
+        print(f"Error finding files: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return [f"Error: Unexpected error finding files: {str(e)}"]
 
 
-async def run_file_picker(
-    ctx: RunContext[OrchestratorDependencies],
-    task_description: str,
-    max_files: int = 10
-) -> str:
-    """Rank files using code-map token scores against task description tokens."""
-    import re
+def _calculate_token_relevance(
+    tokens: List[str],
+    keywords: List[str],
+    file_path: str,
+    token_callers: Dict = None
+) -> float:
+    """
+    Calculate relevance score based on token matches with keywords and caller relationships.
+    Handles different data structure formats safely.
+    """
+    score = 0.0
 
-    cfg_yaml = yaml.safe_dump(ctx.deps.config.model_dump()) if hasattr(ctx.deps.config, "model_dump") else yaml.safe_dump(dict(ctx.deps.config))
-    cfg_file = dag.directory().with_new_file("config.yaml", cfg_yaml).file("config.yaml")
-    code_map = dag.code_map(config_file=cfg_file)
-    src_dir = ctx.deps.container.directory(".")
+    # Handle different token formats
+    if not tokens:
+        tokens = []
+    elif isinstance(tokens, str):
+        tokens = [tokens]  # Convert single token to list
 
+    # Path-based scoring
+    for keyword in keywords:
+        if keyword.lower() in file_path.lower():
+            score += 3.0
+
+    # Token-based scoring
+    if isinstance(tokens, list):  # Ensure tokens is a list
+        lower_tokens = [t.lower() for t in tokens if isinstance(t, str)]
+        lower_keywords = [k.lower() for k in keywords]
+
+        for keyword in lower_keywords:
+            for token in lower_tokens:
+                if keyword == token:
+                    score += 5.0
+                elif keyword in token:
+                    score += 2.0
+                elif len(token) > 3 and token in keyword:
+                    score += 1.0
+
+    # Token caller relationship scoring - with safe handling
+    if token_callers and isinstance(token_callers, dict):
+        try:
+            # Look for files that call important tokens related to keywords
+            caller_bonus = 0.0
+            for token in tokens:
+                if not isinstance(token, str):
+                    continue
+
+                # Check if this token is called by other files
+                if token in token_callers:
+                    callers = token_callers[token]
+
+                    # Skip if callers is not a dictionary
+                    if not isinstance(callers, dict):
+                        continue
+
+                    # If this token is related to keywords, increase score based on caller count
+                    for keyword in lower_keywords:
+                        if (keyword in token.lower() or
+                            token.lower() in keyword or
+                            any(keyword in caller_token.lower() for caller_token in callers.keys()
+                                if isinstance(caller_token, str))):
+
+                            # Add score based on the number of callers (capped)
+                            caller_count = sum(len(files) for files in callers.values()
+                                               if isinstance(files, list))
+                            caller_bonus += min(caller_count * 0.5, 5.0)
+
+                            # Add extra points if called by multiple different files
+                            unique_caller_files = set()
+                            for file_list in callers.values():
+                                if isinstance(file_list, list):
+                                    unique_caller_files.update(file_list)
+
+                            caller_bonus += min(len(unique_caller_files)
+                                                * 0.8, 8.0)
+
+            score += caller_bonus
+        except Exception as e:
+            print(f"Warning: Error processing token callers: {e}")
+
+    return score
+
+
+def _extract_keywords_from_prompt(prompt: str) -> List[str]:
+    """Extract relevant keywords from the prompt for file filtering."""
+    stop_words = {'and', 'or', 'the', 'for', 'in', 'on',
+                  'with', 'that', 'this', 'to', 'a', 'an', 'be'}
+
+    domain_keywords = {
+        'user', 'profile', 'avatar', 'upload', 'auth', 'model', 'database', 'db',
+        'schema', 'api', 'route', 'endpoint', 'component', 'ui', 'interface',
+        'permission', 'role', 'validation', 'image', 'file', 'storage'
+    }
+
+    words = prompt.lower().replace(',', ' ').replace(
+        '.', ' ').replace(':', ' ').split()
+
+    keywords = [word for word in words if
+                (len(word) > 2 and word not in stop_words) or
+                word in domain_keywords]
+
+    return keywords
+
+
+def _is_non_code_file(file_path: str) -> bool:
+    """Determines if a file is likely not a code file."""
+    non_code_extensions = {
+        '.md', '.txt', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico',
+        '.json', '.lock', '.yml', '.yaml', '.toml', '.license'
+    }
+    excluded_patterns = {'.git', 'node_modules',
+                         '.venv', 'dist', 'build', '__pycache__'}
+
+    file_ext = '.' + file_path.split('.')[-1] if '.' in file_path else ''
+
+    return (
+        file_ext.lower() in non_code_extensions or
+        any(pattern in file_path for pattern in excluded_patterns)
+    )
+
+
+def create_file_picker_agent(model) -> Agent:
+    """
+    Creates an agent that is an expert at finding relevant files in a codebase.
+    """
+    return Agent(
+        model=model,
+        system_prompt="You are an expert at finding relevant files in a codebase for a given task. Analyze the user's request and return the most relevant file paths as a JSON list of strings.",
+        output_type=List[str],
+        instrument=True,
+    )
+
+
+async def _run_single_picker(
+    prompt_text: str,
+    prompt_index: int,
+    model,
+    file_scores: Dict[str, List[str]],
+    token_callers: Dict[str, Dict[str, List[str]]] = None
+) -> List[str]:
+    """Run a single file picker agent with proper error handling."""
     try:
-        scores_json = await code_map.get_file_token_scores(source_dir=src_dir)
-        scores_data = json.loads(scores_json)
-        file_scores = scores_data.get("fileTokenScores", {}) or {}
+        # Create a named wrapper function for find_files that uses file_scores and token_callers
+        async def find_files_with_scores(prompt: str) -> List[str]:
+            """Wrapper for find_files that uses the provided file scores and token callers."""
+            return await find_files(prompt, file_scores, token_callers)
 
-        query_text = (task_description or "").lower()
-        q_tokens = [t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query_text) if len(t) > 1]
-        ranked = []
-        for path, token_map in file_scores.items():
-            score = 0.0
-            matched = []
-            for qt in q_tokens:
-                v = token_map.get(qt)
-                if v:
-                    score += float(v)
-                    matched.append(qt)
-            if score > 0:
-                ranked.append({"path": path, "score": round(score, 4), "reason": f"matched: {', '.join(matched[:5])}"})
-        ranked.sort(key=lambda x: x["score"], reverse=True)
-        return json.dumps(ranked[: max(1, int(max_files))])
+        # Set proper name for Pydantic AI tool registration
+        find_files_with_scores.__name__ = "find_files_with_scores"
+
+        # Create a temporary agent with the wrapper function
+        temp_picker_agent = Agent(
+            model=model,
+            system_prompt="You are an expert at finding relevant files in a codebase for a given task. Analyze the user's request and return the most relevant file paths as a JSON list of strings.",
+            output_type=List[str],
+            tools=[find_files_with_scores],
+        )
+
+        # Run the agent with timeout protection
+        with anyio.move_on_after(300):  # 5-minute timeout
+            print(
+                f"Running picker {prompt_index+1} for: {prompt_text[:50]}...")
+            result = await temp_picker_agent.run(prompt_text)
+
+            # Handle the result based on its type
+            if isinstance(result, list):
+                print(f"Picker {prompt_index+1} found {len(result)} files")
+                return result
+
+            # For AgentRunResult objects with output attribute
+            if hasattr(result, 'output'):
+                output = result.output
+                print(f"Picker {prompt_index+1} found {len(output)} files")
+                return output
+
+            print(
+                f"Picker {prompt_index+1} returned unexpected result type: {type(result)}")
+            return []
     except Exception as e:
-        return json.dumps({"error": f"file_picker failed: {e}"})
+        print(f"Error in file picker {prompt_index+1}: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return [f"Error: {str(e)}"]
 
 
-async def run_researcher(
-    ctx: RunContext[OrchestratorDependencies],
-    research_query: str
-) -> str:
-    return f"Researched: {research_query[:120]}"
+async def run_file_pickers_in_parallel(
+    overall_goal: str,
+    focus_prompts: List[str],
+    picker_agent: Agent,
+    file_scores: Dict[str, List[str]],
+    token_callers: Dict[str, Dict[str, List[str]]] = None
+) -> List[List[str]]:
+    """
+    Spawns multiple file picker agents in parallel to explore different parts of the codebase.
+    Uses file token scores and token callers for improved file relevance scoring.
+    """
+    print(f"Starting parallel file exploration for goal: '{overall_goal}'")
+
+    # Using a dictionary to store results keyed by index
+    results_dict: Dict[int, List[str]] = {}
+
+    # Run each picker in its own protected context to prevent TaskGroup exceptions
+    for i, focus_prompt in enumerate(focus_prompts):
+        try:
+            picker_prompt = f'Based on the overall goal "{overall_goal}", find files related to this specific area: {focus_prompt}'
+
+            # Run the picker directly without TaskGroup to avoid exception propagation
+            result = await _run_single_picker(
+                picker_prompt,
+                i,
+                picker_agent.model,
+                file_scores,
+                token_callers
+            )
+            results_dict[i] = result
+        except Exception as e:
+            print(f"Error running picker {i+1}: {e}")
+            import traceback
+            print(traceback.format_exc())
+            results_dict[i] = [f"Error: {str(e)}"]
+
+    # Convert dict to ordered list of results
+    ordered_results = []
+    for i in range(len(focus_prompts)):
+        ordered_results.append(results_dict.get(
+            i, [f"Error: No result for prompt {i+1}"]))
+
+    return ordered_results
 
 
-async def run_thinker(
-    ctx: RunContext[OrchestratorDependencies],
-    problem_description: str
-) -> str:
-    """Return a simple plan text stub (decoupled)."""
-    return f"Plan for: {problem_description[:200]}\n- Analyze requirements\n- Identify files\n- Implement\n- Test\n- Review\n- PR"
-
-
-async def run_reviewer(
-    ctx: RunContext[OrchestratorDependencies],
-    review_focus: str
-) -> str:
-    return f"Review completed for: {review_focus or 'changes'}\nStatus: approved"
-
-
-async def run_implementation(
-    ctx: RunContext[OrchestratorDependencies],
-    task_spec: dict,
-    selected_files: list[str]
-) -> str:
-    return "Implementation steps executed"
-
-
-async def run_context_pruner(
-    ctx: RunContext[OrchestratorDependencies],
-    max_context_length: int = 50000
-) -> str:
-    return f"Context pruned to ~{max_context_length} tokens"
-
+def create_file_explorer_agent(model) -> Agent:
+    """
+    Creates a file explorer agent that orchestrates multiple file pickers.
+    """
+    return Agent(
+        model=model,
+        system_prompt="You are a file explorer agent. Your job is to determine 1-4 distinct areas of a codebase to explore based on a high-level goal. Return these areas as a list of prompts.",
+        output_type=ExplorePrompts,
+        instrument=True,
+    )

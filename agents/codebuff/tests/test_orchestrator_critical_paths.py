@@ -156,7 +156,7 @@ class TestOrchestratorCriticalPaths:
     @pytest.mark.asyncio
     async def test_orchestrator_tools_sub_agents_smoke(self):
         """Smoke test for orchestrator sub-agent wrapper tools."""
-        from codebuff.orchestrator.tools.sub_agents import run_file_explorer, run_file_picker
+        from codebuff.orchestrator.tools.sub_agents import file_explorer_agent, run_file_picker
         from codebuff.orchestrator.models import OrchestratorDependencies
         
         mock_container = MagicMock()
@@ -181,7 +181,7 @@ class TestOrchestratorCriticalPaths:
             mock_dag.code_map.return_value = mock_code_map
             
             # Test run_file_explorer
-            result = await run_file_explorer(ctx, "test focus")
+            result = await file_explorer_agent(ctx, "test focus")
             assert isinstance(result, str)
             data = json.loads(result)
             assert "focus_area" in data
