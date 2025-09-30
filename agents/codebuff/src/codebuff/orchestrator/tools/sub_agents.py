@@ -21,6 +21,7 @@ async def find_files(
     prompt: str,
     file_scores: dict,
     token_callers: dict = None,
+    task_goal: str = None,  # Add task_goal parameter with default for backward compatibility
 ) -> List[str]:
     """
     Finds relevant files in the codebase based on a prompt using file token scores and token callers.
@@ -31,8 +32,8 @@ async def find_files(
             print("Warning: No file scores provided, returning empty list")
             return []
 
-        # Extract keywords from the prompt for filtering
-        keywords = _extract_keywords_from_prompt(prompt)
+        # Extract keywords from the prompt and task goal for filtering
+        keywords = _extract_keywords_from_prompt(prompt, task_goal)
         print(f"Using keywords for search: {keywords}")
 
         # Handle different file_scores data structure formats
@@ -174,25 +175,51 @@ def _calculate_token_relevance(
     return score
 
 
-def _extract_keywords_from_prompt(prompt: str) -> List[str]:
-    """Extract relevant keywords from the prompt for file filtering."""
-    stop_words = {'and', 'or', 'the', 'for', 'in', 'on',
-                  'with', 'that', 'this', 'to', 'a', 'an', 'be'}
+def _extract_keywords_from_prompt(prompt: str, task_goal: str = None) -> List[str]:
+    """
+    Extract relevant keywords from the prompt and task goal for file filtering.
+    
+    Args:
+        prompt: The specific search prompt
+        task_goal: The overall task goal to extract domain keywords from
+    
+    Returns:
+        List of relevant keywords for file matching
+    """
+    stop_words = {'and', 'or', 'the', 'for', 'in', 'on', 'with', 'that',
+                  'this', 'to', 'a', 'an', 'be', 'is', 'are', 'was', 'were',
+                  'from', 'as', 'at', 'by', 'of'}
 
-    domain_keywords = {
-        'user', 'profile', 'avatar', 'upload', 'auth', 'model', 'database', 'db',
-        'schema', 'api', 'route', 'endpoint', 'component', 'ui', 'interface',
-        'permission', 'role', 'validation', 'image', 'file', 'storage'
-    }
+    # Combine text sources for keyword extraction
+    text_sources = [prompt.lower()]
+    if task_goal:
+        text_sources.append(task_goal.lower())
 
-    words = prompt.lower().replace(',', ' ').replace(
-        '.', ' ').replace(':', ' ').split()
+    # Extract all potential keywords
+    all_words = []
+    for text in text_sources:
+        words = text.replace(',', ' ').replace(
+            '.', ' ').replace(':', ' ').replace(';', ' ').split()
+        all_words.extend(words)
 
-    keywords = [word for word in words if
-                (len(word) > 2 and word not in stop_words) or
-                word in domain_keywords]
+    # Filter words: keep words longer than 2 characters that aren't stop words
+    keywords = [word for word in all_words if len(
+        word) > 2 and word not in stop_words]
 
-    return keywords
+    # Count word frequency to identify important domain terms
+    word_counts = {}
+    for word in keywords:
+        word_counts[word] = word_counts.get(word, 0) + 1
+
+    # Sort by frequency to prioritize repeated keywords
+    sorted_keywords = sorted(
+        word_counts.items(), key=lambda x: x[1], reverse=True)
+
+    # Take the top keywords, with more weight given to task_goal keywords
+    selected_keywords = [word for word, _ in sorted_keywords[:30]]
+
+    # Ensure we don't have too many keywords (which could dilute relevance)
+    return selected_keywords[:20]
 
 
 def _is_non_code_file(file_path: str) -> bool:
@@ -229,14 +256,15 @@ async def _run_single_picker(
     prompt_index: int,
     model,
     file_scores: Dict[str, List[str]],
-    token_callers: Dict[str, Dict[str, List[str]]] = None
+    token_callers: Dict[str, Dict[str, List[str]]] = None,
+    task_goal: str = None  # Add task_goal parameter
 ) -> List[str]:
     """Run a single file picker agent with proper error handling."""
     try:
         # Create a named wrapper function for find_files that uses file_scores and token_callers
         async def find_files_with_scores(prompt: str) -> List[str]:
             """Wrapper for find_files that uses the provided file scores and token callers."""
-            return await find_files(prompt, file_scores, token_callers)
+            return await find_files(prompt, file_scores, token_callers, task_goal)
 
         # Set proper name for Pydantic AI tool registration
         find_files_with_scores.__name__ = "find_files_with_scores"
@@ -303,7 +331,8 @@ async def run_file_pickers_in_parallel(
                 i,
                 picker_agent.model,
                 file_scores,
-                token_callers
+                token_callers,
+                overall_goal  # Pass the overall goal to extract domain-specific keywords
             )
             results_dict[i] = result
         except Exception as e:
