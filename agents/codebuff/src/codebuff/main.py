@@ -4,7 +4,7 @@ Main Dagger module orchestrating all Codebuff-equivalent agents.
 
 import uuid
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 import dagger
@@ -126,6 +126,17 @@ class Codebuff:
                 "orchestrator", open_router_api_key, openai_api_key
             )
 
+            # Also create implementation model for sub-agent use
+            impl_model = await self._get_llm_for_agent(
+                "implementation", open_router_api_key, openai_api_key
+            )
+            file_picker_model = await self._get_llm_for_agent(
+                "file_picker", open_router_api_key, openai_api_key
+            )
+            file_explorer_model = await self._get_llm_for_agent(
+                "file_explorer", open_router_api_key, openai_api_key
+            )
+
             await self.setup_environment(
                 github_access_token=github_token,
                 repository_url=repository_url,
@@ -154,12 +165,16 @@ class Codebuff:
                 container=container,
                 github_token=github_token,
                 api_key=openai_api_key or open_router_api_key,
+                model=model,  # NEW: pass implementation model for sub-agent
+                implementation=impl_model,
+                file_picker=file_picker_model,
+                file_explorer=file_explorer_model,
                 state=OrchestrationState(
                     task_id=str(uuid.uuid4()),
                     current_phase=Phase.EXPLORATION,
                     status=Status.IN_PROGRESS,
-                    start_time=datetime.now(UTC),
-                    last_update=datetime.now(UTC),
+                    start_time=datetime.now(timezone.utc),
+                    last_update=datetime.now(timezone.utc),
                     task_spec=TaskSpec(
                         id=str(uuid.uuid4()),
                         goal=feature_task_description,
@@ -342,13 +357,13 @@ Start with step 1 now.
             # Persist request prompt to .codebuff-state for review in PR
             slug_base = "-".join(feature_task_description.lower().split()
                                  )[:48] or "feature"
-            ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
             branch_name = f"{branch_prefix}{slug_base}-{ts}"
 
             # Build a basic feedback request payload
             feedback_payload = {
                 "phase": focus_phase,
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "feature": feature_task_description,
                 "proposed_branch": branch_name,
                 "instructions": [

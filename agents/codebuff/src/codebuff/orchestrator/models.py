@@ -1,13 +1,14 @@
 """Pydantic models for structured inter-agent communication."""
 
 from dataclasses import dataclass
-from enum import Enum
-from typing import List, Optional, Dict, Any
 from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
 import dagger
 from ais_dagger_agents_config import YAMLConfig
+from pydantic import BaseModel, Field, field_validator
+from pydantic_ai.models.openai import OpenAIChatModel
 
 
 class Phase(str, Enum):
@@ -231,13 +232,13 @@ class OrchestratorDependencies:
     model: Optional[Any] = None
 
     # Optional sub-agent instances (if needed later)
-    file_explorer: Optional[Any] = None
-    file_picker: Optional[Any] = None
-    researcher: Optional[Any] = None
-    thinker: Optional[Any] = None
-    reviewer: Optional[Any] = None
-    implementation: Optional[Any] = None
-    context_pruner: Optional[Any] = None
+    file_explorer: Optional[OpenAIChatModel] = None
+    file_picker: Optional[OpenAIChatModel] = None
+    researcher: Optional[OpenAIChatModel] = None
+    thinker: Optional[OpenAIChatModel] = None
+    reviewer: Optional[OpenAIChatModel] = None
+    implementation: Optional[OpenAIChatModel] = None
+    context_pruner: Optional[OpenAIChatModel] = None
 
     # Workflow state
     state: Optional[OrchestrationState] = None

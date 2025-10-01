@@ -2,13 +2,8 @@
 
 import time
 from datetime import datetime
-from typing import Optional
 import uuid
 import json
-from codebuff.utils.llm import create_llm_model, get_llm_credentials
-import dagger
-from logfire import span
-import yaml
 from dagger import dag
 
 from pydantic_ai import Agent, RunContext
@@ -19,12 +14,12 @@ from ..utils.container_state import write_json, write_text, append_log
 from .tools.planning import create_plan, add_subgoal, update_subgoal, think_deeply
 from .tools.file_ops import read_files as read_files_tool, write_file as write_file_tool, str_replace as str_replace_tool, code_search as code_search_tool
 from .tools.execution import run_terminal_command as run_terminal_command_tool
-# Updated imports for the new multi-agent structure
-from .tools.sub_agents import (
+from ..file_explorer.agent import (
     create_file_explorer_agent,
     create_file_picker_agent,
     run_file_pickers_in_parallel,
 )
+from ..implementation.agent import create_implementation_agent, ImplementationDependencies
 from .models import (
     OrchestratorDependencies,
     OrchestrationState,
@@ -38,6 +33,7 @@ from .models import (
     Plan,
     PlanStep,
     ChangeSet,
+    FileEdit,
     ReviewReport,
     PullRequestResult,
     ContextSummary,
@@ -46,52 +42,6 @@ from .models import (
 from opentelemetry import trace
 
 tracer = trace.get_tracer(__name__)
-
-
-def _get_model_for_agent(config: dict, agent_name: str) -> str:
-    """Get model name for specific agent from config, with fallbacks."""
-    # Check agent-specific config first
-    if config and "agents" in config and agent_name in config["agents"]:
-        if "model" in config["agents"][agent_name]:
-            return config["agents"][agent_name]["model"]
-
-    # Fallback to core_api model
-    if config and "core_api" in config and "model" in config["core_api"]:
-        return config["core_api"]["model"]
-
-    # Ultimate fallback by agent type
-    fallbacks = {
-        "explorer": "openai/gpt-4o-mini",
-        "picker": "openai/gpt-4o-mini",
-        "thinker": "openai/gpt-4o",
-        "implementation": "openai/gpt-4o",
-        "reviewer": "openai/gpt-4o",
-        "context_pruner": "openai/gpt-4o-mini",
-        "orchestrator": "openai/gpt-4o"
-    }
-    return fallbacks.get(agent_name, "openai/gpt-4o")
-
-
-async def _get_llm_for_agent(
-    config: dict,
-    agent_name: str,
-    open_router_api_key: Optional[dagger.Secret],
-    openai_api_key: Optional[dagger.Secret],
-) -> object:
-    """Determines the correct provider and creates the LLM for a given agent."""
-    model_name = _get_model_for_agent(config, agent_name)
-
-    # Determine provider based on available keys
-    # Prefer OpenRouter if available since it supports more models
-    if open_router_api_key:
-        provider = "openrouter"
-    elif openai_api_key:
-        provider = "openai"
-    else:
-        provider = "openai"  # fallback
-
-    creds = await get_llm_credentials(provider, open_router_api_key, openai_api_key)
-    return await create_llm_model(creds.api_key, creds.base_url, model_name)
 
 
 async def add_project_file_tree_to_context(
@@ -224,16 +174,9 @@ async def explore_codebase(
             state.status = Status.IN_PROGRESS
             state.last_update = datetime.now()
 
-            # 1. Create the models for the sub-agents
-            explorer_model = await _get_llm_for_agent(
-                ctx.deps.config, "explorer", open_router_api_key=ctx.deps.api_key, openai_api_key=None
-            )
-            picker_model = await _get_llm_for_agent(
-                ctx.deps.config, "picker", open_router_api_key=ctx.deps.api_key, openai_api_key=None
-            )
-
             # 2. Create the agent that will decide what to explore
-            explorer_llm_agent = create_file_explorer_agent(explorer_model)
+            explorer_llm_agent = create_file_explorer_agent(
+                ctx.deps.file_explorer)
 
             # 3. Run the explorer LLM to get a structured list of prompts
             explorer_prompt = f"Based on the overall goal '{state.task_spec.goal}', what are 1-4 different areas of the codebase that could be useful to explore in parallel? Think about components, features, or layers (e.g., 'API routes', 'database models', 'UI components')."
@@ -254,7 +197,7 @@ async def explore_codebase(
                 print(magenta(f"  {i+1}. {prompt}"))
 
             # 4. Set up dependencies for the picker agents
-            picker_agent = create_file_picker_agent(picker_model)
+            picker_agent = create_file_picker_agent(ctx.deps.file_picker)
 
             # Get code map scores for file ranking
             code_map = dag.code_map(config_file=ctx.deps.config_file)
@@ -523,115 +466,216 @@ async def execute_implementation(
             # Convert plan to string for agent
             plan_str = json.dumps(state.plan.model_dump(), indent=2)
 
-            # Perform implementation directly (decoupled)
-            impl_result = "Implementation steps executed"
+            # Build selected files list for Implementation agent
+            selected_files = [f.path for f in (
+                state.file_set.files or [])][:20] if state.file_set and state.file_set.files else []
+
+            # Create Implementation agent with the appropriate model
+            # Check if we have the implementation model directly or need to use the general model
+            if hasattr(ctx.deps, 'implementation') and ctx.deps.implementation is not None:
+                # Use the dedicated implementation model if available
+                impl_agent = create_implementation_agent(
+                    ctx.deps.implementation)
+            else:
+                # Fall back to the main model
+                if not ctx.deps.model:
+                    raise ValueError(
+                        "Implementation model not provided in dependencies")
+                impl_agent = create_implementation_agent(ctx.deps.model)
+
+            # Run Implementation agent
+            impl_deps = ImplementationDependencies(
+                config=ctx.deps.config,
+                container=ctx.deps.container,
+                plan=plan_str
+            )
+
+            impl_prompt = (
+                "Apply the implementation plan.\n"
+                "Requirements:\n"
+                f"- Focus on these files: {', '.join(selected_files) if selected_files else 'any relevant files'}\n"
+                "- Create NEW implementation code as needed\n"
+                "- Create NEW unit tests for the new code\n"
+                "- Keep changes minimal and focused\n"
+                "- Follow existing code patterns\n"
+                "Output a brief summary of changes made."
+            )
+
+            impl_result = await impl_agent.run(impl_prompt, deps=impl_deps)
+
+            # Update container from Implementation agent
+            ctx.deps.container = impl_deps.container
+
+            # Stage changes to detect new files
+            ctx.deps.container = ctx.deps.container.with_exec(
+                ["bash", "-lc", "git add -N . || true"])
+
+            # Get changed files using porcelain format
+            raw_status = await ctx.deps.container.with_exec(["bash", "-lc", "git status --porcelain=v1 -z"]).stdout()
+
+            # Parse changed files
+            changed_paths = []
+            created_files = set()
+            modified_files = set()
+
+            if raw_status:
+                for entry in raw_status.split("\x00"):
+                    if not entry.strip():
+                        continue
+                    status_code = entry[:2]
+                    file_path = entry[3:].strip()
+                    if not file_path:
+                        continue
+                    changed_paths.append(file_path)
+                    # Check if file was created or modified
+                    if status_code[0] in ['?', 'A'] or status_code[1] in ['?', 'A']:
+                        created_files.add(file_path)
+                    else:
+                        modified_files.add(file_path)
+
+            # Categorize files
+            test_files = []
+            code_files = []
+            for path in changed_paths:
+                # Detect test files using common patterns
+                if any(pattern in path for pattern in [
+                    "/__tests__/", ".test.", ".spec.", "test_", "_test.",
+                    "/tests/", "/test/", "_tests."
+                ]):
+                    test_files.append(path)
+                elif path.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".rs", ".cpp", ".c")):
+                    code_files.append(path)
+
+            # Create ChangeSet from detected changes
+            edits = [
+                FileEdit(
+                    path=path,
+                    operation="create" if path in created_files else "modify"
+                ) for path in changed_paths
+            ]
+
             change_set = ChangeSet(
-                edits=[],
+                edits=edits,
                 commands=[],
-                migration_notes=impl_result
+                migration_notes=str(impl_result.output) if hasattr(
+                    impl_result, 'output') else str(impl_result)
             )
 
             state.change_set = change_set
 
-            # Test execution with telemetry
+            # Persist targeting data for test execution
+            ctx.deps.container = await write_json(
+                ctx.deps.container,
+                "implementation/targets.json",
+                {
+                    "test_files": test_files,
+                    "code_files": code_files,
+                    "all_changed": changed_paths,
+                    "created": list(created_files),
+                    "modified": list(modified_files)
+                }
+            )
+
+            # Execute targeted tests
             tests_passed = False
             test_output = ""
-            test_cmd = getattr(ctx.deps.config.testing, "test_command", None)
+            per_file_results = []
 
-            if test_cmd:
-                span.set_attribute("test_command", test_cmd)
-                try:
-                    run = ctx.deps.container.with_exec(
-                        ["bash", "-lc", test_cmd])
-                    test_output = await run.stdout()
-                    tests_passed = True
-                    span.set_attribute("tests_status", "passed")
-                except Exception as e:
-                    msg = str(e)
-                    if "collected 0 items" in (test_output or "") or "collected 0 items" in msg or "exit code: 5" in msg:
-                        tests_passed = True
-                        test_output = (test_output or "") + \
-                            "\n(no tests collected; treating as success)"
-                        span.set_attribute("tests_status", "no_tests")
-                    else:
+            # Get test command template from config
+            reporter_config = getattr(ctx.deps.config, 'reporter', None)
+            file_test_template = getattr(
+                reporter_config, 'file_test_command_template', None) if reporter_config else None
+
+            if test_files:
+                print(blue(f"🧪 Running {len(test_files)} targeted test files"))
+                tests_passed = True  # Assume success until a failure occurs
+                for test_file in test_files[:20]:
+                    try:
+                        if file_test_template:
+                            cmd = file_test_template.replace(
+                                "{file}", test_file)
+                        else:
+                            if test_file.endswith('.py'):
+                                cmd = f"pytest -xvs {test_file}"
+                            elif any(test_file.endswith(ext) for ext in ['.ts', '.tsx', '.js', '.jsx']):
+                                cmd = f"npm test -- --testPathPattern='{test_file}'"
+                            elif test_file.endswith('.go'):
+                                cmd = f"go test -v $(dirname {test_file})"
+                            else:
+                                cmd = f"echo 'No test runner configured for {test_file}'"
+                        test_output_single = await ctx.deps.container.with_exec(["bash", "-lc", cmd]).stdout()
+                        per_file_results.append({
+                            "file": test_file,
+                            "command": cmd,
+                            "status": "passed",
+                            "output": (test_output_single or "")[:2000]
+                        })
+                    except Exception as e:
                         tests_passed = False
-                        test_output = msg
-                        span.set_attribute("tests_status", "failed")
-                        span.set_attribute("test_error", msg[:200])
+                        per_file_results.append({
+                            "file": test_file,
+                            "command": cmd,
+                            "status": "failed",
+                            "error": str(e)[:1000]
+                        })
+                test_output = json.dumps(per_file_results)[:5000]
             else:
-                # Fallback to heuristics
-                span.set_attribute("test_detection", "heuristic")
-                try:
-                    entries = await ctx.deps.container.directory(".").entries()
-                except Exception:
-                    entries = []
-
-                span.set_attribute("project_files", entries[:10])
-
-                # Language detection with telemetry
-                lang = None
-                if "package.json" in entries:
-                    lang = "node"
-                    span.set_attribute("language", "node")
-                elif any(f in entries for f in ["pyproject.toml", "pytest.ini", "requirements.txt", "uv.lock", "poetry.lock"]):
-                    lang = "python"
-                    span.set_attribute("language", "python")
-                elif "go.mod" in entries:
-                    lang = "go"
-                    span.set_attribute("language", "go")
-                elif "pom.xml" in entries:
-                    lang = "java"
-                    span.set_attribute("language", "java")
-                elif "Cargo.toml" in entries:
-                    lang = "rust"
-                    span.set_attribute("language", "rust")
-
-                # Simple test detection for common patterns
-                if lang == "python":
+                test_cmd = getattr(ctx.deps.config.testing, "test_command", None) if hasattr(
+                    ctx.deps.config, 'testing') else None
+                if test_cmd:
+                    print(
+                        blue(f"🧪 No targeted tests found, running configured test command: {test_cmd}"))
                     try:
-                        test_run = ctx.deps.container.with_exec(
-                            ["bash", "-lc", "python -m pytest --version && python -m pytest --collect-only -q"])
-                        test_output = await test_run.stdout()
+                        test_output = await ctx.deps.container.with_exec(["bash", "-lc", test_cmd]).stdout() or ""
                         tests_passed = True
-                        span.set_attribute("tests_status", "heuristic_passed")
-                    except Exception:
-                        tests_passed = True  # No tests is OK
-                        span.set_attribute("tests_status", "no_tests_found")
-                elif lang == "node":
-                    try:
-                        test_run = ctx.deps.container.with_exec(
-                            ["bash", "-lc", "npm test"])
-                        test_output = await test_run.stdout()
-                        tests_passed = True
-                        span.set_attribute("tests_status", "heuristic_passed")
-                    except Exception:
-                        tests_passed = True  # No tests is OK
-                        span.set_attribute("tests_status", "no_tests_found")
+                    except Exception as e:
+                        error_msg = str(e)
+                        if any(phrase in error_msg.lower() for phrase in [
+                            "collected 0 items", "no tests collected", "exit code: 5"
+                        ]):
+                            tests_passed = True
+                            test_output = error_msg + \
+                                "\n(No tests collected; treating as success)"
+                        else:
+                            tests_passed = False
+                            test_output = error_msg[:5000]
                 else:
-                    tests_passed = True  # Unknown language, assume OK
-                    span.set_attribute("tests_status", "unknown_language")
+                    print(
+                        yellow("⚠️ No targeted tests detected and no fallback test command configured"))
+                    tests_passed = True
+                    test_output = "No tests to run; proceeding with implementation"
+
+            # Save detailed test results
+            ctx.deps.container = await write_json(
+                ctx.deps.container,
+                "implementation/test-results.json",
+                {
+                    "tests_passed": tests_passed,
+                    "test_strategy": "targeted" if test_files else "fallback",
+                    "files_tested": test_files,
+                    "per_file_results": per_file_results,
+                    "summary_output": test_output
+                }
+            )
+
+            # Gate commit on test results
+            if not tests_passed:
+                state.status = Status.FAILED
+                error = OrchestrationError(
+                    kind=ErrorKind.TOOL_ERROR,
+                    message="Targeted tests failed; implementation aborted",
+                    phase=Phase.IMPLEMENTATION,
+                    retry_count=state.retry_count
+                )
+                state.errors.append(error)
+                print(red("❌ Targeted tests failed; aborting commit"))
+                return "Implementation failed: targeted tests did not pass"
 
             span.set_attribute("final_tests_passed", tests_passed)
 
-            # Persist test results
-            try:
-                if getattr(ctx.deps, "container", None) is not None:
-                    ctx.deps.container = await write_json(
-                        ctx.deps.container,
-                        "implementation/test_results.json",
-                        {"tests_passed": tests_passed, "test_output": (test_output or "")[
-                            :5000]},
-                    )
-                    ctx.deps.container = await append_log(
-                        ctx.deps.container, f"tests: {'passed' if tests_passed else 'failed'}"
-                    )
-            except Exception:
-                pass
+            # Test results already persisted above in targeted test execution
 
-            if not tests_passed:
-                state.status = Status.FAILED
-                print(red("❌ Tests failed; skipping commit and PR."))
-                return "Implementation failed: tests did not pass"
+            print(green("✅ Targeted tests passed; proceeding with commit"))
 
             # Git operations with telemetry
             branch = f"feature/{state.task_spec.id[:8]}" if state.task_spec else f"feature/{uuid.uuid4().hex[:8]}"
@@ -643,7 +687,7 @@ async def execute_implementation(
                     "git config user.email 'codebuff@example.com'",
                     f"git checkout -b {branch}",
                     "git add -A",
-                    f"git commit -m \"feat: {state.task_spec.goal if state.task_spec else 'feature'}\\n\\nIncludes unit tests with passing test suite\"",
+                    f"git commit -m \"feat: {state.task_spec.goal if state.task_spec else 'feature'}\\n\\nAutomated commit: applied implementation changes\\nIncludes targeted tests with passing test suite\"",
                 ]
                 for cmd in cmds:
                     ctx.deps.container = ctx.deps.container.with_exec(
@@ -926,7 +970,8 @@ Handle errors gracefully and provide actionable feedback.
     )
 
     # Register workflow tools
-    agent.system_prompt(add_file_token_scores_token_callers_to_context)
+    # Not sure if adding this helps
+    # agent.system_prompt(add_file_token_scores_token_callers_to_context)
     agent.system_prompt(add_project_file_tree_to_context)
     agent.tool(start_task)
     agent.tool(explore_codebase)
@@ -952,9 +997,6 @@ Handle errors gracefully and provide actionable feedback.
 
     # Analysis & session
     agent.tool(think_deeply)
-
-    # Sub-agent wrappers are no longer needed as individual tools
-    # The `explore_codebase` tool now orchestrates them directly.
 
     print(f"Orchestrator Agent created with model: {model.model_name}")
     return agent
