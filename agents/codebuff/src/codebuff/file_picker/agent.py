@@ -15,6 +15,33 @@ from simple_chalk import blue, green, yellow
 
 from codebuff.constants import EXCLUDED_DIRS
 
+# Code file extensions that should be prioritized
+CODE_EXTENSIONS = {
+    '.py', '.ts', '.tsx', '.js', '.jsx', '.go', '.java', '.rs', 
+    '.cpp', '.c', '.cc', '.cxx', '.h', '.hpp', '.cs', '.php',
+    '.rb', '.swift', '.kt', '.scala', '.clj', '.hs', '.elm',
+    '.vue', '.svelte', '.dart', '.r', '.jl', '.m', '.mm'
+}
+
+# Non-code files to exclude from selection
+NON_CODE_EXTENSIONS = {
+    '.md', '.txt', '.rst', '.csv', '.jsonl', '.log', '.out',
+    '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.pdf',
+    '.lock', '.yml', '.yaml', '.toml', '.xml', '.html', '.css',
+    '.json', '.LICENSE', '.gitignore', '.gitkeep', '.env'
+}
+
+def _is_code_file(file_path: str) -> bool:
+    """Check if a file is a code file based on extension."""
+    if not file_path or '.' not in file_path:
+        return False
+    ext = '.' + file_path.split('.')[-1].lower()
+    return ext in CODE_EXTENSIONS and ext not in NON_CODE_EXTENSIONS
+
+def _filter_code_files(file_paths: list) -> list:
+    """Filter list to only include code files."""
+    return [path for path in file_paths if _is_code_file(path)]
+
 
 @dataclass
 class FilePickerDependencies:
@@ -51,6 +78,14 @@ async def semantic_query(
 
         ranked = []
         for path, token_map in file_scores.items():
+            # Skip non-code files
+            if not _is_code_file(path):
+                continue
+                
+            # Skip excluded directories
+            if any(ex in path for ex in EXCLUDED_DIRS):
+                continue
+                
             score = 0.0
             matched = []
             for qt in q_tokens:
@@ -59,10 +94,13 @@ async def semantic_query(
                     score += float(v)
                     matched.append(qt)
             if score > 0:
+                # Boost score for code files
+                if _is_code_file(path):
+                    score *= 1.5
                 ranked.append({
                     "path": path,
                     "score": round(score, 4),
-                    "reason": f"matched: {', '.join(matched[:5])}"
+                    "reason": f"code file, matched: {', '.join(matched[:5])}"
                 })
 
         ranked.sort(key=lambda x: x["score"], reverse=True)
@@ -92,12 +130,17 @@ async def search_relevant_files(
                 continue
             if any(ex in p for ex in EXCLUDED_DIRS):
                 continue
+            # Filter to only code files
+            if not _is_code_file(p):
+                continue
             if p not in seen:
                 seen.add(p)
                 paths.append(p)
             if len(paths) >= max_results:
                 break
-        return json.dumps(paths)
+        # Filter to only code files before returning
+        code_paths = _filter_code_files(paths)
+        return json.dumps(code_paths)
     except Exception as e:
         return json.dumps({"error": f"search_relevant_files failed: {e}"})
 
@@ -114,15 +157,24 @@ async def analyze_file_relevance(
         desc_tokens = set([t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", desc) if len(t) > 1])
         results = []
         for p in files or []:
+            # Only analyze code files
+            if not _is_code_file(p):
+                continue
+                
             base = p.split("/")[-1].lower()
             name_tokens = set([t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", base) if len(t) > 1])
             overlap = sorted(desc_tokens.intersection(name_tokens))
             score = float(len(overlap))
+            
+            # Boost score for code files
+            if _is_code_file(p):
+                score *= 1.2
+                
             if score > 0:
                 results.append({
                     "path": p,
                     "score": score,
-                    "reason": f"name overlap: {', '.join(overlap[:5])}"
+                    "reason": f"code file, name overlap: {', '.join(overlap[:5])}"
                 })
         results.sort(key=lambda x: x["score"], reverse=True)
         return json.dumps(results[:50])

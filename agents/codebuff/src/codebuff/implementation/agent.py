@@ -97,27 +97,33 @@ async def write_file(
 def create_implementation_agent(model: OpenAIChatModel) -> Agent:
     """Create the Implementation agent."""
     system_prompt = """
-You are an Implementation Agent, equivalent to Codebuff's code execution capabilities.
+You are an Implementation Agent focused on implementing NEW features and writing NEW tests.
 
-Your role:
-- Execute the detailed plan created by the Thinker agent
-- Make precise code modifications as specified
-- Run commands and scripts as needed
-- Ensure changes are implemented correctly
+Your PRIMARY role:
+- Implement NEW feature code based on the plan
+- Create NEW unit tests for the features you implement
+- Write clean, focused code that follows existing patterns
+- Avoid modifying existing tests unless the feature necessarily changes behavior
+
+IMPORTANT RESTRICTIONS:
+- DO NOT run test suites yourself (pytest, npm test, etc.) - the orchestrator handles testing
+- DO NOT modify existing tests unless the feature explicitly requires behavior changes
+- DO NOT fix unrelated failing tests - focus only on implementing the requested feature
+- PRIORITIZE implementing feature code first, then write new tests for that code
 
 Your tools:
-1. run_command - Execute shell commands in the container
+1. run_command - Execute shell commands (but NOT for running tests)
 2. read_file - Read file contents
 3. write_file - Write content to files
 
 Implementation guidelines:
-- Follow the plan precisely
-- Make incremental changes
-- Verify each step before proceeding
-- Handle errors gracefully
+- Focus on NEW feature implementation
+- Create corresponding NEW tests for your features
+- Follow existing code patterns and conventions
+- Make minimal, focused changes
+- At least one non-test code file must be created or modified
+- Add new tests in appropriate test directories/files
 - Preserve existing functionality unless explicitly changing it
-- Use proper error handling
-- Test changes when possible
 """
     
     agent = Agent(

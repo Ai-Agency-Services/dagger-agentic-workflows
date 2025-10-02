@@ -16,8 +16,8 @@ from .tools.file_ops import read_files as read_files_tool, write_file as write_f
 from .tools.execution import run_terminal_command as run_terminal_command_tool
 from ..file_explorer.agent import (
     create_file_explorer_agent,
-    create_file_picker_agent,
     run_file_pickers_in_parallel,
+    FileExplorerDependencies,
 )
 from ..implementation.agent import create_implementation_agent, ImplementationDependencies
 from .models import (
@@ -182,7 +182,10 @@ async def explore_codebase(
             explorer_prompt = f"Based on the overall goal '{state.task_spec.goal}', what are 1-4 different areas of the codebase that could be useful to explore in parallel? Think about components, features, or layers (e.g., 'API routes', 'database models', 'UI components')."
 
             # Run returns an AgentRunResult object that contains our structured output
-            explorer_result = await explorer_llm_agent.run(explorer_prompt)
+            dep = FileExplorerDependencies(
+                container=ctx.deps.container
+            )
+            explorer_result = await explorer_llm_agent.run(explorer_prompt, deps=dep)
 
             # Extract the ExplorePrompts object from the result
             explore_prompts_result = explorer_result.output
@@ -195,9 +198,6 @@ async def explore_codebase(
                 f"🧭 Explorer identified {len(prompts)} areas to explore:"))
             for i, prompt in enumerate(prompts):
                 print(magenta(f"  {i+1}. {prompt}"))
-
-            # 4. Set up dependencies for the picker agents
-            picker_agent = create_file_picker_agent(ctx.deps.file_picker)
 
             # Get code map scores for file ranking
             code_map = dag.code_map(config_file=ctx.deps.config_file)
@@ -217,7 +217,7 @@ async def explore_codebase(
             all_results = await run_file_pickers_in_parallel(
                 overall_goal=state.task_spec.goal,
                 focus_prompts=prompts,
-                picker_agent=picker_agent,
+                picker_agent_model=ctx.deps.file_picker,
                 file_scores=file_scores,
                 token_callers=token_callers,  # Add token_callers to the function call
             )
@@ -240,7 +240,10 @@ async def explore_codebase(
             for file in unique_files:
                 print(green(f"  • {file}"))
 
-            # Convert string paths to PathInfo objects with relevance scores
+            # Filter to only code files and convert to PathInfo objects
+            from ..file_picker.agent import _is_code_file
+            code_files = [f for f in unique_files if _is_code_file(f)]
+            
             path_infos = [
                 PathInfo(
                     path=file_path,
@@ -248,8 +251,12 @@ async def explore_codebase(
                     tokens=len(file_scores.get(file_path, [])
                                ) if file_scores else 0
                 )
-                for file_path in unique_files
+                for file_path in code_files
             ]
+            
+            print(cyan(f"\n🔧 Code files after filtering ({len(code_files)}):"))
+            for file in code_files:
+                print(green(f"  • {file}"))
 
             exploration_report = ExplorationReport(
                 areas_explored=prompts,
@@ -276,8 +283,8 @@ async def explore_codebase(
             span.set_attribute("confidence", exploration_report.confidence)
 
             print(
-                green(f"✅ Multi-agent exploration completed. Found {len(unique_files)} files."))
-            return f"Exploration completed. Found {len(unique_files)} relevant files."
+                green(f"✅ Multi-agent exploration completed. Found {len(code_files)} code files."))
+            return f"Exploration completed. Found {len(code_files)} relevant code files."
 
         except Exception as e:
             span.set_attribute("error", str(e))
@@ -657,6 +664,19 @@ async def execute_implementation(
                     "summary_output": test_output
                 }
             )
+
+            # Validate that actual feature code was implemented (not just test changes)
+            if not code_files and test_files:
+                state.status = Status.FAILED
+                error = OrchestrationError(
+                    kind=ErrorKind.TOOL_ERROR,
+                    message="Only test files were modified; no feature implementation detected",
+                    phase=Phase.IMPLEMENTATION,
+                    retry_count=state.retry_count
+                )
+                state.errors.append(error)
+                print(red("❌ Only tests were modified; no feature code implemented"))
+                return "Implementation failed: only test files were modified, no feature code was implemented"
 
             # Gate commit on test results
             if not tests_passed:

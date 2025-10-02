@@ -119,6 +119,10 @@ class Codebuff:
     ) -> str:
         """Orchestrate complete feature development workflow using all Codebuff agents."""
         try:
+            import logging
+            # Configure logging to suppress OpenTelemetry warnings
+            logging.getLogger(
+                "opentelemetry.exporter.otlp.proto.http.metric_exporter").setLevel(logging.ERROR)
             # Store github token for later use in PR creation
             self.github_token = github_token
 
