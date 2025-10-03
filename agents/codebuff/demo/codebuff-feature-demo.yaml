@@ -26,10 +26,10 @@ testing:
 # Agent-specific settings
 # agents:
 #     orchestrator:
-#         model: "openai/gpt-5-mini"
+#         model: "anthropic/claude-4-sonnet-20250522"
 
 #     file_explorer:
-#         model: "anthropic/claude-3.5-sonnet"
+#         model: "anthropic/claude-4-sonnet-20250522"
 #         focus_areas:
 #             - "API endpoints"
 #             - "database models"
@@ -41,28 +41,33 @@ testing:
 #         max_files: 10
     
 #     thinker:
-#         model: "openai/gpt-4o"
+#         model: "openai/gpt-5"
 #         planning_depth: "detailed"
     
 #     implementation:
-#         model: "anthropic/claude-3.5-sonnet"
+#         model: "anthropic/claude-4-sonnet-20250522"
 #         safety_checks: true
     
 #     reviewer:
-#         model: "openai/gpt-4o"
+#         model: "google/gemini-2.5-pro"
 #         check_syntax: true
 #         run_tests: true
     
 #     context_pruner:
-#         model: "openai/gpt-4o-mini"
+#         model: "openai/gpt-5-mini"
 #         default_strategy: "smart"
 #         max_tokens: 4000
 
 orchestrator:
   feedback:
-    enabled: true
-    stop_after_phase: "IMPLEMENTATION"   # Valid: PLANNING (currently supported)
+    enabled: false
+    stop_after_phase: "COMPLETE"   # Valid: PLANNING (currently supported)
     branch_prefix: "feature/orchestrator-"
+  testing:
+    tdd:
+      enabled: true
+      max_cycles: 5
+      allow_tests_only_first_cycle: true
 
 # Feature development settings
 feature_development:

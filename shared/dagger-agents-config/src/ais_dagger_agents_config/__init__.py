@@ -17,11 +17,13 @@ from .models import (
     SmellDetectorsConfig,
     CodeMapConfig,
     TestingConfig,
+    OrchestratorTestingConfig,
+    TDDConfig,
     OrchestratorConfig,
     FeedbackConfig,
 )
 
-__version__ = "0.1.24"
+__version__ = "0.1.25"
 
 __all__ = [
     "YAMLConfig",
@@ -40,6 +42,8 @@ __all__ = [
     "SmellDetectorsConfig",
     "CodeMapConfig",
     "TestingConfig",
+    "OrchestratorTestingConfig",
+    "TDDConfig",
     "OrchestratorConfig",
     "FeedbackConfig",
 ]

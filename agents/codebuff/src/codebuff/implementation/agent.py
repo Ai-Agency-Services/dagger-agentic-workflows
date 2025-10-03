@@ -50,9 +50,7 @@ async def read_file(
     print(blue(f"📄 Reading file: {file_path}"))
     
     try:
-        file_content = await ctx.deps.container.with_exec([
-            "bash", "-c", f"cat '{file_path}'"
-        ]).stdout()
+        file_content = await ctx.deps.container.file(file_path).contents()
         
         print(green(f"✅ File read: {len(file_content)} characters"))
         return file_content
@@ -73,9 +71,9 @@ async def write_file(
     
     try:
         # Write file using heredoc to handle special characters
-        container_with_write = ctx.deps.container.with_exec([
-            "bash", "-c", f"cat > '{file_path}' << 'EOF'\n{content}\nEOF"
-        ])
+        container_with_write = ctx.deps.container.with_new_file(
+            file_path, content
+        )
         
         # Update container
         ctx.deps.container = container_with_write

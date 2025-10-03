@@ -278,9 +278,23 @@ class FeedbackConfig(BaseModel):
     branch_prefix: str = Field(default="feature/orchestrator-", description="Prefix for working branches")
 
 
+# --- Orchestrator testing configuration (nested under orchestrator) ---
+class TDDConfig(BaseModel):
+    """TDD behavior for the implementation phase."""
+    enabled: bool = Field(default=False, description="Enable TDD loop behavior in implementation")
+    max_cycles: int = Field(default=3, description="Maximum TDD retries (red→green)")
+    allow_tests_only_first_cycle: bool = Field(default=True, description="Allow tests-only changes in first cycle")
+
+
+class OrchestratorTestingConfig(BaseModel):
+    """Testing settings scoped to the orchestrator."""
+    tdd: Optional[TDDConfig] = Field(default=None, description="TDD configuration for implementation phase")
+
+
 class OrchestratorConfig(BaseModel):
     """Orchestrator behavior configuration."""
     feedback: Optional[FeedbackConfig] = Field(default=None, description="Feedback gates and PR behavior")
+    testing: Optional[OrchestratorTestingConfig] = Field(default=None, description="Orchestrator testing behavior")
 
 
 class YAMLConfig(BaseModel):

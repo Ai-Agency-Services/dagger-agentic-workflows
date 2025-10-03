@@ -583,21 +583,51 @@ async def execute_implementation(
                 }
             )
 
-            # Execute targeted tests
+            # Execute targeted tests with TDD support
             tests_passed = False
             test_output = ""
             per_file_results = []
+            tdd_cycle = 0
+            max_tdd_cycles = 3
+
+            # Check for TDD configuration (supports Pydantic models and dicts)
+            tdd_enabled = False
+            tdd_allow_tests_only_first = True
+            # default max_tdd_cycles already set above
+            oc = getattr(ctx.deps.config, 'orchestrator', None)
+            if oc:
+                testing = getattr(oc, 'testing', None) if hasattr(oc, 'testing') else (oc.get('testing') if isinstance(oc, dict) else None)
+                if testing:
+                    tdd = getattr(testing, 'tdd', None) if hasattr(testing, 'tdd') else (testing.get('tdd') if isinstance(testing, dict) else None)
+                    if tdd:
+                        if isinstance(tdd, dict):
+                            tdd_enabled = tdd.get('enabled', False)
+                            max_tdd_cycles = tdd.get('max_cycles', max_tdd_cycles)
+                            tdd_allow_tests_only_first = tdd.get('allow_tests_only_first_cycle', True)
+                        else:
+                            tdd_enabled = getattr(tdd, 'enabled', False)
+                            max_tdd_cycles = getattr(tdd, 'max_cycles', max_tdd_cycles)
+                            tdd_allow_tests_only_first = getattr(tdd, 'allow_tests_only_first_cycle', True)
+            if tdd_enabled:
+                print(blue(f"🔄 TDD mode enabled - max cycles: {max_tdd_cycles}"))
 
             # Get test command template from config
             reporter_config = getattr(ctx.deps.config, 'reporter', None)
             file_test_template = getattr(
                 reporter_config, 'file_test_command_template', None) if reporter_config else None
 
-            if test_files:
-                print(blue(f"🧪 Running {len(test_files)} targeted test files"))
-                tests_passed = True  # Assume success until a failure occurs
-                for test_file in test_files[:20]:
-                    try:
+            # TDD cycle loop
+            while tdd_cycle <= max_tdd_cycles:
+                tdd_cycle += 1
+                if tdd_cycle > 1:
+                    print(blue(f"🔄 TDD Cycle {tdd_cycle}: Retrying after test failures"))
+
+                if test_files:
+                    print(blue(f"🧪 Running {len(test_files)} targeted test files (cycle {tdd_cycle})"))
+                    tests_passed = True  # Assume success until a failure occurs
+                    per_file_results = []  # Reset results for this cycle
+                    
+                    for test_file in test_files[:20]:
                         if file_test_template:
                             cmd = file_test_template.replace(
                                 "{file}", test_file)
@@ -610,47 +640,153 @@ async def execute_implementation(
                                 cmd = f"go test -v $(dirname {test_file})"
                             else:
                                 cmd = f"echo 'No test runner configured for {test_file}'"
-                        test_output_single = await ctx.deps.container.with_exec(["bash", "-lc", cmd]).stdout()
-                        per_file_results.append({
-                            "file": test_file,
-                            "command": cmd,
-                            "status": "passed",
-                            "output": (test_output_single or "")[:2000]
-                        })
-                    except Exception as e:
-                        tests_passed = False
-                        per_file_results.append({
-                            "file": test_file,
-                            "command": cmd,
-                            "status": "failed",
-                            "error": str(e)[:1000]
-                        })
-                test_output = json.dumps(per_file_results)[:5000]
-            else:
-                test_cmd = getattr(ctx.deps.config.testing, "test_command", None) if hasattr(
-                    ctx.deps.config, 'testing') else None
-                if test_cmd:
-                    print(
-                        blue(f"🧪 No targeted tests found, running configured test command: {test_cmd}"))
-                    try:
-                        test_output = await ctx.deps.container.with_exec(["bash", "-lc", test_cmd]).stdout() or ""
-                        tests_passed = True
-                    except Exception as e:
-                        error_msg = str(e)
-                        if any(phrase in error_msg.lower() for phrase in [
-                            "collected 0 items", "no tests collected", "exit code: 5"
-                        ]):
-                            tests_passed = True
-                            test_output = error_msg + \
-                                "\n(No tests collected; treating as success)"
-                        else:
+                        
+                        # Capture test results without erroring on failure
+                        try:
+                            container_with_test = ctx.deps.container.with_exec([
+                                "bash", "-c", 
+                                f"{cmd}; echo -n $? > /tmp/exit_code_{test_file.replace('/', '_')}"
+                            ])
+                            test_output_single = await container_with_test.stdout()
+                            
+                            # Read exit code
+                            try:
+                                exit_code_str = await container_with_test.file(
+                                    f"/tmp/exit_code_{test_file.replace('/', '_')}"
+                                ).contents()
+                                exit_code = int(exit_code_str.strip()) if exit_code_str.strip().isdigit() else 1
+                            except:
+                                exit_code = 1
+                            
+                            ctx.deps.container = container_with_test
+                            
+                            if exit_code == 0:
+                                per_file_results.append({
+                                    "file": test_file,
+                                    "command": cmd,
+                                    "status": "passed",
+                                    "exit_code": exit_code,
+                                    "output": (test_output_single or "")[:2000]
+                                })
+                            else:
+                                tests_passed = False
+                                per_file_results.append({
+                                    "file": test_file,
+                                    "command": cmd,
+                                    "status": "failed",
+                                    "exit_code": exit_code,
+                                    "output": (test_output_single or "")[:2000]
+                                })
+                        except Exception as e:
                             tests_passed = False
-                            test_output = error_msg[:5000]
+                            per_file_results.append({
+                                "file": test_file,
+                                "command": cmd,
+                                "status": "error",
+                                "error": str(e)[:1000]
+                            })
+                    
+                    test_output = json.dumps(per_file_results)[:5000]
+                    
+                    # Break if tests pass or if TDD disabled
+                    if tests_passed or not tdd_enabled:
+                        break
+                    
+                    # On test failure in TDD mode, re-run implementation agent
+                    if tdd_cycle < max_tdd_cycles:
+                        print(yellow(f"⚠️ Tests failed in cycle {tdd_cycle}, running implementation again"))
+                        
+                        # Extract failure context for implementation agent
+                        failure_context = "\n".join([
+                            f"Test file: {result['file']}\nCommand: {result['command']}\nError: {result.get('output', result.get('error', 'Unknown error'))}\n"
+                            for result in per_file_results if result['status'] in ['failed', 'error']
+                        ])[:2000]
+                        
+                        # Re-run implementation agent with failure context
+                        retry_prompt = (
+                            f"Fix the failing tests from cycle {tdd_cycle}.\n"
+                            "Test failures:\n"
+                            f"{failure_context}\n\n"
+                            "Implement the required functionality to make these tests pass.\n"
+                            "Focus on minimal changes to satisfy the failing assertions."
+                        )
+                        
+                        impl_result = await impl_agent.run(retry_prompt, deps=impl_deps)
+                        ctx.deps.container = impl_deps.container
+                        
+                        # Re-detect changed files after retry
+                        ctx.deps.container = ctx.deps.container.with_exec(
+                            ["bash", "-lc", "git add -N . || true"])
+                        raw_status = await ctx.deps.container.with_exec(
+                            ["bash", "-lc", "git status --porcelain=v1 -z"]).stdout()
+                        
+                        # Re-parse changed files
+                        changed_paths = []
+                        if raw_status:
+                            for entry in raw_status.split("\x00"):
+                                if entry.strip():
+                                    file_path = entry[3:].strip()
+                                    if file_path:
+                                        changed_paths.append(file_path)
+                        
+                        # Re-categorize files
+                        test_files = []
+                        code_files = []
+                        for path in changed_paths:
+                            if any(pattern in path for pattern in [
+                                "/__tests__/", ".test.", ".spec.", "test_", "_test.",
+                                "/tests/", "/test/", "_tests."
+                            ]):
+                                test_files.append(path)
+                            elif path.endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".rs", ".cpp", ".c")):
+                                code_files.append(path)
+                    else:
+                        print(yellow(f"⚠️ TDD cycles exhausted ({max_tdd_cycles}). Tests still failing."))
+                        break
                 else:
-                    print(
-                        yellow("⚠️ No targeted tests detected and no fallback test command configured"))
-                    tests_passed = True
-                    test_output = "No tests to run; proceeding with implementation"
+                    test_cmd = getattr(ctx.deps.config.testing, "test_command", None) if hasattr(
+                        ctx.deps.config, 'testing') else None
+                    if test_cmd:
+                        print(
+                            blue(f"🧪 No targeted tests found, running configured test command: {test_cmd}"))
+                        try:
+                            # Capture test results without erroring
+                            container_with_test = ctx.deps.container.with_exec([
+                                "bash", "-c", 
+                                f"{test_cmd}; echo -n $? > /tmp/exit_code_fallback"
+                            ])
+                            test_output = await container_with_test.stdout() or ""
+                            
+                            # Read exit code
+                            try:
+                                exit_code_str = await container_with_test.file("/tmp/exit_code_fallback").contents()
+                                exit_code = int(exit_code_str.strip()) if exit_code_str.strip().isdigit() else 1
+                            except:
+                                exit_code = 1
+                            
+                            ctx.deps.container = container_with_test
+                            
+                            if exit_code == 0:
+                                tests_passed = True
+                            else:
+                                if any(phrase in test_output.lower() for phrase in [
+                                    "collected 0 items", "no tests collected", "exit code: 5"
+                                ]):
+                                    tests_passed = True
+                                    test_output = test_output + "\n(No tests collected; treating as success)"
+                                else:
+                                    tests_passed = False
+                        except Exception as e:
+                            tests_passed = False
+                            test_output = str(e)[:5000]
+                    else:
+                        print(
+                            yellow("⚠️ No targeted tests detected and no fallback test command configured"))
+                        tests_passed = True
+                        test_output = "No tests to run; proceeding with implementation"
+                
+                # End of TDD cycle loop - break here
+                break
 
             # Save detailed test results
             ctx.deps.container = await write_json(
@@ -661,35 +797,47 @@ async def execute_implementation(
                     "test_strategy": "targeted" if test_files else "fallback",
                     "files_tested": test_files,
                     "per_file_results": per_file_results,
-                    "summary_output": test_output
+                    "summary_output": test_output,
+                    "tdd_cycle": tdd_cycle,
+                    "tdd_enabled": tdd_enabled
                 }
             )
 
             # Validate that actual feature code was implemented (not just test changes)
+            # In TDD mode, allow tests-only changes in first cycle
             if not code_files and test_files:
-                state.status = Status.FAILED
-                error = OrchestrationError(
-                    kind=ErrorKind.TOOL_ERROR,
-                    message="Only test files were modified; no feature implementation detected",
-                    phase=Phase.IMPLEMENTATION,
-                    retry_count=state.retry_count
-                )
-                state.errors.append(error)
-                print(red("❌ Only tests were modified; no feature code implemented"))
-                return "Implementation failed: only test files were modified, no feature code was implemented"
+                if tdd_enabled and tdd_cycle == 1 and tdd_allow_tests_only_first:
+                    print(yellow("⚠️ TDD Cycle 1: Tests-only changes allowed in first cycle"))
+                else:
+                    state.status = Status.FAILED
+                    error = OrchestrationError(
+                        kind=ErrorKind.TOOL_ERROR,
+                        message="Only test files were modified; no feature implementation detected",
+                        phase=Phase.IMPLEMENTATION,
+                        retry_count=state.retry_count
+                    )
+                    state.errors.append(error)
+                    print(red("❌ Only tests were modified; no feature code implemented"))
+                    return "Implementation failed: only test files were modified, no feature code was implemented"
 
-            # Gate commit on test results
+            # TDD-aware commit gating
             if not tests_passed:
-                state.status = Status.FAILED
-                error = OrchestrationError(
-                    kind=ErrorKind.TOOL_ERROR,
-                    message="Targeted tests failed; implementation aborted",
-                    phase=Phase.IMPLEMENTATION,
-                    retry_count=state.retry_count
-                )
-                state.errors.append(error)
-                print(red("❌ Targeted tests failed; aborting commit"))
-                return "Implementation failed: targeted tests did not pass"
+                if tdd_enabled:
+                    print(yellow(f"⚠️ TDD: Tests failed after {tdd_cycle} cycles. Workflow continues without commit."))
+                    state.status = Status.SUCCESS  # Don't fail the workflow, just don't commit
+                    print(yellow("🔄 Implementation phase marked as complete (no commit due to failing tests)"))
+                    return f"Implementation completed with failing tests after {tdd_cycle} TDD cycles. No commit made."
+                else:
+                    state.status = Status.FAILED
+                    error = OrchestrationError(
+                        kind=ErrorKind.TOOL_ERROR,
+                        message="Targeted tests failed; implementation aborted",
+                        phase=Phase.IMPLEMENTATION,
+                        retry_count=state.retry_count
+                    )
+                    state.errors.append(error)
+                    print(red("❌ Targeted tests failed; aborting commit"))
+                    return "Implementation failed: targeted tests did not pass"
 
             span.set_attribute("final_tests_passed", tests_passed)
 
