@@ -147,8 +147,7 @@ class NeoService:
 
         # Clone repository only once
         source = (
-            await dag.git(url=self.config.neo4j.cypher_shell_repository, keep_git_dir=True)
-            .with_auth_token(self.github_access_token)
+            await dag.git(url=self.config.neo4j.cypher_shell_repository, keep_git_dir=True, http_auth_token=self.github_access_token)
             .branch("main")
             .tree()
         )
