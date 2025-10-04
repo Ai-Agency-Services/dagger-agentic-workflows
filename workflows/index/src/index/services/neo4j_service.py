@@ -62,8 +62,7 @@ class Neo4jService:
     async def create_neo4j_client(self) -> dagger.Container:
         """Create a Neo4j client container with cypher-shell"""
         source = (
-            await dag.git(url=self.cypher_shell_repo, keep_git_dir=True)
-            .with_auth_token(self.github_access_token)
+            await dag.git(url=self.cypher_shell_repo, keep_git_dir=True, http_auth_token=self.github_access_token)
             .branch("main")
             .tree()
         )

@@ -148,8 +148,7 @@ class Index:
         try:
             # Clone repository
             source = (
-                await dag.git(url=repo_url, keep_git_dir=True)
-                .with_auth_token(github_token)
+                await dag.git(url=repo_url, keep_git_dir=True, http_auth_token=github_token)
                 .branch(branch)
                 .tree()
             )

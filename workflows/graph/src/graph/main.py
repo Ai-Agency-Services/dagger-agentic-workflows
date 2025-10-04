@@ -665,8 +665,7 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
 
             # Clone repository
             source = (
-                await dag.git(url=repository_url, keep_git_dir=True)
-                .with_auth_token(github_access_token)
+                await dag.git(url=repository_url, keep_git_dir=True, http_auth_token=github_access_token)
                 .branch(branch)
                 .tree()
             )
@@ -1097,8 +1096,7 @@ MERGE (s1)-[:{relationship_type}]->(s2);'''
 
         # Clone repository tree
         source = (
-            await dag.git(url=repository_url, keep_git_dir=True)
-            .with_auth_token(github_access_token)
+            await dag.git(url=repository_url, keep_git_dir=True, http_auth_token=github_access_token)
             .branch(branch)
             .tree()
         )
