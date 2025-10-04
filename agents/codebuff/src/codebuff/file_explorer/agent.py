@@ -8,7 +8,14 @@ from pathlib import Path
 import dagger
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
-from simple_chalk import blue, cyan, green, magenta, red, yellow
+try:
+    from simple_chalk import blue, green, yellow, red, cyan, magenta
+except ImportError:
+    from simple_chalk import blue, green, yellow, red
+    def cyan(x):
+        return x
+    def magenta(x):
+        return x
 
 from ..file_explorer.utils import find_files, _extract_keywords_from_prompt
 

@@ -1,15 +1,11 @@
 """File explorer utility functions."""
 
-from typing import Dict, List, Optional, Set, Tuple
-from pathlib import Path
-import re
+from typing import Dict, List,  Tuple
 from functools import lru_cache
-from ..file_picker.agent import _is_code_file
 
 
 async def find_files(
     prompt: str,
-    # Enhanced format only: {file_path: {token: score}}
     file_scores: Dict[str, Dict[str, float]],
     token_callers: Dict[str, Dict[str, List[Dict]]] = None,
     task_goal: str = None,

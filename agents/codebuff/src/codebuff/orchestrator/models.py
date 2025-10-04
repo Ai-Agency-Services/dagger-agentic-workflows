@@ -226,7 +226,7 @@ class OrchestratorDependencies:
     config_file: dagger.File
     container: dagger.Container
     api_key: dagger.Secret
-    github_token: dagger.Secret
+    github_token: Optional[dagger.Secret] = None
 
     # Optional model for sub-agents
     model: Optional[Any] = None

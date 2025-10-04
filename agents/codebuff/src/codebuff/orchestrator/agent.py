@@ -8,8 +8,17 @@ from dagger import dag
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
-from simple_chalk import blue, green, red, yellow, cyan, magenta
-from ..utils.container_state import write_json, write_text, append_log
+try:
+    from simple_chalk import blue, green, red, yellow, cyan, magenta
+except ImportError:
+    from simple_chalk import blue, green, red, yellow
+
+    def cyan(x):
+        return x
+
+    def magenta(x):
+        return x
+from ..utils.container_state import write_json, write_text, append_log, write_current_phase
 
 from .tools.planning import create_plan, add_subgoal, update_subgoal, think_deeply
 from .tools.file_ops import read_files as read_files_tool, write_file as write_file_tool, str_replace as str_replace_tool, code_search as code_search_tool
@@ -20,6 +29,7 @@ from ..file_explorer.agent import (
     FileExplorerDependencies,
 )
 from ..implementation.agent import create_implementation_agent, ImplementationDependencies
+from ..utils.git_metadata import embed_state_metadata
 from .models import (
     OrchestratorDependencies,
     OrchestrationState,
@@ -130,6 +140,18 @@ async def start_task(
             ctx.deps.state = state
             span.set_attribute("task_id", task_spec.id)
 
+            # Persist current phase snapshot
+            try:
+                if getattr(ctx.deps, "container", None) is not None:
+                    ctx.deps.container = await write_current_phase(
+                        ctx.deps.container,
+                        state.current_phase.value,
+                        state.status.value,
+                        {"task_id": state.task_id}
+                    )
+            except Exception:
+                pass
+
             # Persist task spec + log
             try:
                 if getattr(ctx.deps, "container", None) is not None:
@@ -139,6 +161,7 @@ async def start_task(
                         "focus_area": task_spec.focus_area,
                         "created_at": state.start_time.isoformat(),
                     }
+                    ctx.deps.container = await write_json(ctx.deps.container, "task_spec.json", spec)
                     ctx.deps.container = await write_json(ctx.deps.container, "task.json", spec)
                     ctx.deps.container = await append_log(ctx.deps.container, f"start_task: {task_spec.id} {task_spec.goal}")
             except Exception:
@@ -173,6 +196,17 @@ async def explore_codebase(
             state.current_phase = Phase.EXPLORATION
             state.status = Status.IN_PROGRESS
             state.last_update = datetime.now()
+
+            # Snapshot phase
+            try:
+                ctx.deps.container = await write_current_phase(
+                    ctx.deps.container,
+                    state.current_phase.value,
+                    state.status.value,
+                    {"task_id": state.task_id}
+                )
+            except Exception:
+                pass
 
             # 2. Create the agent that will decide what to explore
             explorer_llm_agent = create_file_explorer_agent(
@@ -241,8 +275,8 @@ async def explore_codebase(
                 print(green(f"  • {file}"))
 
             # Filter to only code files and convert to PathInfo objects
-            from ..file_picker.agent import _is_code_file
-            code_files = [f for f in unique_files if _is_code_file(f)]
+            from codebuff.file_explorer.utils import _is_non_code_file
+            code_files = [f for f in unique_files if not _is_non_code_file(f)]
             
             path_infos = [
                 PathInfo(
@@ -277,6 +311,13 @@ async def explore_codebase(
                 confidence=0.9 if unique_files else 0.5
             )
             state.file_set = file_set
+
+            # Persist exploration and selection
+            try:
+                ctx.deps.container = await write_json(ctx.deps.container, "exploration_results.json", exploration_report.model_dump())
+                ctx.deps.container = await write_json(ctx.deps.container, "selected_files.json", file_set.model_dump())
+            except Exception:
+                pass
 
             state.status = Status.SUCCESS
             state.total_requests += 1
@@ -320,6 +361,17 @@ async def create_implementation_plan(
             state.current_phase = Phase.PLANNING
             state.status = Status.IN_PROGRESS
             state.last_update = datetime.now()
+
+            # Snapshot phase
+            try:
+                ctx.deps.container = await write_current_phase(
+                    ctx.deps.container,
+                    state.current_phase.value,
+                    state.status.value,
+                    {"task_id": state.task_id}
+                )
+            except Exception:
+                pass
 
             # Build context from previous phases
             task_goal = state.task_spec.goal
@@ -427,6 +479,8 @@ async def create_implementation_plan(
                     "confidence": plan_obj.confidence,
                     "created_at": datetime.now().isoformat()
                 }
+                # Persist structured plan for resumption
+                ctx.deps.container = await write_json(ctx.deps.container, "implementation_plan.json", state.plan.model_dump())
                 ctx.deps.container = await write_json(ctx.deps.container, "plan_metadata.json", plan_metadata)
                 ctx.deps.container = await append_log(ctx.deps.container, f"create_plan: saved to {path}")
             except Exception:
@@ -469,6 +523,17 @@ async def execute_implementation(
             state.current_phase = Phase.IMPLEMENTATION
             state.status = Status.IN_PROGRESS
             state.last_update = datetime.now()
+
+            # Snapshot phase
+            try:
+                ctx.deps.container = await write_current_phase(
+                    ctx.deps.container,
+                    state.current_phase.value,
+                    state.status.value,
+                    {"task_id": state.task_id}
+                )
+            except Exception:
+                pass
 
             # Convert plan to string for agent
             plan_str = json.dumps(state.plan.model_dump(), indent=2)
@@ -788,7 +853,20 @@ async def execute_implementation(
                 # End of TDD cycle loop - break here
                 break
 
-            # Save detailed test results
+            # Save detailed test results (canonical + legacy for compatibility)
+            ctx.deps.container = await write_json(
+                ctx.deps.container,
+                "implementation/test_results.json",
+                {
+                    "tests_passed": tests_passed,
+                    "test_strategy": "targeted" if test_files else "fallback",
+                    "files_tested": test_files,
+                    "per_file_results": per_file_results,
+                    "summary_output": test_output,
+                    "tdd_cycle": tdd_cycle,
+                    "tdd_enabled": tdd_enabled
+                }
+            )
             ctx.deps.container = await write_json(
                 ctx.deps.container,
                 "implementation/test-results.json",
@@ -825,6 +903,15 @@ async def execute_implementation(
                 if tdd_enabled:
                     print(yellow(f"⚠️ TDD: Tests failed after {tdd_cycle} cycles. Workflow continues without commit."))
                     state.status = Status.SUCCESS  # Don't fail the workflow, just don't commit
+                    try:
+                        ctx.deps.container = await write_current_phase(
+                            ctx.deps.container,
+                            state.current_phase.value,
+                            state.status.value,
+                            {"task_id": state.task_id}
+                        )
+                    except Exception:
+                        pass
                     print(yellow("🔄 Implementation phase marked as complete (no commit due to failing tests)"))
                     return f"Implementation completed with failing tests after {tdd_cycle} TDD cycles. No commit made."
                 else:
@@ -850,12 +937,91 @@ async def execute_implementation(
             span.set_attribute("feature_branch", branch)
 
             try:
+                # Prepare commit message with embedded orchestration metadata
+                header = f"feat: {state.task_spec.goal if state.task_spec else 'feature'}\n\nAutomated commit: applied implementation changes\nIncludes targeted tests with passing test suite"
+                commit_msg = embed_state_metadata(
+                    header,
+                    task_id=(
+                        state.task_spec.id if state and state.task_spec else None),
+                    phase=(
+                        state.current_phase.value if state and state.current_phase else None),
+                    status=(state.status.value if state and state.status else None),
+                )
+
+                # Branch safety guard: never commit to base branch
+                # - detect current branch
+                # - resolve base branch from config (fallback to 'main')
+                # - if on base/protected branch, switch to a unique working branch using branch_prefix
+                base_branch = None
+                try:
+                    ocfg = getattr(ctx.deps.config, 'git', None)
+                    if isinstance(ocfg, dict):
+                        base_branch = ocfg.get(
+                            'base_pull_request_branch') or ocfg.get('default_branch')
+                    else:
+                        base_branch = getattr(
+                            ocfg, 'base_pull_request_branch', None) if ocfg else None
+                except Exception:
+                    base_branch = None
+                if not base_branch:
+                    base_branch = 'main'
+
+                # Determine branch prefix
+                branch_prefix = 'feature/codebuff-'
+                try:
+                    oc = getattr(ctx.deps.config, 'orchestrator', None)
+                    if isinstance(oc, dict):
+                        branch_prefix = (
+                            oc.get('branch_prefix') or branch_prefix)
+                    else:
+                        branch_prefix = getattr(
+                            oc, 'branch_prefix', branch_prefix)
+                except Exception:
+                    pass
+
+                # Get current branch name
+                try:
+                    current_branch = await ctx.deps.container.with_exec(["bash", "-lc", "git rev-parse --abbrev-ref HEAD"]).stdout()
+                    current_branch = (current_branch or '').strip()
+                except Exception:
+                    current_branch = ''
+
+                # Read cloned source branch and treat it as protected too
+                source_branch = None
+                try:
+                    sb_raw = await ctx.deps.container.file(".codebuff-state/source_branch.json").contents()
+                    if sb_raw:
+                        import json as _json
+                        source_branch = (_json.loads(sb_raw)
+                                         or {}).get("source_branch")
+                except Exception:
+                    source_branch = None
+
+                protected = {base_branch, 'main', 'master', 'develop'}
+                if source_branch:
+                    protected.add(source_branch)
+
+                # If on protected branch, create and switch to a unique working branch
+                guard_cmds = []
+                if not current_branch or current_branch in protected:
+                    # Suffix using timestamp for uniqueness
+                    unique_suffix = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                    safe_branch = f"{branch_prefix}{unique_suffix}"
+                    guard_cmds += [
+                        f"git checkout -b {safe_branch}"
+                    ]
+                    branch_to_use = safe_branch
+                else:
+                    branch_to_use = current_branch
+
                 cmds = [
                     "git config user.name 'Codebuff Agent'",
                     "git config user.email 'codebuff@example.com'",
-                    f"git checkout -b {branch}",
+                ] + guard_cmds + [
                     "git add -A",
-                    f"git commit -m \"feat: {state.task_spec.goal if state.task_spec else 'feature'}\\n\\nAutomated commit: applied implementation changes\\nIncludes targeted tests with passing test suite\"",
+                    "git add .codebuff-state || true",
+                    # Use a here-doc to pass multiline commit message (no nested bash)
+                    f"git commit -F - <<'EOF'\n{commit_msg}\nEOF",
                 ]
                 for cmd in cmds:
                     ctx.deps.container = ctx.deps.container.with_exec(
@@ -921,6 +1087,17 @@ async def review_changes(
             state.status = Status.IN_PROGRESS
             state.last_update = datetime.now()
 
+            # Snapshot phase
+            try:
+                ctx.deps.container = await write_current_phase(
+                    ctx.deps.container,
+                    state.current_phase.value,
+                    state.status.value,
+                    {"task_id": state.task_id}
+                )
+            except Exception:
+                pass
+
             # Create review result directly (decoupled)
             review_report = ReviewReport(
                 findings=[],
@@ -979,6 +1156,17 @@ async def create_pull_request(
             state.status = Status.IN_PROGRESS
             state.last_update = datetime.now()
 
+            # Snapshot phase
+            try:
+                ctx.deps.container = await write_current_phase(
+                    ctx.deps.container,
+                    state.current_phase.value,
+                    state.status.value,
+                    {"task_id": state.task_id}
+                )
+            except Exception:
+                pass
+
             # Build context for PR creation
             task_description = state.task_spec.goal if state.task_spec else "Feature development"
             changes_summary = state.change_set.migration_notes or "Implementation changes"
@@ -1013,6 +1201,15 @@ Please create a pull request with these changes.
                 if pr_agent:
                     ctx.deps.container = pr_agent
                     state.status = Status.SUCCESS
+                    try:
+                        ctx.deps.container = await write_current_phase(
+                            ctx.deps.container,
+                            state.current_phase.value,
+                            state.status.value,
+                            {"task_id": state.task_id}
+                        )
+                    except Exception:
+                        pass
                     state.total_requests += 1
                     span.set_attribute("pr_creation", "success")
                 else:

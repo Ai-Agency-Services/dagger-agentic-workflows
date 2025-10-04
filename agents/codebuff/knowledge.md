@@ -105,8 +105,7 @@ elif openai_api_key:
 ### Repository Integration
 ```python
 # Clone and setup repository
-source = await dag.git(url=repo_url, keep_git_dir=True)
-    .with_auth_token(github_token)
+source = await dag.git(url=repo_url, keep_git_dir=True, http_auth_token=github_token)
     .branch(branch)
     .tree()
 
@@ -219,3 +218,36 @@ git:
 - **Pull Request Module**: Automated PR creation
 - **Query Service**: Code understanding and search
 - **Index Workflow**: Codebase semantic analysis
+
+## Git Feedback Resumption – Quick Guide
+
+- State files (canonical):
+  - .codebuff-state/task_spec.json, exploration_results.json, selected_files.json, implementation_plan.json
+  - .codebuff-state/implementation/test_results.json (legacy kept: test-results.json)
+  - .codebuff-state/current_phase.json (schema_version=1)
+  - .codebuff-state/feedback_sentinel.json, user_feedback.json (when parsed)
+- Commits: .codebuff-state is added to commits; commit footer embeds metadata: {schema_version, task_id, phase, status, timestamp}.
+
+### Requesting feedback
+- Orchestrated flow (auto): if orchestrator.feedback.enabled=true and stop_after_phase is set, the workflow writes a non-empty feedback_sentinel.json and calls request_feedback_from_self.
+- Manual (API): request_feedback(container, github_token, feature_task_description, branch_prefix, focus_phase)
+
+### Resuming
+- resume_workflow(github_token, repository_url, branch_name)
+  - Rebuilds container from branch, loads .codebuff-state, and falls back to commit footer if needed.
+- continue_workflow(github_token, repository_url, branch_name)
+  - Loads saved state and advances to the next tool based on current phase + status.
+  - Honors feedback gate: if feedback_sentinel.requested==true and user_feedback.json is missing, returns a waiting message.
+
+### PR Feedback via comments
+- Supported: @orchestrator approve | modify <notes> | cancel | add-files <paths> | revise-plan <notes>
+- Parsing:
+  - process_pr_feedback(comments_json) parses and writes user_feedback.json.
+  - process_orchestrator_command(..., command_text) accepts a single comment string and writes user_feedback.json directly.
+- Approve continues; others pause and report instruction.
+
+### Tests
+- Unit tests: agents/codebuff/tests/test_pr_feedback.py, test_git_metadata.py
+- Suggested run:
+  - make test-agents/codebuff
+  - or MODULES="agents/codebuff" bash scripts/run_tests_local.sh

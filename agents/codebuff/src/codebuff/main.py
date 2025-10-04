@@ -11,6 +11,9 @@ import dagger
 import yaml
 from ais_dagger_agents_config import YAMLConfig
 from codebuff.orchestrator.agent import create_orchestrator_agent
+from codebuff.orchestrator.state_loader import load_orchestration_state
+from codebuff.orchestrator.pr_feedback import parse_orchestrator_commands, save_user_feedback, load_user_feedback, load_feedback_sentinel
+from codebuff.utils.git_metadata import extract_state_metadata
 from codebuff.orchestrator.models import (
     OrchestrationState,
     OrchestratorDependencies, Phase,
@@ -212,6 +215,18 @@ Start with step 1 now.
                 fb_cfg = self.config.get("orchestrator", {}).get(
                     "feedback", {}) if isinstance(self.config, dict) else {}
                 if fb_cfg.get("enabled"):
+                    # Ensure sentinel is populated so feedback is requested
+                    try:
+                        phase_to_stop = fb_cfg.get(
+                            "stop_after_phase", "PLANNING")
+                        self.container = self.container.with_new_file(
+                            ".codebuff-state/feedback_sentinel.json",
+                            json.dumps({"phase": phase_to_stop,
+                                       "requested": True}, indent=2)
+                        )
+                    except Exception:
+                        pass
+
                     # Read sentinel file (guaranteed to exist now)
                     sentinel_contents = await self.container.file(".codebuff-state/feedback_sentinel.json").contents()
 
@@ -382,6 +397,12 @@ Start with step 1 now.
                     ".codebuff-state/feedback_request.json",
                     json.dumps(feedback_payload, indent=2)
                 )
+                # Also set the sentinel to a non-empty value to trigger gates
+                container = container.with_new_file(
+                    ".codebuff-state/feedback_sentinel.json",
+                    json.dumps({"phase": focus_phase, "requested": True,
+                               "timestamp": feedback_payload["timestamp"]}, indent=2)
+                )
             except Exception:
                 pass
 
@@ -425,7 +446,7 @@ Start with step 1 now.
         branch_prefix: Annotated[str, Doc(
             "Prefix for working branches")] = "feature/orchestrator-",
         focus_phase: Annotated[str, Doc(
-            "Current phase to reflect in commit/PR body")] = "",  # Changed to empty string
+            "Current phase to reflect in commit/PR body")] = "",
         open_router_api_key: Annotated[Optional[dagger.Secret], Doc(
             "OpenRouter key")] = None,
         openai_api_key: Annotated[Optional[dagger.Secret], Doc(
@@ -470,8 +491,8 @@ Start with step 1 now.
         try:
             # Recreate repo source from the working branch
             src = (
-                dag.git(url=repository_url, keep_git_dir=True)
-                .with_auth_token(github_token)
+                dag.git(url=repository_url, keep_git_dir=True,
+                        http_auth_token=github_token)
                 .branch(branch_name)
                 .tree()
             )
@@ -494,34 +515,189 @@ Start with step 1 now.
             )
             self.container = container
 
-            # Try to read key state files to summarize
-            state_dir = container.directory(".codebuff-state")
-            summary = {"branch": branch_name, "state_files": []}
-            try:
-                for fname in [
-                    "task_spec.json", "current_phase.json", "exploration_results.json",
-                    "selected_files.json", "implementation_plan.json", "feedback_request.json"
-                ]:
-                    f = state_dir.file(fname)
-                    try:
-                        contents = await f.contents()
-                        summary["state_files"].append(
-                            {"file": fname, "size": len(contents)})
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            # Load orchestration state from .codebuff-state with fallbacks
+            state, report = await load_orchestration_state(container)
+            self.container = container
 
+            if state is None:
+                # Fallback: try to read last commit message for metadata footer
+                try:
+                    last_commit = await self.container.with_exec(["bash", "-lc", "git log -1 --pretty=%B"]).stdout()
+                except Exception:
+                    last_commit = ""
+                meta = extract_state_metadata(last_commit or "")
+                meta_phase = (meta or {}).get(
+                    "phase") if isinstance(meta, dict) else None
+                meta_status = (meta or {}).get(
+                    "status") if isinstance(meta, dict) else None
+                return (
+                    "Resumed from branch {b}. Missing critical state (task_spec). Loaded: {l}, Missing: {m}. Meta phase={p}, status={s}".format(
+                        b=branch_name,
+                        l=report.get("loaded", []),
+                        m=report.get("missing", []),
+                        p=meta_phase or "unknown",
+                        s=meta_status or "unknown",
+                    )
+                )
+
+            phase_val = getattr(state.current_phase, "value",
+                                str(state.current_phase))
             return (
-                "Resumed from branch {b}. State files: {n}.".format(
-                    b=branch_name, n=len(summary.get("state_files", []))
+                "Resumed from branch {b}. Phase: {p}. Loaded: {l}, Missing: {m}".format(
+                    b=branch_name, p=phase_val, l=report.get("loaded", []), m=report.get("missing", [])
                 )
             )
         except Exception as e:
             return f"resume_workflow failed: {e}"
 
     @function
+    async def continue_workflow(
+        self,
+        github_token: Annotated[dagger.Secret, Doc("GitHub token for repo access")],
+        repository_url: Annotated[str, Doc("GitHub repository URL")],
+        branch_name: Annotated[str, Doc("Working branch to continue from")],
+        provider: Annotated[str, Doc("LLM provider")] = "openrouter",
+        open_router_api_key: Annotated[Optional[dagger.Secret], Doc(
+            "OpenRouter key")] = None,
+        openai_api_key: Annotated[Optional[dagger.Secret], Doc(
+            "OpenAI key")] = None,
+    ) -> str:
+        """Load state from .codebuff-state and continue the orchestration to the next phase.
+
+        If container is not initialized, reconstruct it from the branch.
+        """
+        try:
+            # Ensure container exists; if not, rebuild from branch (mirrors resume_workflow setup)
+            if self.container is None:
+                src = (
+                    dag.git(url=repository_url, keep_git_dir=True,
+                            http_auth_token=github_token)
+                    .branch(branch_name)
+                    .tree()
+                )
+                try:
+                    cfg_obj = YAMLConfig(**self.config)
+                except Exception:
+                    cfg_obj = YAMLConfig(**{
+                        "container": {"work_dir": "/src", "docker_file_path": None},
+                        "git": {"user_name": "Resumer", "user_email": "resume@example.com", "base_pull_request_branch": "main"}
+                    })
+                self.container = await dag.builder(self.config_file).build_test_environment(
+                    source=src,
+                    dockerfile_path=cfg_obj.container.docker_file_path,
+                    open_router_api_key=open_router_api_key,
+                    openai_api_key=openai_api_key,
+                    provider=provider,
+                )
+
+            # Load orchestration state
+            state, report = await load_orchestration_state(self.container)
+            if state is None:
+                return (
+                    "Continue failed: missing critical state (task_spec). Loaded: {l}, Missing: {m}".format(
+                        l=report.get("loaded", []), m=report.get("missing", [])
+                    )
+                )
+
+            # Prepare models for orchestrator + subagents
+            orch_model = await self._get_llm_for_agent("orchestrator", open_router_api_key, openai_api_key)
+            impl_model = await self._get_llm_for_agent("implementation", open_router_api_key, openai_api_key)
+            picker_model = await self._get_llm_for_agent("file_picker", open_router_api_key, openai_api_key)
+            explorer_model = await self._get_llm_for_agent("file_explorer", open_router_api_key, openai_api_key)
+
+            # Build config (tolerant)
+            try:
+                cfg_obj = YAMLConfig(**self.config)
+            except Exception:
+                cfg_obj = YAMLConfig(**{
+                    "container": {"work_dir": "/src", "docker_file_path": None},
+                    "git": {"user_name": "Test User", "user_email": "test@example.com", "base_pull_request_branch": "main"}
+                })
+
+            # Check feedback gate before continuing
+            sentinel = await load_feedback_sentinel(self.container)
+            feedback = await load_user_feedback(self.container)
+            if (sentinel.get("requested") is True) and not feedback:
+                return "Feedback gate active for phase={p}. Waiting for PR feedback (@orchestrator approve/modify/cancel).".format(p=state.current_phase.value)
+            if feedback:
+                action = feedback.get("action")
+                if action == "cancel":
+                    return "Workflow canceled via PR feedback."
+                if action in ("modify", "add-files", "revise-plan"):
+                    return f"Received '{action}' request. Please run a plan/selection update step manually or implement automated handlers."
+                # approve -> proceed
+
+            # Assemble orchestrator deps with reconstructed state
+            deps = OrchestratorDependencies(
+                config=cfg_obj,
+                config_file=self.config_file,
+                container=self.container,
+                github_token=github_token,
+                api_key=openai_api_key or open_router_api_key,
+                model=orch_model,
+                implementation=impl_model,
+                file_picker=picker_model,
+                file_explorer=explorer_model,
+                state=state,
+            )
+
+            agent = create_orchestrator_agent(orch_model)
+
+            # Decide next tool based on current phase + status
+            phase = state.current_phase
+            status = state.status
+
+            def decide_next(phase, status) -> tuple[str, str]:
+                # returns (tool_name, prompt)
+                if phase == Phase.EXPLORATION:
+                    return ("create_implementation_plan", "Call create_implementation_plan now.") if status == Status.SUCCESS else ("explore_codebase", "Call explore_codebase now.")
+                if phase == Phase.PLANNING:
+                    return ("execute_implementation", "Call execute_implementation now.") if status == Status.SUCCESS else ("create_implementation_plan", "Call create_implementation_plan now.")
+                if phase == Phase.IMPLEMENTATION:
+                    return ("review_changes", "Call review_changes now.") if status == Status.SUCCESS else ("execute_implementation", "Call execute_implementation now.")
+                if phase == Phase.REVIEW:
+                    return ("create_pull_request", "Call create_pull_request now.") if status == Status.SUCCESS else ("review_changes", "Call review_changes now.")
+                if phase == Phase.PULL_REQUEST:
+                    return ("get_orchestration_status", "Call get_orchestration_status now.")
+                # Default fallback
+                return ("get_orchestration_status", "Call get_orchestration_status now.")
+
+            tool, prompt = decide_next(phase, status)
+            run_prompt = f"{prompt}"
+
+            result = await agent.run(run_prompt, deps=deps)
+            out = result.output if hasattr(result, "output") else str(result)
+
+            phase_val = getattr(state.current_phase, "value",
+                                str(state.current_phase))
+            status_val = getattr(state.status, "value", str(state.status))
+            return f"Continued from phase={phase_val} status={status_val}. Requested tool={tool}. Result: {out}"
+        except Exception as e:
+            return f"continue_workflow failed: {e}"
+
+    @function
+    async def process_pr_feedback(
+        self,
+        comments_json: Annotated[str, Doc("JSON array of PR comments {body, user{login}, created_at}")],
+    ) -> str:
+        """Parse PR comments for @orchestrator commands and persist to .codebuff-state/user_feedback.json."""
+        try:
+            comments = json.loads(comments_json or "[]")
+            if not isinstance(comments, list):
+                return "Error: comments_json must be a JSON array"
+            cmd = parse_orchestrator_commands(comments)
+            if not cmd:
+                return "No @orchestrator commands found"
+            if self.container is None:
+                return "process_pr_feedback failed: container not initialized"
+            self.container = await save_user_feedback(self.container, cmd)
+            return f"Saved user_feedback.json: action={cmd.get('action')}"
+        except Exception as e:
+            return f"process_pr_feedback failed: {e}"
+
+    @function
     async def process_orchestrator_command(
+
         self,
         github_token: Annotated[dagger.Secret, Doc("GitHub token for repo access")],
         repository_url: Annotated[str, Doc("GitHub repository URL")],
@@ -551,6 +727,19 @@ Start with step 1 now.
             if "@orchestrator" not in text:
                 return "Ignored: not an orchestrator command"
 
+            # General @orchestrator command parsing (approve|modify|cancel|add-files|revise-plan)
+            try:
+                from codebuff.orchestrator.pr_feedback import parse_orchestrator_commands, save_user_feedback
+                parsed = parse_orchestrator_commands([{"body": command_text}])
+            except Exception:
+                parsed = None
+
+            if parsed and isinstance(parsed, dict) and parsed.get("action"):
+                if self.container is None:
+                    return "process_orchestrator_command failed: container not initialized"
+                self.container = await save_user_feedback(self.container, parsed)
+                return f"Saved user_feedback.json: action={parsed.get('action')}"
+
             # Recognize: @orchestrator feature - kickoff feature-development-workflow
             if "feature" in text and "kickoff" in text and "feature-development-workflow" in text:
                 desc = feature_task_description or "Feature from PR"
@@ -571,3 +760,4 @@ Start with step 1 now.
             return "Unknown orchestrator command"
         except Exception as e:
             return f"process_orchestrator_command failed: {e}"
+

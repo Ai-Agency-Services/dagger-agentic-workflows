@@ -1,6 +1,7 @@
 import json
-from typing import Any
+from typing import Any, Optional
 import dagger
+from datetime import datetime, timezone
 
 STATE_DIR = ".codebuff-state"
 
@@ -21,3 +22,16 @@ async def append_log(c: dagger.Container, line: str) -> dagger.Container:
     except Exception:
         content = line
     return c.with_new_file(f"{STATE_DIR}/log.txt", content + "\n")
+
+# Add new helper to persist current phase and status
+async def write_current_phase(c: dagger.Container, phase: str, status: str, extra: Optional[dict] = None) -> dagger.Container:
+    """Write current phase snapshot to .codebuff-state/current_phase.json."""
+    payload = {
+        "schema_version": 1,
+        "phase": phase,
+        "status": status,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if extra:
+        payload.update(extra)
+    return await write_json(c, "current_phase.json", payload)

@@ -6,6 +6,7 @@ from ais_dagger_agents_config import YAMLConfig
 from pull_request_agent.template import get_pull_request_agent_template
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIModel
+from datetime import datetime
 from simple_chalk import yellow
 
 
@@ -22,6 +23,53 @@ async def run_command(ctx: RunContext[PullRequestAgentDependencies], command: li
     Run a command in the container and return the output.
     """
     try:
+        # Branch safety guard: never commit/push on protected base branches
+        base_branch = None
+        try:
+            git_cfg = getattr(ctx.deps.config, 'git', None)
+            if git_cfg:
+                base_branch = getattr(git_cfg, 'base_pull_request_branch', None) or getattr(git_cfg, 'default_branch', None)
+        except Exception:
+            base_branch = None
+        if not base_branch:
+            base_branch = 'develop'
+        # Read cloned source branch; treat as protected too
+        source_branch = None
+        try:
+            sb_raw = await ctx.deps.container.file(".codebuff-state/source_branch.json").contents()
+            if sb_raw:
+                import json as _json
+                source_branch = (_json.loads(sb_raw) or {}).get("source_branch")
+        except Exception:
+            source_branch = None
+
+        protected = {base_branch, 'main', 'master', 'develop'}
+        if source_branch:
+            protected.add(source_branch)
+
+        # Check current branch
+        try:
+            current_branch = await ctx.deps.container.with_exec(["bash", "-c", "git rev-parse --abbrev-ref HEAD"]).stdout()
+            current_branch = (current_branch or '').strip()
+        except Exception:
+            current_branch = ''
+
+        # If this command will commit or push and we're on a protected branch, switch first
+        cmd_str = " ".join(command) if isinstance(command, list) else str(command)
+        needs_branch = ("git commit" in cmd_str) or ("git push" in cmd_str)
+        if needs_branch:
+            if not current_branch or current_branch in protected:
+                # Determine branch prefix
+                branch_prefix = 'feature/codebuff-'
+                try:
+                    orch = getattr(ctx.deps.config, 'orchestrator', None)
+                    if orch:
+                        branch_prefix = getattr(orch, 'branch_prefix', branch_prefix) or branch_prefix
+                except Exception:
+                    pass
+                safe_branch = f"{branch_prefix}{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+                ctx.deps.container = ctx.deps.container.with_exec(["bash", "-c", f"git checkout -b {safe_branch}"])
+
         # Add debug for push commands
         if len(command) >= 3 and "git push" in command[2]:
             print(yellow("Detected push command, adding debug info..."))

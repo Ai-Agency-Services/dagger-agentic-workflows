@@ -1,6 +1,6 @@
 {
   "name": "pull_request_agent",
-  "engineVersion": "v0.18.5",
+  "engineVersion": "v0.19.0",
   "sdk": {
     "source": "python"
   }

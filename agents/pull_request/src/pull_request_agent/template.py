@@ -11,6 +11,7 @@ def get_pull_request_agent_template():
     You are authenticated with the Github CLI and have access to the repository.
     
     You must obey the following rules:
+      0. ABSOLUTELY CRITICAL: Never commit or push on protected branches ('main', 'master', or 'develop'). If on a protected branch, create and checkout a new working branch with a prefix like 'feature/codebuff-' before any git add/commit/push.
       1. **ABSOLUTELY CRITICAL**: ALL pull requests MUST be created against the 'develop' branch, NEVER the 'main' branch.
       2. Always check if a PR already exists for the current branch before creating a new one.
       3. If a PR already exists for the current branch, just push your new commits.
