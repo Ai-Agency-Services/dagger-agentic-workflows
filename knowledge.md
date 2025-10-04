@@ -8,8 +8,8 @@ dagger call --cloud --mod workflows/graph \
   --config-file demo/agencyservices.yaml \
   build-graph-for-repository \
   --github-access-token=env:GITHUB_TOKEN \
-  --repository-url https://github.com/Ai-Agency-Services/web.git \
-  --branch feat/loveable-pairing \
+  --repository-url https://github.com/user/repo.git \
+  --branch main \
   --neo-auth=env:NEO_AUTH \
   --neo-password=env:NEO4J_PASSWORD \
   --open-router-api-key=env:OPEN_ROUTER_API_KEY
@@ -44,7 +44,7 @@ dagger call --cloud --mod workflows/graph \
   --config-file demo/agencyservices.yaml \
   build-graph-for-repository-export \
   --github-access-token=env:GITHUB_TOKEN \
-  --repository-url https://github.com/user/repo \
+  --repository-url https://github.com/user/repo.git \
   --branch main \
   --neo-auth=env:NEO_AUTH \
   --neo-password=env:NEO4J_PASSWORD \
@@ -331,21 +331,6 @@ When working with the codebase, the following tools are available for agents and
     - If it errors with “no tests collected” → soft-pass
     - Otherwise gate commit/PR on success
 - Config propagation: pass config_file (dagger.File) via dependency objects; no YAML fallback in agents.
-- YAML overrides (optional):
-```yaml
-testing:
-  enable: true
-  working_dir: apps/api
-  test_command: pnpm test --filter api
-  install_command: pnpm install --frozen-lockfile
-  timeout_seconds: 900
-```
-- State writes: .codebuff-state/test_env.json + timeline log entries.
-
-#### Dagger-safe config_file propagation (agents/codebuff)
-- Pass a Dagger File for configuration through dependency objects (required at runtime).
-- Dependencies: include `config_file: Optional[dagger.File]`, but agents treat it as required — no YAML fallback.
-- Agents (File Explorer/Picker) must use `ctx.deps.config_file` when constructing downstream modules (e.g., `dag.code_map(config_file=...)`). If missing, return a clear error.
 - In main objects, pass `getattr(self, "config_file", None)` into dependency constructors (mock-safe), but ensure real runs provide a config file.
 - No in-function YAML serialization paths — orchestration provides the config file.
 - Use `@object_type` for main classes
@@ -496,117 +481,6 @@ Consumers:
 from typing import Annotated, Optional
 import yaml
 import dagger
-from dagger import Doc, object_type, function
-
-@object_type
-class Graph:
-    # Dagger-safe properties
-    config: Optional[dict] = None
-    config_file: Optional[dagger.File] = None
-    neo_data: Optional[dagger.CacheVolume] = None
-
-    @classmethod
-    async def create(
-        cls,
-        config_file: Annotated[dagger.File, Doc("Path to the YAML config file")],
-        neo_data: Annotated[dagger.CacheVolume, Doc("Neo4j data cache volume")],
-    ) -> "Graph":
-        """Create a Graph object from a YAML config file."""
-        config_str = await config_file.contents()
-        config_dict = yaml.safe_load(config_str) if config_str else {}
-        return cls(config=config_dict or {}, config_file=config_file, neo_data=neo_data)
-```
-
-- Functions should ONLY use Dagger-safe parameters and read defaults from self.config.
-- For list parameters, never use `None` defaults. Use [] for lists then: `if not my_list: my_list = cm.get("my_list", ["default"])`
-
-### Pattern example: CodeMap module create()
-
-```python
-from typing import Annotated, Optional
-import yaml
-import dagger
-from dagger import Doc, object_type, function
-
-@object_type
-class CodeMap:
-    config: Optional[dict] = None
-    config_file: Optional[dagger.File] = None
-
-    @classmethod
-    async def create(
-        cls,
-        config_file: Annotated[dagger.File, Doc("Path to the YAML config file")],
-    ) -> "CodeMap":
-        cfg_str = await config_file.contents()
-        cfg = yaml.safe_load(cfg_str) if cfg_str else {}
-        return cls(config=cfg or {}, config_file=config_file)
-
-    @function
-    async def build(self,
-        source_dir: Annotated[dagger.Directory, Doc("Source to analyze")],
-        ignore_dirs: Annotated[list[str], Doc("Dirs to ignore")] = [],
-        languages: Annotated[list[str], Doc("Languages to parse")] = [],
-    ) -> dagger.Directory:
-        cfg = self.config or {}
-        cm = cfg.get("code_map", {})
-        if not ignore_dirs:
-            ignore_dirs = cm.get("ignore_dirs", [".git","node_modules","__pycache__", ".venv","dist","build"]) 
-        if not languages:
-            languages = cm.get("languages", ["python","javascript","typescript"]) 
-        # ... rest of function ...
-```
-
-### Pattern checklist (for every @object_type)
-- config and config_file properties exist on the @object_type
-- create classmethod loads YAML to dict and returns cls(...)
-- All functions accept only Dagger-safe types
-- Non-nullable list params default to [] (never None); merge from config when empty
-
-Note: This is the canonical pattern. Older duplicate sections should be removed.
-
-### Dagger module verification vs install
-- Use `dagger functions --mod <module-dir>` to verify a module and list callable objects/functions (loads the module).
-- Use `dagger call --mod <module-dir> <object-or-function> ...` to execute functions.
-- Do NOT use `dagger install` to verify modules — it’s only for adding a module as a dependency to another module (updates dagger.json).
-
-Examples:
-```bash
-# Verify CodeMap module
-dagger functions --mod shared/code-map
-
-# Call a function (constructor-first)
-dagger call --mod shared/code-map create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml
-```
-
-### Verification checklist
-- List callable objects/functions (loads the module):
-  - dagger functions --mod shared/code-map
-  - dagger functions --mod agents/codebuff
-- Minimal end-to-end check (constructor-first):
-  - dagger call --mod shared/code-map create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml
-  - dagger call --mod shared/code-map build --source-dir . export --path ./.code-map
-
-## Dagger Config Injection Pattern (constructor-first)
-
-Use only Dagger-safe types in function signatures. Do NOT expose Pydantic types in @function params.
-
-Pattern requirements for every @object_type:
-- Properties:
-  - config: dict | None
-  - config_file: dagger.File | None
-  - Module-specific resources (e.g., neo_data: dagger.CacheVolume | None)
-- Dagger-safe constructors:
-  - @classmethod async def create(cls, config_file: dagger.File, ...resources) -> Self
-    - Reads contents with await config_file.contents()
-    - Parses dict via yaml.safe_load(config_str)
-    - Returns cls(config=config_dict, config_file=config_file, ...)
-
-### Pattern example: Graph module
-```python
-from typing import Annotated, Optional
-import yaml
-import dagger
 from dagger import Doc, object_type
 
 @object_type
@@ -626,7 +500,11 @@ class Graph:
         return cls(config=config_dict or {}, config_file=config_file, neo_data=neo_data)
 ```
 
-Example: CodeMap module
+- Functions should ONLY use Dagger-safe parameters and read defaults from self.config.
+- For list parameters, never use `None` defaults. Use [] for lists then: `if not my_list: my_list = cm.get("my_list", ["default"])`
+
+### Pattern example: CodeMap module create()
+
 ```python
 from typing import Annotated, Optional
 import yaml
@@ -692,210 +570,92 @@ dagger call --mod shared/code-map create --config-file agents/codebuff/demo/code
   - dagger call --mod shared/code-map create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml
   - dagger call --mod shared/code-map build --source-dir . export --path ./.code-map
 
-## Orchestrator runtime guard pattern
+## Dagger Git Auth API change (Migration Note)
 
-- Always pass deps to pydantic_ai Agent.run when tools reference ctx.deps:
-  - result = await agent.run(prompt, deps=deps)
-- Initialize orchestration state before the first tool call:
-  - deps.state = OrchestrationState(task_spec=TaskSpec(id=str(uuid.uuid4()), goal=task_description, focus_area=focus_area))
-- Use relative imports for orchestrator submodules inside agents/codebuff (avoid shadowing by root TS folder):
-  - from .orchestrator.agent import create_orchestrator_agent
-  - from .orchestrator.models import OrchestrationState, OrchestratorDependencies, TaskSpec
+Dagger updated the Git module API. Replace the deprecated `.with_auth_token(...)` with the new `http_auth_token` parameter on `dag.git(...)`.
 
-Example (main.py critical lines):
+Old (LEGACY — do not copy/paste):
+
 ```python
-import uuid
-from datetime import datetime, UTC
-from .orchestrator.models import (
-    OrchestrationState, OrchestratorDependencies, TaskSpec, Phase, Status
+source = (
+    await dag.git(url=repo_url, keep_git_dir=True)
+    .with_auth_token(github_token)
+    .branch(branch)
+    .tree()
 )
+```
 
-# Build valid initial state (all required fields present)
-initial_state = OrchestrationState(
-    task_id=str(uuid.uuid4()),
-    current_phase=Phase.EXPLORATION,
-    status=Status.IN_PROGRESS,
-    start_time=datetime.now(UTC),
-    last_update=datetime.now(UTC),
-    task_spec=TaskSpec(
-        id=str(uuid.uuid4()),
-        goal=task_description,
-        focus_area=focus_area,
-    ),
+New:
+
+```python
+source = (
+    await dag.git(url=repo_url, keep_git_dir=True, http_auth_token=github_token)
+    .branch(branch)
+    .tree()
 )
-
-# Always pass deps
-result = await agent.run(workflow_prompt, deps=deps)
 ```
 
-## Container-backed Orchestration State (agents/codebuff)
+## Branch Safety Policy (Automation)
+- Never commit or push on protected branches: main, master, develop, the configured base_pull_request_branch, OR the exact branch we cloned as the source (persisted to .codebuff-state/source_branch.json).
+- Before any git add/commit/push, the workflow checks the current branch; if protected, it auto-creates a working branch using branch_prefix (default: feature/codebuff-<timestamp>) and switches to it.
+- PRs are created against the configured base branch (template enforces develop in PR agent).
+- Configuration knobs:
+  - orchestrator.branch_prefix (string)
+  - git.base_pull_request_branch (string)
 
-- State directory: .codebuff-state (relative to workdir)
-- Files written during workflow:
-  - task.json: { id, goal, focus_area, created_at }
-  - exploration.json: { language_counts, with_tokens }
-  - selected_files.json: [ { path, score, reason } ]
-  - plan.json: serialized plan
-  - implementation/
-    - test_results.json: { tests_passed, test_output, exit_code }
-    - summary.json: serialized change_set
-    - diffs/commit.diff
-  - review.json: reviewer summary
-  - pull_request.json: { branch, status, message }
-  - log.txt: append-only timeline (start_task → explore → select → plan → implement → review → PR)
+## Codebuff Resume & Feedback – Quick Reference
 
-Test-gated PR flow
-- execute_implementation runs the test suite in the container; commit only if tests pass
-- If tests fail: no commit, no PR
-- PR step reuses the same container (includes code + .codebuff-state)
+New functions (agents/codebuff):
+- orchestrate_feature_development: end-to-end feature workflow; if feedback enabled in YAML (orchestrator.feedback.enabled), stops at configured phase and opens a PR to collect @orchestrator commands.
+- setup_environment: prepare repo-backed container and test environment.
+- request_feedback / request_feedback_from_self: write feedback_request.json + feedback_sentinel.json (requested=true) and create/update a draft PR.
+- resume_workflow: rebuild container from a working branch and load .codebuff-state; returns loaded/missing summary and phase (falls back to commit footer if task_spec missing).
+- process_orchestrator_command: fast path to store a single PR comment (e.g., "@orchestrator approve") into user_feedback.json.
+- process_pr_feedback: parse a JSON array of comments and save the latest @orchestrator command.
+- continue_workflow: gate on sentinel + user_feedback; if approved, proceed to the next tool based on saved phase/status.
+- export_state / export_state_from_self: export .codebuff-state for local inspection.
 
-Implementation pattern
-- Always reassign dependencies with the updated container:
-  - ctx.deps.container = await write_json(ctx.deps.container, "plan.json", plan)
-  - ctx.deps.container = await append_log(ctx.deps.container, "create_plan: done")
+Common CLI usage:
+- Resume:
+  ```bash
+  dagger call --mod agents/codebuff \
+    create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml \
+    resume-workflow \
+    --github-token=secret:GITHUB_TOKEN \
+    --repository-url https://github.com/user/repo.git \
+    --branch-name <working-branch> \
+    --provider openrouter \
+    --open-router-api-key=env:OPEN_ROUTER_API_KEY
+  ```
+- Approve (PR feedback):
+  ```bash
+  dagger call --mod agents/codebuff \
+    create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml \
+    process-orchestrator-command \
+    --github-token=secret:GITHUB_TOKEN \
+    --repository-url https://github.com/user/repo.git \
+    --branch <working-branch> \
+    --command-text "@orchestrator approve"
+  ```
+- Continue:
+  ```bash
+  dagger call --mod agents/codebuff \
+    create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml \
+    continue-workflow \
+    --github-token=secret:GITHUB_TOKEN \
+    --repository-url https://github.com/user/repo.git \
+    --branch-name <working-branch> \
+    --provider openrouter \
+    --open-router-api-key=env:OPEN_ROUTER_API_KEY
+  ```
+- Export .codebuff-state:
+  ```bash
+  dagger call --mod agents/codebuff \
+    create --config-file agents/codebuff/demo/codebuff-feature-demo.yaml \
+    export-state-from-self export --path ./.codebuff-state
+  ```
 
-## Common Commands (constructor-first order)
-
-```bash
-# Build and test an agent (constructor-first + --mod)
-dagger call --mod <module-dir> --config-file=config.yaml create
-
-# Run complete feature development (constructor-first + --mod)
-dagger call --mod agents/codebuff \
-  --config-file config.yaml \
-  orchestrate-feature-development \
-  --feature-task-description="Feature description" \
-  --openai-api-key=env:OPENAI_API_KEY
-
-# Build code graph from a repository (constructor-first + --mod)
-dagger call --mod workflows/graph \
-  --config-file demo/agencyservices.yaml \
-  --neo-data ./tmp/neo4j-data \
-  build-graph-for-repository \
-  --github-access-token=env:GITHUB_TOKEN \
-  --repository-url https://github.com/user/repo \
-  --neo-auth=env:NEO_AUTH \
-  --neo-password=env:NEO4J_PASSWORD
-
-# Generate tests with coverage (constructor-first + --mod)
-dagger call --mod workflows/cover \
-  --config-file=config.yaml \
-  generate-tests
-```
-
-## PR Orchestrator Commands (agents/codebuff)
-
-Trigger feature development workflow directly from a PR comment using the new command processor.
-
-- Supported command:
-  - `@orchestrator feature - kickoff feature-development-workflow`
-
-- CLI invocation (process PR comment text):
-```bash
-dagger call --mod agents/codebuff \
-  --config-file config.yaml \
-  process-orchestrator-command \
-  --github-token=secret:GITHUB_TOKEN \
-  --repository-url https://github.com/org/repo \
-  --branch main \
-  --command-text "@orchestrator feature - kickoff feature-development-workflow" \
-  --feature-task-description "Add user profile management with avatar upload" \
-  --openai-api-key=env:OPENAI_API_KEY
-```
-
-Notes:
-- Uses `feature_task_description` (or defaults to "Feature from PR" if omitted).
-- Provider is chosen based on provided keys (OpenRouter preferred when available).
-- Integrates with the Git-based feedback gates you enabled (PLANNING stop + PR).
-
-## Development Notes
-
-### Testing
-- Each module includes demo configurations
-- Use local containers for development testing
-- Test agents individually before orchestration
-
-### Debugging
-- Check container logs for execution issues
-- Validate YAML configuration syntax
-- Ensure API keys have proper permissions
-- Use debug flags in Dagger calls
-
-### Performance
-- Graph operations can be memory intensive
-- Use appropriate concurrency limits
-- Consider token usage costs for LLM calls
-- Cache results where possible
-
-## Module Dependencies
-
-### Agents depend on:
-- `builder` for environment setup
-- `shared/dagger-agents-config` for configuration
-- LLM providers for AI capabilities
-
-### Workflows depend on:
-- `services/neo` for graph database
-- `shared/agent-utils` for code parsing
-- Various analysis tools and libraries
-
-## Security Considerations
-
-- Never commit API keys to version control
-- Use Dagger secrets for sensitive data
-- Validate all external inputs
-- Limit container permissions appropriately
-- Review AI-generated code before deployment
-
-## Smell configuration (thresholds and detectors)
-
-Add a smell block in your YAML (used by workflows/smell). Global thresholds apply; include/exclude tunes signal.
-
-```yaml
-smell:
-  thresholds:
-    long_function_lines: 150      # lines
-    long_param_count: 6           # params
-    large_class_loc: 300          # lines
-    god_class_methods: 25         # methods
-    high_fan_out: 20              # files
-    high_fan_in: 10               # files
-  detectors:
-    include: []                   # empty means all enabled
-    exclude: []                   # e.g., ["DeadCodeDetector", "BarrelFileDetector"]
-```
-
-## File Picker configuration (agents/codebuff)
-
-Control how semantic results (from CodeMap.query) are combined with lexical matches.
-
-- file_picker.semantic_weight: 0..1 (default 1.0)
-  - 1.0: use only semantic results
-  - 0.0: use only lexical (name/content) results
-  - between 0 and 1: blend results (filename matches weighted 0.6, content matches weighted 0.4)
-- file_picker.fallback_when_empty: bool (default true)
-  - If semantic results are empty/invalid, fall back to lexical results automatically
-
-YAML example:
-```yaml
-file_picker:
-  semantic_weight: 0.8        # blend in 20% lexical
-  fallback_when_empty: true   # if semantic produces no files, use lexical
-
-code_map:
-  out_dir: .code-map
-  incremental: true
-  verbose: false
-  chunk_lines: 120
-  cache_dir: ./tmp/code-map-cache
-```
-
-## Dagger Errors (Python SDK) quick reference
-- Cloud auth: set DAGGER_CLOUD_TOKEN; use --cloud
-- Module not found: run from module dir or pass --mod <module-dir>
-- Constructor vs method: constructor first, then function, then method args
-- Export errors: function must return File/Directory; use `export --path`
-- GHA multiline output: avoid big content in GITHUB_OUTPUT—export artifacts instead
-- Debug: `await c.stdout()/stderr()`, Dagger Cloud trace URL, `DAGGER_LOG_LEVEL=debug`
-
-<!-- Delete any web_scraped_content blocks appended below. They were placeholder 404 pages. -->
+Tips:
+- If resume shows missing task_spec, it still recovers phase/status via commit footer.
+- Feedback gate: continue-workflow will wait if feedback_sentinel.requested=true and user_feedback.json is absent; run approval first.
+- A full, copy-paste walkthrough is available at `agents/codebuff/RESUME_TEST.md`.
