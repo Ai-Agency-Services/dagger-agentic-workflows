@@ -77,6 +77,21 @@ What gets exported:
 
 This repository contains AI-powered development automation agents built with Dagger. The system provides end-to-end automation for software development workflows including code analysis, feature development, testing, and pull request creation.
 
+### Spec-Kit Integration (NEW)
+
+Codebuff now uses the **Spec-Kit methodology** for feature development:
+
+- **Constitution → Spec → Tasks workflow**: Structured, validated planning
+- **Implementation-review loops**: Each task iterates up to 3 times for quality
+- **Atomic task execution**: Topologically sorted with dependency validation
+- **Automatic migration**: Old plan.md files converted to spec-kit format
+- **Comprehensive state**: JSON files for constitution, spec, tasks, logs
+
+See:
+- `agents/codebuff/SPEC_KIT_GUIDE.md` - Complete methodology guide
+- `agents/codebuff/SPEC_KIT_MIGRATION.md` - Migration from legacy workflow
+- `agents/codebuff/src/codebuff/orchestrator/speckit_workflow.py` - Implementation
+
 ## Architecture
 
 ### Core Components
@@ -242,6 +257,9 @@ async with agent.iter(prompt, deps=deps) as it:
 - Prefer deterministic tool interfaces with clear error handling
 - Use toolsets to organize related functionality
 - Leverage streaming for long-running workflows
+- **CRITICAL**: RunContext has no `run_tool()` method - directly call tool functions instead
+  - ❌ Wrong: `await ctx.run_tool('check_syntax')`
+  - ✅ Correct: `await check_syntax(ctx)`
 
 #### References
 - [Agent Instructions](https://ai.pydantic.dev/agents/#instructions)

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import dagger
 from ais_dagger_agents_config import YAMLConfig
@@ -76,99 +76,7 @@ class FileSet(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
-class PlanStep(BaseModel):
-    """Individual step in implementation plan."""
-    id: str
-    description: str
-    dependencies: List[str] = Field(default_factory=list)
-    risk_level: str = Field(default="low")  # low, medium, high
-    estimated_effort: Optional[str] = None
-
-
-class Plan(BaseModel):
-    """Detailed implementation plan."""
-    steps: List[PlanStep]
-    risks: List[str] = Field(default_factory=list)
-    dependencies: List[str] = Field(default_factory=list)
-    test_strategy: Optional[str] = None
-    confidence: float = Field(ge=0.0, le=1.0)
-    estimated_complexity: str = Field(default="medium")  # low, medium, high
-
-    # Coerce strings/dicts into PlanStep instances (defensive normalization)
-    @field_validator("steps", mode="before")
-    @classmethod
-    def _coerce_steps(cls, v):
-        if not isinstance(v, list):
-            return v
-        coerced = []
-        for i, item in enumerate(v):
-            if isinstance(item, PlanStep):
-                coerced.append(item)
-            elif isinstance(item, str):
-                coerced.append({
-                    "id": f"step-{i+1}",
-                    "description": item,
-                })
-            elif isinstance(item, dict):
-                # Ensure an id exists
-                if "id" not in item:
-                    item = {"id": f"step-{i+1}", **item}
-                coerced.append(item)
-            else:
-                raise TypeError(f"Invalid step type at index {i}: {type(item)}")
-        return coerced
-
-
-class FileEdit(BaseModel):
-    """Individual file modification."""
-    path: str
-    operation: str  # create, modify, delete
-    content_preview: Optional[str] = None
-    line_count_change: Optional[int] = None
-
-
-class CommandExecution(BaseModel):
-    """Command that was executed."""
-    command: str
-    exit_code: Optional[int] = None
-    output_preview: Optional[str] = None
-
-
-class ChangeSet(BaseModel):
-    """All changes made during implementation."""
-    edits: List[FileEdit]
-    commands: List[CommandExecution]
-    migration_notes: Optional[str] = None
-    rollback_instructions: Optional[str] = None
-
-
-class ReviewFinding(BaseModel):
-    """Individual review finding."""
-    category: str  # syntax, logic, style, security, performance
-    severity: str  # info, warning, error, critical
-    description: str
-    file_path: Optional[str] = None
-    suggestion: Optional[str] = None
-
-
-class ReviewReport(BaseModel):
-    """Results from code review agent."""
-    findings: List[ReviewFinding]
-    overall_status: Status
-    tests_passed: Optional[bool] = None
-    syntax_valid: Optional[bool] = None
-    recommendations: List[str] = Field(default_factory=list)
-    approval_status: str = Field(default="pending")  # approved, rejected, needs_changes
-
-
-class ContextSummary(BaseModel):
-    """Results from context pruning."""
-    original_size: int
-    pruned_size: int
-    reduction_percent: float
-    strategy_used: str
-    token_estimate: int
-    preserved_sections: List[str] = Field(default_factory=list)
+# Legacy models removed - use Spec-Kit models instead
 
 
 class OrchestrationError(BaseModel):
@@ -191,6 +99,100 @@ class PullRequestResult(BaseModel):
     message: str
 
 
+# ============================================================================
+# Spec-Kit Models (Constitution → Spec → Plan → Tasks methodology)
+# ============================================================================
+
+class Constitution(BaseModel):
+    """Project constitution defining core values and constraints."""
+    values: List[str] = Field(description="Core values guiding implementation (2-4 items)")
+    constraints: List[str] = Field(description="Technical or business constraints (1-3 items)")
+    quality_gates: List[str] = Field(description="Measurable quality gates (2-4 items)")
+
+
+class Requirement(BaseModel):
+    """Individual requirement from the spec."""
+    id: str = Field(description="Unique ID (e.g., REQ-001)")
+    description: str = Field(description="What needs to be built")
+    acceptance_criteria: List[str] = Field(description="Testable conditions (2-4 items)")
+    priority: Literal["must", "should", "could"] = Field(description="MoSCoW priority")
+
+
+class Spec(BaseModel):
+    """Detailed specification of what to build."""
+    objective: str = Field(description="Clear 1-2 sentence goal")
+    requirements: List[Requirement] = Field(description="Distinct requirements (3-10 items)")
+    success_criteria: List[str] = Field(description="How we measure completion (2-5 items)")
+    out_of_scope: List[str] = Field(description="What we're NOT doing (2-4 items)")
+
+
+class TaskDependency(BaseModel):
+    """Dependency between tasks."""
+    task_id: str = Field(description="ID of the task this depends on")
+    dependency_type: Literal["blocks", "requires"] = Field(
+        description="'blocks' = must finish first, 'requires' = needs output from"
+    )
+
+
+class Task(BaseModel):
+    """Individual implementation task."""
+    id: str = Field(description="Unique ID (e.g., TASK-001)")
+    description: str = Field(description="One-sentence summary")
+    acceptance_criteria: List[str] = Field(description="Testable conditions (2-4 items)")
+    dependencies: List[TaskDependency] = Field(default_factory=list, description="Task dependencies")
+    estimated_complexity: Literal["simple", "moderate", "complex"] = Field(
+        description="Complexity level"
+    )
+    test_requirements: List[str] = Field(default_factory=list, description="Test files to create/run")
+    files_to_modify: List[str] = Field(description="File paths to modify")
+
+
+class SpecKitPlan(BaseModel):
+    """Complete spec-kit based plan."""
+    constitution: Constitution
+    spec: Spec
+    tasks: List[Task]
+    validation_status: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="Track validation at each stage"
+    )
+
+
+# ============================================================================
+# Error Handling for Spec-Kit Workflow
+# ============================================================================
+
+class OrchestrationException(Exception):
+    """Base exception for orchestration errors."""
+    pass
+
+
+class ValidationError(OrchestrationException):
+    """Raised when validation fails."""
+    
+    def __init__(self, message: str, issues: List[str]):
+        super().__init__(message)
+        self.issues = issues
+
+
+class StateError(OrchestrationException):
+    """Raised when state operations fail."""
+    pass
+
+
+class LLMGenerationError(OrchestrationException):
+    """Raised when LLM generation fails after retries."""
+    pass
+
+
+class TaskExecutionError(OrchestrationException):
+    """Raised when task execution fails."""
+    
+    def __init__(self, message: str, task_id: str = ""):
+        super().__init__(message)
+        self.task_id = task_id
+
+
 class OrchestrationState(BaseModel):
     """Complete state of orchestration execution."""
     task_id: str
@@ -200,15 +202,17 @@ class OrchestrationState(BaseModel):
     last_update: datetime
     retry_count: int = 0
     
-    # Phase artifacts
+    # Core phase artifacts (backward compatible)
     task_spec: Optional[TaskSpec] = None
     exploration_report: Optional[ExplorationReport] = None
     file_set: Optional[FileSet] = None
-    plan: Optional[Plan] = None
-    change_set: Optional[ChangeSet] = None
-    review_report: Optional[ReviewReport] = None
     pull_request_result: Optional[PullRequestResult] = None
-    context_summary: Optional[ContextSummary] = None
+    
+    # Spec-Kit artifacts
+    constitution: Optional[Constitution] = None
+    spec: Optional[Spec] = None
+    current_task: Optional[Task] = None
+    completed_tasks: List[Task] = Field(default_factory=list)
     
     # Error tracking
     errors: List[OrchestrationError] = Field(default_factory=list)
@@ -231,7 +235,16 @@ class OrchestratorDependencies:
     # Optional model for sub-agents
     model: Optional[Any] = None
 
-    # Optional sub-agent instances (if needed later)
+    # Lazy-loaded sub-agents (PydanticAI Agent instances)
+    file_explorer_agent: Optional[Any] = None  # Agent type
+    file_picker_agent: Optional[Any] = None
+    implementation_agent: Optional[Any] = None
+    reviewer_agent: Optional[Any] = None
+    researcher_agent: Optional[Any] = None
+    thinker_agent: Optional[Any] = None
+    context_pruner_agent: Optional[Any] = None
+
+    # Legacy sub-agent instances (deprecated, for backward compatibility)
     file_explorer: Optional[OpenAIChatModel] = None
     file_picker: Optional[OpenAIChatModel] = None
     researcher: Optional[OpenAIChatModel] = None
@@ -250,4 +263,25 @@ class OrchestratorDependencies:
     current_task: Optional[TaskSpec] = None
     selected_files: list[str] = None
     exploration_results: Optional[str] = None
+    
+    def get_file_explorer(self) -> Any:
+        """Lazy-load file explorer agent."""
+        if self.file_explorer_agent is None:
+            from ..file_explorer.agent import create_file_explorer_agent
+            self.file_explorer_agent = create_file_explorer_agent(self.model)
+        return self.file_explorer_agent
+    
+    def get_implementation(self) -> Any:
+        """Lazy-load implementation agent."""
+        if self.implementation_agent is None:
+            from ..implementation.agent import create_implementation_agent
+            self.implementation_agent = create_implementation_agent(self.model)
+        return self.implementation_agent
+    
+    def get_reviewer(self) -> Any:
+        """Lazy-load reviewer agent."""
+        if self.reviewer_agent is None:
+            from ..reviewer.agent import create_reviewer_agent
+            self.reviewer_agent = create_reviewer_agent(self.model)
+        return self.reviewer_agent
 

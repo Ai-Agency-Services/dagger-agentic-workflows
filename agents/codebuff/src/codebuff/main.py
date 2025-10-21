@@ -120,7 +120,7 @@ class Codebuff:
         open_router_api_key: Annotated[Optional[dagger.Secret], Doc(
             "OpenRouter API key")] = None
     ) -> str:
-        """Orchestrate complete feature development workflow using all Codebuff agents."""
+        """DEPRECATED: Use run_speckit_workflow instead. Orchestrate complete feature development workflow."""
         try:
             import logging
             # Configure logging to suppress OpenTelemetry warnings
@@ -142,6 +142,9 @@ class Codebuff:
             )
             file_explorer_model = await self._get_llm_for_agent(
                 "file_explorer", open_router_api_key, openai_api_key
+            )
+            review_model = await self._get_llm_for_agent(
+                "reviewer", open_router_api_key, openai_api_key
             )
 
             await self.setup_environment(
@@ -176,6 +179,7 @@ class Codebuff:
                 implementation=impl_model,
                 file_picker=file_picker_model,
                 file_explorer=file_explorer_model,
+                reviewer=review_model,
                 state=OrchestrationState(
                     task_id=str(uuid.uuid4()),
                     current_phase=Phase.EXPLORATION,
@@ -192,20 +196,28 @@ class Codebuff:
 
             agent = create_orchestrator_agent(model)
 
-            # Execute workflow with more specific prompts to help with tool argument mapping
+            # Execute spec-kit workflow
             workflow_prompt = f"""
-You are orchestrating a feature development workflow. Execute these steps in sequence:
+You are orchestrating a feature development workflow using the Spec-Kit methodology.
 
-1. Call start_task with task_description="{feature_task_description}" and focus_area="{focus_area}"
-2. Call explore_codebase to analyze the project structure
-3. Call select_files to choose relevant files for the task
-4. Call create_implementation_plan to generate a detailed plan
-5. Call execute_implementation to implement the changes
-6. Call review_changes to validate the implementation
-7. Call create_pull_request to submit the changes
-8. Call get_orchestration_status to provide final status
+**Primary Workflow (Recommended)**:
+Call `run_speckit_workflow` with:
+- task_description: "{feature_task_description}"
+- focus_area: "{focus_area}"
 
-Start with step 1 now.
+This will execute the complete Constitution → Spec → Tasks workflow with:
+- Automated exploration and constitution generation
+- Requirement analysis and specification
+- Task breakdown with dependency management
+- Implementation-review loops per task
+- Automated testing and PR creation
+
+**Alternative (Legacy)**:
+If resuming an old workflow or debugging, use individual tools:
+1. start_task, 2. explore_codebase, 3. create_implementation_plan, 
+4. execute_implementation, 5. review_changes, 6. create_pull_request
+
+Start the spec-kit workflow now.
 """
 
             result = await agent.run(workflow_prompt, deps=deps)
@@ -604,6 +616,7 @@ Start with step 1 now.
             impl_model = await self._get_llm_for_agent("implementation", open_router_api_key, openai_api_key)
             picker_model = await self._get_llm_for_agent("file_picker", open_router_api_key, openai_api_key)
             explorer_model = await self._get_llm_for_agent("file_explorer", open_router_api_key, openai_api_key)
+            reviewer_model = await self._get_llm_for_agent("reviewer", open_router_api_key, openai_api_key)
 
             # Build config (tolerant)
             try:
@@ -636,6 +649,7 @@ Start with step 1 now.
                 api_key=openai_api_key or open_router_api_key,
                 model=orch_model,
                 implementation=impl_model,
+                reviewer=reviewer_model,
                 file_picker=picker_model,
                 file_explorer=explorer_model,
                 state=state,

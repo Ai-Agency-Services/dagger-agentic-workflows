@@ -291,10 +291,32 @@ class OrchestratorTestingConfig(BaseModel):
     tdd: Optional[TDDConfig] = Field(default=None, description="TDD configuration for implementation phase")
 
 
+class SpecKitConfig(BaseModel):
+    """Configuration for spec-kit methodology."""
+    enabled: bool = Field(default=True, description="Use spec-kit workflow")
+    planning_model: str = Field(
+        default="openai:gpt-4o-mini",
+        description="Model for constitution/spec/task generation"
+    )
+    max_tasks_per_spec: int = Field(
+        default=20,
+        description="Maximum tasks to generate per spec"
+    )
+    max_review_iterations: int = Field(
+        default=3,
+        description="Max implementation-review iterations per task"
+    )
+    auto_migrate: bool = Field(
+        default=True,
+        description="Auto-migrate old plan.md to spec-kit format"
+    )
+
+
 class OrchestratorConfig(BaseModel):
     """Orchestrator behavior configuration."""
     feedback: Optional[FeedbackConfig] = Field(default=None, description="Feedback gates and PR behavior")
     testing: Optional[OrchestratorTestingConfig] = Field(default=None, description="Orchestrator testing behavior")
+    speckit: Optional[SpecKitConfig] = Field(default=None, description="Spec-kit methodology config")
 
 
 class YAMLConfig(BaseModel):

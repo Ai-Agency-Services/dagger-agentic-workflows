@@ -3,6 +3,20 @@
 ## Purpose
 Multi-agent orchestrator that replicates Codebuff's AI-powered development workflow, from code exploration to feature implementation to pull request creation.
 
+## Context Overflow Prevention
+
+**Status**: ✅ Fixed and tested (workflow runs in ~22s, down from timeout at 1.4M tokens)
+
+**Important**: The spec-kit workflow has built-in safeguards against context overflow:
+- All codebase exploration is limited to 5,000 characters (`MAX_EXPLORATION_CHARS`)
+- Context passed to LLM phases is limited to 8,000 characters (`MAX_CONTEXT_CHARS`)
+- Limits are defined as constants in `speckit_workflow.py`
+- Truncation warnings are logged when limits are hit
+- Exploration failures gracefully fall back to minimal context
+- Use `logging.exception()` instead of `logging.error()` for better debugging
+
+See `CONTEXT_OVERFLOW_FIX.md` for detailed information.
+
 ## Architecture
 
 ### Core Class: `Codebuff`
@@ -20,6 +34,8 @@ Multi-agent orchestrator that replicates Codebuff's AI-powered development workf
 - **Context Pruner**: Manages conversation context size
 
 ## Core Workflow
+
+**Important**: The old plan.md workflow has been completely removed. There is no migration path - all workflows must use the spec-kit methodology exclusively.
 
 ### Complete Feature Development
 ```python

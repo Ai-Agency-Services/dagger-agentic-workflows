@@ -313,16 +313,9 @@ class Builder:
                     raise ValueError(
                         f"Dockerfile not found at path: {dockerfile_path}")
 
-                self.base_container = (
-                    dag.container()
-                    .build(
-                        context=source,
-                        dockerfile=dockerfile_path
-                    )
-                    # Mount source at the specified work_dir
-                    .with_directory(work_dir, source)
-                    .with_workdir(work_dir)
-                )
+                self.base_container = source.docker_build(
+                    dockerfile=dockerfile_path)
+
                 print(
                     green(f"Successfully built base container from Dockerfile: {dockerfile_path}"))
             except Exception as e:

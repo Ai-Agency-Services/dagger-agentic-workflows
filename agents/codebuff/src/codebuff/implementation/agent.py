@@ -128,9 +128,9 @@ Implementation guidelines:
         model=model,
         system_prompt=system_prompt,
         deps_type=ImplementationDependencies,
-        instrument=False,
+        instrument=True,
         end_strategy="exhaustive",
-        retries=5
+        retries=5,
     )
     
     agent.tool(run_command)

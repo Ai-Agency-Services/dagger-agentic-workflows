@@ -3,7 +3,7 @@ import json
 from pydantic import ValidationError
 from dagger import Container
 
-from .models import TaskSpec, ExplorationReport, FileSet, Plan, OrchestrationState, Phase, Status, PathInfo
+from .models import TaskSpec, ExplorationReport, FileSet, OrchestrationState, Phase, Status, PathInfo
 
 STATE_DIR = ".codebuff-state"
 
@@ -65,15 +65,7 @@ async def load_orchestration_state(container: Container) -> Tuple[Optional[Orche
         except ValidationError:
             report["missing"].append("selected_files.json:invalid")
 
-    # Plan (canonical)
-    plan_json = await _read_json(container, "implementation_plan.json")
-    plan = None
-    if plan_json:
-        try:
-            plan = Plan(**plan_json)
-            report["loaded"].append("implementation_plan.json")
-        except ValidationError:
-            report["missing"].append("implementation_plan.json:invalid")
+    # Plan field removed - spec-kit uses Constitution/Spec/Tasks instead
 
     # Phase snapshot
     phase_json = await _read_json(container, "current_phase.json") or {}
@@ -94,7 +86,6 @@ async def load_orchestration_state(container: Container) -> Tuple[Optional[Orche
             task_spec=task_spec,
             exploration_report=exploration_report,
             file_set=file_set,
-            plan=plan,
         )
     except Exception:
         # As a fallback, build a minimal viable state with defaults

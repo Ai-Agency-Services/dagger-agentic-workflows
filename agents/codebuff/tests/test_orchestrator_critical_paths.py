@@ -11,14 +11,15 @@ class TestOrchestratorCriticalPaths:
     
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_start_task_smoke(self):
-        """Smoke test for start_task function."""
-        from codebuff.orchestrator.agent import start_task
-        from codebuff.orchestrator.models import OrchestratorDependencies, OrchestrationState, TaskSpec, Phase, Status
+    async def test_run_speckit_workflow_smoke(self):
+        """Smoke test for run_speckit_workflow function."""
+        from codebuff.orchestrator.agent import run_speckit_workflow
+        from codebuff.orchestrator.models import OrchestratorDependencies
         
         # Mock dependencies
         mock_container = MagicMock()
         mock_container.with_new_file = MagicMock(return_value=mock_container)
+        mock_container.with_exec = MagicMock(return_value=mock_container)
         
         deps = OrchestratorDependencies(
             config=MagicMock(),
@@ -31,52 +32,34 @@ class TestOrchestratorCriticalPaths:
         ctx = MagicMock()
         ctx.deps = deps
         
-        # Test start_task creates initial state
-        result = await start_task(ctx, "test task", "test focus")
-        
-        assert "started" in result
-        assert deps.state is not None
-        assert deps.state.task_spec.goal == "test task"
-        assert deps.state.current_phase == Phase.EXPLORATION
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_create_implementation_plan_smoke(self):
-        """Smoke test for create_implementation_plan function."""
-        from codebuff.orchestrator.agent import create_implementation_plan
-        from codebuff.orchestrator.models import OrchestratorDependencies, OrchestrationState, TaskSpec, Phase, Status
-        
-        # Mock container and write operations
-        mock_container = MagicMock()
-        mock_container.with_new_file = MagicMock(return_value=mock_container)
-        
-        with patch('codebuff.orchestrator.agent.write_text') as mock_write_text:
-            mock_write_text.return_value = mock_container
+        # Mock spec-kit workflow functions to avoid full execution
+        with patch('codebuff.orchestrator.agent.speckit_explore') as mock_explore, \
+             patch('codebuff.orchestrator.agent.create_constitution') as mock_constitution, \
+             patch('codebuff.orchestrator.agent.create_spec') as mock_spec, \
+             patch('codebuff.orchestrator.agent.create_task_plan') as mock_plan:
             
-            deps = OrchestratorDependencies(
-                config=MagicMock(),
-                container=mock_container,
-                config_file=MagicMock(),
-                api_key=MagicMock(),
-                state=OrchestrationState(
-                    task_id="test-123",
-                    current_phase=Phase.PLANNING,
-                    status=Status.IN_PROGRESS,
-                    start_time=datetime.now(),
-                    last_update=datetime.now(),
-                    task_spec=TaskSpec(id="test", goal="test goal", focus_area="test")
-                )
+            # Configure mocks to simulate successful workflow
+            mock_explore.return_value = "Explored codebase"
+            mock_constitution.return_value = MagicMock(
+                values=["Quality"],
+                constraints=[],
+                quality_gates=["Tests pass"]
             )
+            mock_spec.return_value = MagicMock(
+                objective="Test",
+                requirements=[],
+                success_criteria=[],
+                out_of_scope=[]
+            )
+            mock_plan.return_value = []
             
-            ctx = MagicMock()
-            ctx.deps = deps
+            # This should not raise an exception
+            result = await run_speckit_workflow(ctx, "test task", "test focus")
             
-            result = await create_implementation_plan(ctx)
-            
-            assert "Implementation plan created" in result
-            assert deps.state.plan is not None
-            assert len(deps.state.plan.steps) >= 4
-            mock_write_text.assert_called()
+            # Basic assertions - workflow should initialize and attempt execution
+            assert isinstance(result, str)
+            assert deps.state is not None
+            assert deps.state.task_spec.goal == "test task"
 
     @pytest.mark.unit
     @pytest.mark.asyncio 
