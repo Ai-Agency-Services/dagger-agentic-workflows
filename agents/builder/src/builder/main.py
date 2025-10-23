@@ -367,7 +367,9 @@ class Builder:
 
     @function
     def build_cypher_shell(
-        self, source: dagger.Directory
+        self,
+        source: dagger.Directory,
+        dockerfile_path: Optional[str] = "Dockerfile"
     ) -> dagger.Container:
         """
         Builds a container with a Cypher shell for Neo4j operations.
@@ -380,12 +382,8 @@ class Builder:
         """
         print("Configuring container for Cypher shell...")
         self._setup_logging()
-        container = (
-            dag.container()
-            .build(
-                context=source,
-                dockerfile="Dockerfile"
-            )
+        container = source.docker_build(
+            dockerfile=dockerfile_path
         )
         print(green("Cypher shell container setup complete."))
         return container
