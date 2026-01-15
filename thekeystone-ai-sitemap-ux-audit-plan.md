@@ -57,7 +57,7 @@ Out of scope (unless explicitly requested):
   - Re-run the crawl and attach the new report path + summary here.
   - Latest crawl output:
     - Report: `../thekeystone.ai/test-results/artifacts/sitemap-Sitemap-crawl-shou-eee3a-utes-without-runtime-errors-chromium/sitemap-audit/report.json`
-    - Generated at (UTC): `2026-01-15T22:51:17.369Z`
+    - Generated at (UTC): `2026-01-15T23:37:45.833Z`
     - Summary: `routes=99`, `failures=0`, `warnings=0`, `cspReportOnly=0`
     - Notes:
       - `/investors` is a restricted/noindex route and is excluded from `sitemap.xml`.
